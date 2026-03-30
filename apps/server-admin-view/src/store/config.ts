@@ -52,6 +52,18 @@ export const useConfigStore = defineStore("config", () => {
     await loadConfig(); // refresh to be safe
   }
 
+  async function saveAutoManageFirewall(enabled: boolean) {
+    const next = await ConfigAPI.updateAutoManageFirewall({
+      auto_manage_firewall: enabled,
+    });
+    if (config.value) {
+      config.value.auto_manage_firewall = next.auto_manage_firewall;
+    } else {
+      await loadConfig();
+    }
+    return next;
+  }
+
   async function saveProxyMappings(mappings: ProxyMapping[]) {
     await ConfigAPI.updateProxyMappings(mappings);
     await loadConfig();
@@ -94,6 +106,7 @@ export const useConfigStore = defineStore("config", () => {
     isError,
     loadConfig,
     setRunType,
+    saveAutoManageFirewall,
     saveProxyMappings,
     saveHostMappings,
     refreshAllHostMappingTitles,

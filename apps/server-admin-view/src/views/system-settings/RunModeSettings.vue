@@ -172,50 +172,80 @@
         </div>
       </div>
     </CardContent>
-    <CardFooter class="flex justify-end gap-2">
-      <DropdownMenu>
-        <DropdownMenuTrigger as-child>
-          <Button variant="outline" class="w-24 gap-2" :disabled="isBusy">
-            <Loader2
-              v-if="isFirewallActionPending"
-              class="h-4 w-4 animate-spin"
-            />
-            <span>操作</span>
-            <ChevronDown class="h-4 w-4 text-muted-foreground" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" class="w-56">
-          <DropdownMenuItem
-            :disabled="isBusy"
-            @select="resetFirewallBySelectedMode"
-          >
-            <RefreshCw class="h-4 w-4" />
-            按所选模式重设防火墙
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            variant="destructive"
-            :disabled="isBusy"
-            @select="clearFirewallRules"
-          >
-            <Trash2 class="h-4 w-4" />
-            清空防火墙
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-      <Button variant="outline" class="w-24" @click="reset" :disabled="isBusy">
-        放弃更改
-      </Button>
-      <Button
-        data-guide-run-mode-save
-        @click="save"
-        :disabled="isBusy || isModeUnchanged"
-      >
-        <span
-          v-if="isSaving"
-          class="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-background border-t-foreground"
-        ></span>
-        保存修改
-      </Button>
+    <CardFooter
+      class="flex flex-col gap-4 border-t border-zinc-200/80 pt-6 sm:flex-row sm:items-center sm:justify-between"
+    >
+      <label class="flex items-start gap-3 text-sm text-zinc-700">
+        <Checkbox
+          class="mt-0.5"
+          :model-value="autoManageFirewall"
+          :disabled="isBusy"
+          @update:model-value="handleAutoManageFirewallChange"
+        />
+        <span class="space-y-1">
+          <span class="block font-medium text-zinc-900">
+            自动处理系统防火墙
+          </span>
+          <span class="block text-xs leading-5 text-muted-foreground">
+            关闭后，切换模式等操作不再自动调整系统防火墙；如需变更，请使用右侧“操作”按钮手动执行。但直连模式会继续处理防火墙。
+          </span>
+        </span>
+        <Loader2
+          v-if="isAutoManageFirewallPending"
+          class="mt-0.5 h-4 w-4 animate-spin text-muted-foreground"
+        />
+      </label>
+
+      <div class="flex w-full justify-end gap-2 sm:w-auto">
+        <DropdownMenu>
+          <DropdownMenuTrigger as-child>
+            <Button variant="outline" class="w-24 gap-2" :disabled="isBusy">
+              <Loader2
+                v-if="isFirewallActionPending"
+                class="h-4 w-4 animate-spin"
+              />
+              <span>操作</span>
+              <ChevronDown class="h-4 w-4 text-muted-foreground" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" class="w-56">
+            <DropdownMenuItem
+              :disabled="isBusy"
+              @select="resetFirewallBySelectedMode"
+            >
+              <RefreshCw class="h-4 w-4" />
+              按所选模式重设防火墙
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              variant="destructive"
+              :disabled="isBusy"
+              @select="clearFirewallRules"
+            >
+              <Trash2 class="h-4 w-4" />
+              清空防火墙
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <Button
+          variant="outline"
+          class="w-24"
+          @click="reset"
+          :disabled="isBusy"
+        >
+          放弃更改
+        </Button>
+        <Button
+          data-guide-run-mode-save
+          @click="save"
+          :disabled="isBusy || isModeUnchanged"
+        >
+          <span
+            v-if="isSaving"
+            class="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-background border-t-foreground"
+          ></span>
+          保存修改
+        </Button>
+      </div>
     </CardFooter>
   </Card>
 
@@ -339,6 +369,7 @@ import type { ReverseProxySubmode } from "../../types";
 const configStore = useConfigStore();
 const DEFAULT_ROUTE_PLACEHOLDER = "/__select__";
 const mode = ref<0 | 1 | 3>(1);
+const autoManageFirewall = ref(true);
 const reverseProxySubmode = ref<ReverseProxySubmode>(
   DEFAULT_REVERSE_PROXY_SUBMODE,
 );
@@ -373,7 +404,22 @@ const { isPending: isFirewallActionPending, run: runFirewallAction } =
       });
     },
   });
-const isBusy = computed(() => isSaving.value || isFirewallActionPending.value);
+const {
+  isPending: isAutoManageFirewallPending,
+  run: runAutoManageFirewallUpdate,
+} = useAsyncAction({
+  onError: (error) => {
+    toast.error("更新自动防火墙设置失败", {
+      description: extractErrorMessage(error, "操作失败"),
+    });
+  },
+});
+const isBusy = computed(
+  () =>
+    isSaving.value ||
+    isFirewallActionPending.value ||
+    isAutoManageFirewallPending.value,
+);
 const savedReverseProxySubmode = computed(() =>
   resolveReverseProxySubmode(configStore.config),
 );
@@ -427,6 +473,8 @@ const hasCustomDefaultRoute = computed(() => {
 onMounted(() => {
   if (configStore.config) {
     mode.value = configStore.config.run_type;
+    autoManageFirewall.value =
+      configStore.config.auto_manage_firewall !== false;
     reverseProxySubmode.value = savedReverseProxySubmode.value;
   }
   loadAccessEntry();
@@ -437,12 +485,26 @@ watch(
   () => ({
     runType: configStore.config?.run_type,
     submode: configStore.config?.reverse_proxy_submode,
+    autoManageFirewall: configStore.config?.auto_manage_firewall,
   }),
-  ({ runType: nextMode }) => {
-    if (nextMode !== undefined) {
+  (
+    {
+      runType: nextMode,
+      submode: nextSubmode,
+      autoManageFirewall: nextAutoManageFirewall,
+    },
+    previousState,
+  ) => {
+    const shouldSyncRunMode =
+      nextMode !== undefined &&
+      (nextMode !== previousState?.runType ||
+        nextSubmode !== previousState?.submode);
+
+    if (shouldSyncRunMode) {
       mode.value = nextMode;
       reverseProxySubmode.value = savedReverseProxySubmode.value;
     }
+    autoManageFirewall.value = nextAutoManageFirewall !== false;
   },
 );
 
@@ -451,6 +513,38 @@ function reset() {
     mode.value = configStore.config.run_type;
     reverseProxySubmode.value = savedReverseProxySubmode.value;
   }
+}
+
+async function handleAutoManageFirewallChange(
+  value: boolean | "indeterminate",
+) {
+  if (isBusy.value) return;
+
+  const nextValue = value === true;
+  const previousValue = autoManageFirewall.value;
+
+  if (nextValue === previousValue) return;
+
+  autoManageFirewall.value = nextValue;
+  await runAutoManageFirewallUpdate(async () => {
+    try {
+      const next = await configStore.saveAutoManageFirewall(nextValue);
+      autoManageFirewall.value = next.auto_manage_firewall;
+      toast.success(
+        next.auto_manage_firewall
+          ? "已开启自动处理系统防火墙"
+          : "已关闭自动处理系统防火墙",
+        {
+          description: next.auto_manage_firewall
+            ? "后续切换模式等运行态同步会自动处理系统防火墙。"
+            : "后续切换模式等运行态同步将跳过系统防火墙，右侧“操作”按钮仍可手动执行；直连模式 run_type=0 仍会继续处理。",
+        },
+      );
+    } catch (error) {
+      autoManageFirewall.value = previousValue;
+      throw error;
+    }
+  });
 }
 
 async function save() {

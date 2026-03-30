@@ -456,6 +456,25 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
     },
   )
   .post(
+    "/config/auto_manage_firewall",
+    async ({ body }) => {
+      const next = await configManager.updateAutoManageFirewall(
+        body.auto_manage_firewall,
+      );
+      return {
+        success: true,
+        data: {
+          auto_manage_firewall: next,
+        },
+      };
+    },
+    {
+      body: t.Object({
+        auto_manage_firewall: t.Boolean(),
+      }),
+    },
+  )
+  .post(
     "/firewall/reset",
     async ({ body, set }) => {
       try {

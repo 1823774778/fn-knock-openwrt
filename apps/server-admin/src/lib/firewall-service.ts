@@ -7,6 +7,7 @@ import { goBackend, type GoResponse } from "./go-backend";
 import { buildGatewayAuthConfig } from "./subdomain-mode";
 import { whitelistManager } from "./whitelist-manager";
 import { isReverseProxySubdomainMode } from "./reverse-proxy-submode";
+import { shouldAutoManageFirewallForRunType } from "./firewall-automation";
 
 const DISABLED_DEFAULT_ROUTE = "/__select__";
 
@@ -224,6 +225,10 @@ export class FirewallService {
     const protocolMappingEnabled =
       runType === 3 && protocolMappingFeature.enabled === true;
     const gatewayPort = this.resolveGatewayPort();
+    const autoManageFirewall = shouldAutoManageFirewallForRunType(
+      runType,
+      config,
+    );
     await this.runGoBackend(
       goBackend.setAuthConfig(buildGatewayAuthConfig(config)),
       "同步鉴权网关配置失败",
@@ -236,12 +241,19 @@ export class FirewallService {
     );
 
     if (runType === 1) {
-      await this.clearLegacyGatewayRedirects(gatewayPort);
+      if (autoManageFirewall) {
+        await this.clearLegacyGatewayRedirects(gatewayPort);
+      }
       await this.runGoBackend(
         goBackend.setProxyProtocolForce(true),
         "开启 Proxy Protocol 强制模式失败",
       );
-      await this.runGoBackend(goBackend.cleanIptables(), "清理防火墙规则失败");
+      if (autoManageFirewall) {
+        await this.runGoBackend(
+          goBackend.cleanIptables(),
+          "清理防火墙规则失败",
+        );
+      }
       await this.runGoBackend(
         goBackend.flushStreamRules(),
         "关闭 协议映射监听失败",
@@ -277,8 +289,10 @@ export class FirewallService {
         goBackend.setProxyProtocolForce(false),
         "关闭 Proxy Protocol 强制模式失败",
       );
-      await this.initDefaultFirewall(config, protocolMappingEnabled, runType);
-      await this.clearLegacyGatewayRedirects(gatewayPort);
+      if (autoManageFirewall) {
+        await this.initDefaultFirewall(config, protocolMappingEnabled, runType);
+        await this.clearLegacyGatewayRedirects(gatewayPort);
+      }
       await this.runGoBackend(goBackend.flushRules(), "清空路径路由失败");
       await this.runGoBackend(
         goBackend.setHostRules(config.host_mappings),
@@ -302,7 +316,9 @@ export class FirewallService {
       return;
     }
 
-    await this.clearLegacyGatewayRedirects(gatewayPort);
+    if (autoManageFirewall) {
+      await this.clearLegacyGatewayRedirects(gatewayPort);
+    }
     await this.runGoBackend(
       goBackend.setProxyProtocolForce(false),
       "关闭 Proxy Protocol 强制模式失败",
@@ -312,10 +328,14 @@ export class FirewallService {
       goBackend.flushStreamRules(),
       "关闭 协议映射监听失败",
     );
-    await this.initDefaultFirewall(config, false, runType);
+    if (autoManageFirewall) {
+      await this.initDefaultFirewall(config, false, runType);
+    }
 
     if (runType === 0) {
-      await this.syncActiveWhitelistRecords();
+      if (autoManageFirewall) {
+        await this.syncActiveWhitelistRecords();
+      }
       if (config.proxy_mappings) {
         await this.runGoBackend(
           goBackend.setRules(config.proxy_mappings),

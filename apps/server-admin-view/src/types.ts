@@ -358,6 +358,7 @@ export interface TerminalRuntimeStatus {
 export interface AppConfig {
   run_type: RunType;
   reverse_proxy_submode: ReverseProxySubmode;
+  auto_manage_firewall: boolean;
   whitelist_ips: string[];
   default_route: string;
   proxy_mappings: ProxyMapping[];

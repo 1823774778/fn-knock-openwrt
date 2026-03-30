@@ -30,6 +30,10 @@ import {
   normalizeReverseProxySubmode,
   type ReverseProxySubmode,
 } from "./reverse-proxy-submode";
+import {
+  DEFAULT_AUTO_MANAGE_FIREWALL,
+  normalizeAutoManageFirewall,
+} from "./firewall-automation";
 
 const REDIS_CONFIG = {
   host: process.env.REDIS_HOST || "127.0.0.1",
@@ -296,6 +300,7 @@ export type LoginSession = {
 export interface AppConfig {
   run_type: RunType;
   reverse_proxy_submode: ReverseProxySubmode;
+  auto_manage_firewall: boolean;
   whitelist_ips: string[];
   proxy_mappings: ProxyMapping[];
   host_mappings: HostMapping[];
@@ -386,6 +391,7 @@ const DEFAULT_ROUTE_PLACEHOLDER = "/__select__";
 const DEFAULT_CONFIG: AppConfig = {
   run_type: 1,
   reverse_proxy_submode: DEFAULT_REVERSE_PROXY_SUBMODE,
+  auto_manage_firewall: DEFAULT_AUTO_MANAGE_FIREWALL,
   whitelist_ips: [],
   proxy_mappings: [],
   host_mappings: [],
@@ -1419,6 +1425,9 @@ export class ConfigManager {
         if (![0, 1, 3].includes(parsed.run_type)) parsed.run_type = 1;
         parsed.reverse_proxy_submode = normalizeReverseProxySubmode(
           parsed.reverse_proxy_submode,
+        );
+        parsed.auto_manage_firewall = normalizeAutoManageFirewall(
+          parsed.auto_manage_firewall,
         );
         if (!parsed.default_route) parsed.default_route = "/__select__";
         if (!parsed.default_tunnel) parsed.default_tunnel = "frp";
@@ -2949,6 +2958,16 @@ export class ConfigManager {
     }
 
     await this.saveConfig(config);
+  }
+
+  async updateAutoManageFirewall(
+    auto_manage_firewall: boolean,
+  ): Promise<boolean> {
+    const config = await this.getConfig();
+    config.auto_manage_firewall =
+      normalizeAutoManageFirewall(auto_manage_firewall);
+    await this.saveConfig(config);
+    return config.auto_manage_firewall;
   }
 
   async updateReverseProxySubmode(

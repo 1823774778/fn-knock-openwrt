@@ -4,6 +4,7 @@ import { goBackend } from "./go-backend";
 import { configManager, redis } from "./redis";
 import { ipLocationRefs, ipLocationService } from "./ip-location";
 import { normalizeIp } from "./ip-normalize";
+import { shouldAutoManageFirewallForRunType } from "./firewall-automation";
 
 export interface WhiteListRecord {
   id: string;
@@ -35,6 +36,21 @@ export class IPTablesWhiteListManager {
   private getIPRecordsKey(ip: string) {
     const normalizedIp = normalizeIp(ip) || String(ip || "").trim();
     return `${PREFIX}:ip_records:${normalizedIp}`;
+  }
+
+  private async shouldSyncDirectModeFirewall(): Promise<boolean> {
+    const config = await configManager.getConfig();
+    return shouldAutoManageFirewallForRunType(config.run_type, config);
+  }
+
+  private async syncAllowedIP(ip: string) {
+    if (!(await this.shouldSyncDirectModeFirewall())) return;
+    await goBackend.allowIP(ip);
+  }
+
+  private async removeAllowedIP(ip: string) {
+    if (!(await this.shouldSyncDirectModeFirewall())) return;
+    await goBackend.removeIP(ip);
   }
 
   async getRecordById(id: string): Promise<WhiteListRecord | null> {
@@ -124,10 +140,7 @@ export class IPTablesWhiteListManager {
     await ipLocationService.registerUsage(normalizedIp, [
       ipLocationRefs.whitelist(id),
     ]);
-    const config = await configManager.getConfig();
-    if (config.run_type == 0) {
-      await goBackend.allowIP(normalizedIp);
-    }
+    await this.syncAllowedIP(normalizedIp);
     return id;
   }
 
@@ -152,11 +165,7 @@ export class IPTablesWhiteListManager {
     if (remaining.length === 0) {
       await this.redis.srem(KEYS.IPS, record.ip);
       await this.redis.del(ipKey);
-      const config = await configManager.getConfig();
-      const runType = config.run_type;
-      if (runType === 0) {
-        await goBackend.removeIP(record.ip);
-      }
+      await this.removeAllowedIP(record.ip);
     }
 
     return true;
@@ -413,18 +422,13 @@ export class IPTablesWhiteListManager {
       ipLocationRefs.whitelist(id),
     ]);
 
-    const config = await configManager.getConfig();
-    if (config.run_type === 0) {
-      await goBackend.allowIP(normalizedNewIp);
-    }
+    await this.syncAllowedIP(normalizedNewIp);
 
     const remainingOldRecords = await this.findRecordsByIP(oldIp);
     if (remainingOldRecords.length === 0) {
       await this.redis.srem(KEYS.IPS, oldIp);
       await this.redis.del(oldIpKey);
-      if (config.run_type === 0) {
-        await goBackend.removeIP(oldIp);
-      }
+      await this.removeAllowedIP(oldIp);
     }
 
     return nextRecord;
@@ -515,16 +519,13 @@ export class IPTablesWhiteListManager {
       }
 
       await pipeline.exec();
-      const config = await configManager.getConfig();
       for (const ip of touchedIps) {
         const active = await this.findRecordsByIP(ip);
         if (active.length > 0) continue;
         const ipKey = this.getIPRecordsKey(ip);
         await this.redis.srem(KEYS.IPS, ip);
         await this.redis.del(ipKey);
-        if (config.run_type == 0) {
-          await goBackend.removeIP(ip);
-        }
+        await this.removeAllowedIP(ip);
       }
     } catch (error) {
       console.error("Error processing expired records:", error);

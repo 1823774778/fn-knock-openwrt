@@ -131,6 +131,14 @@ export const ConfigAPI = {
   }): Promise<void> {
     await apiClient.post("/config/run_type", payload);
   },
+  async updateAutoManageFirewall(payload: {
+    auto_manage_firewall: boolean;
+  }): Promise<{
+    auto_manage_firewall: boolean;
+  }> {
+    const res = await apiClient.post("/config/auto_manage_firewall", payload);
+    return res.data.data;
+  },
   async getTerminalFeature(): Promise<TerminalFeatureConfig> {
     const res = await apiClient.get("/config/terminal_feature");
     return res.data.data;
