@@ -38,6 +38,10 @@ import type {
   TerminalRuntimeStatus,
   TerminalSessionRecord,
   TerminalTmuxInstallState,
+  CidrCitiesPayload,
+  CidrLookupPayload,
+  CidrProvincesPayload,
+  CidrSelectorPayload,
 } from "../types";
 import { createSignedApiClient } from "@frontend-core/api/createSignedApiClient";
 import type { CaptchaSettings } from "@frontend-core/captcha/types";
@@ -1526,6 +1530,38 @@ export const DDNSAPI = {
     const res = await apiClient.get("/ddns/poll", {
       params: typeof cursor === "number" ? { cursor } : undefined,
     });
+    return res.data.data;
+  },
+};
+
+export const CidrAPI = {
+  async getProvinces(): Promise<CidrProvincesPayload> {
+    const res = await apiClient.get("/cidr/provinces");
+    return res.data.data;
+  },
+  async getCities(province: string): Promise<CidrCitiesPayload> {
+    const res = await apiClient.get("/cidr/cities", {
+      params: { province },
+    });
+    return res.data.data;
+  },
+  async getSelector(province?: string): Promise<CidrSelectorPayload> {
+    const res = await apiClient.get("/cidr/selector", {
+      params: province ? { province } : undefined,
+    });
+    return res.data.data;
+  },
+  async getCidrs(payload: {
+    province: string;
+    city?: string | null;
+  }): Promise<CidrLookupPayload> {
+    const params: Record<string, string> = {
+      province: payload.province,
+    };
+    if (payload.city) {
+      params.city = payload.city;
+    }
+    const res = await apiClient.get("/cidr/cidrs", { params });
     return res.data.data;
   },
 };

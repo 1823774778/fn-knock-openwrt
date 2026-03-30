@@ -52,6 +52,7 @@ import { syncGatewayLoggingToGateway } from "./lib/gateway-logging";
 import { syncSSLDeploymentToGateway } from "./lib/ssl-gateway";
 import { terminalRoutes } from "./routes/terminal";
 import { terminalManager } from "./lib/terminal-manager";
+import { cidrRoutes } from "./routes/cidr";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -281,6 +282,7 @@ app.use(ddnsRoutes);
 app.use(gatewayLogsRoutes);
 app.use(updateRoutes);
 app.use(terminalRoutes);
+app.use(cidrRoutes);
 
 app.get("/__fn-knock/runtime-hmac-secret", ({ set }) => {
   if (!EXPOSE_RUNTIME_HMAC_SECRET) {
