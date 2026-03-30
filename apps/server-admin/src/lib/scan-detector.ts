@@ -1,4 +1,11 @@
-import { configManager, redis } from "./redis";
+import { isAnySubdomainRoutingMode } from "./reverse-proxy-submode";
+import {
+  configManager,
+  redis,
+  type AppConfig,
+  type HostMapping,
+  type ProxyMapping,
+} from "./redis";
 import { ipLocationRefs, ipLocationService } from "./ip-location";
 
 type ScanHit = {
@@ -46,6 +53,50 @@ class ScanDetector {
 
   private normalizeIp(ip: string) {
     return ip.trim();
+  }
+
+  private normalizeHost(value: string) {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) return "";
+
+    try {
+      return new URL(`https://${normalized}`).hostname.toLowerCase();
+    } catch {
+      return normalized
+        .replace(/^[a-z]+:\/\//i, "")
+        .replace(/\/.*$/, "")
+        .replace(/:\d+$/, "")
+        .replace(/\.+$/, "");
+    }
+  }
+
+  private resolveForwardedHost(request: Request) {
+    const forwarded = request.headers
+      .get("x-forwarded-host")
+      ?.split(",")[0]
+      ?.trim();
+    if (forwarded) return this.normalizeHost(forwarded);
+
+    try {
+      return this.normalizeHost(new URL(request.url).host);
+    } catch {
+      return this.normalizeHost(request.headers.get("host") || "");
+    }
+  }
+
+  private resolveForwardedPath(request: Request) {
+    const forwarded = request.headers
+      .get("x-forwarded-path")
+      ?.split(",")[0]
+      ?.trim();
+    if (forwarded) return forwarded;
+
+    try {
+      const url = new URL(request.url);
+      return `${url.pathname}${url.search}`;
+    } catch {
+      return "/";
+    }
   }
 
   private isLocalAddress(ip: string) {
@@ -125,6 +176,107 @@ class ScanDetector {
     return cleanRequestPath.startsWith(`${cleanMappingPath}/`);
   }
 
+  private isFnosSharePath(path: string) {
+    const cleanPath = this.normalizePath(path);
+    return cleanPath === "/s" || cleanPath.startsWith("/s/");
+  }
+
+  private findBestMatchingProxyMapping(
+    path: string,
+    mappings: ProxyMapping[],
+  ): ProxyMapping | null {
+    const cleanPath = this.normalizePath(path);
+    let bestMatch: ProxyMapping | null = null;
+    let bestLength = -1;
+
+    for (const mapping of mappings) {
+      if (!mapping?.path || !this.isKnownProxyPath(cleanPath, mapping.path)) {
+        continue;
+      }
+      const normalizedMappingPath = this.normalizePath(mapping.path);
+      if (normalizedMappingPath.length <= bestLength) continue;
+      bestMatch = mapping;
+      bestLength = normalizedMappingPath.length;
+    }
+
+    return bestMatch;
+  }
+
+  private findMatchingHostMapping(host: string, mappings: HostMapping[]) {
+    const cleanHost = this.normalizeHost(host);
+    if (!cleanHost) return null;
+
+    return (
+      mappings.find(
+        (mapping) => this.normalizeHost(mapping.host) === cleanHost,
+      ) || null
+    );
+  }
+
+  private isPublicHostMapping(mapping: HostMapping | null) {
+    return Boolean(
+      mapping &&
+      mapping.use_auth === false &&
+      mapping.access_mode !== "strict_whitelist",
+    );
+  }
+
+  private resolveDefaultProxyMapping(
+    config: Pick<AppConfig, "default_route" | "proxy_mappings">,
+  ): ProxyMapping | null {
+    const defaultRoute = config.default_route?.trim();
+    if (!defaultRoute || defaultRoute === "/__select__") {
+      return null;
+    }
+
+    return (
+      config.proxy_mappings.find(
+        (mapping) =>
+          this.normalizePath(mapping.path) === this.normalizePath(defaultRoute),
+      ) || null
+    );
+  }
+
+  isRequestExemptFromScan(
+    request: Request,
+    config: Pick<
+      AppConfig,
+      | "run_type"
+      | "reverse_proxy_submode"
+      | "default_route"
+      | "fnos_share_bypass"
+      | "proxy_mappings"
+      | "host_mappings"
+    >,
+  ) {
+    const forwardedPath = this.resolveForwardedPath(request);
+    if (
+      config.fnos_share_bypass?.enabled === true &&
+      this.isFnosSharePath(forwardedPath)
+    ) {
+      return true;
+    }
+
+    if (isAnySubdomainRoutingMode(config)) {
+      const matchedHostMapping = this.findMatchingHostMapping(
+        this.resolveForwardedHost(request),
+        config.host_mappings || [],
+      );
+      return this.isPublicHostMapping(matchedHostMapping);
+    }
+
+    const matchedProxyMapping = this.findBestMatchingProxyMapping(
+      forwardedPath,
+      config.proxy_mappings || [],
+    );
+    if (matchedProxyMapping) {
+      return matchedProxyMapping.use_auth === false;
+    }
+
+    const defaultProxyMapping = this.resolveDefaultProxyMapping(config);
+    return defaultProxyMapping?.use_auth === false;
+  }
+
   async isCommonPath(path: string) {
     const cleanPath = this.normalizePath(path);
     if (cleanPath === "/__auth__" || cleanPath.startsWith("/__auth__/"))
@@ -168,14 +320,14 @@ class ScanDetector {
       "/.well-known/ai-plugin.json",
       "/apple-touch-icon.png",
       "/manifest.json",
-      '/login',
-      '/locales/zh-CN/os.json',
-      '/license/v1/device/baseInfo',
-      '/locales/zh-CN/apps/setting.json',
-      '/app-center/v1/check-update?language=zh-CN',
-      '/sac/rpcproxy/v1/new-user-guide/status',
-      '/locales/zh-CN/pages/login.json',
-      '/static/bg/wallpaper-1.webp'
+      "/login",
+      "/locales/zh-CN/os.json",
+      "/license/v1/device/baseInfo",
+      "/locales/zh-CN/apps/setting.json",
+      "/app-center/v1/check-update?language=zh-CN",
+      "/sac/rpcproxy/v1/new-user-guide/status",
+      "/locales/zh-CN/pages/login.json",
+      "/static/bg/wallpaper-1.webp",
     ]);
     if (common.has(cleanPath)) return true;
 

@@ -56,8 +56,7 @@ const buildPasskeyStatus = async (request: Request) => {
   const isPasskeyAvailableOnCurrentHost =
     rpInfo.mode === "parent_domain"
       ? !!parentRpId &&
-        (requestHost === parentRpId ||
-          requestHost.endsWith(`.${parentRpId}`))
+        (requestHost === parentRpId || requestHost.endsWith(`.${parentRpId}`))
       : !sharedAuthHost || requestHost === sharedAuthHost;
   return {
     available: passkeys.length > 0 && isPasskeyAvailableOnCurrentHost,
@@ -419,7 +418,12 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
         }
       }
 
-      if (config.run_type !== 0) {
+      const isScannerExemptRequest = scanDetector.isRequestExemptFromScan(
+        request,
+        config,
+      );
+
+      if (config.run_type !== 0 && !isScannerExemptRequest) {
         const isBlacklisted = await scanDetector.isBlacklisted(clientIp);
         if (isBlacklisted) {
           headers.set("X-Option", "Deny");
