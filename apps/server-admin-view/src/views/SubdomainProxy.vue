@@ -54,14 +54,11 @@
                   <div class="text-sm">
                     <template v-if="authServiceMapping">
                       <div class="break-all font-medium">
-                        {{ authServiceMapping.host }}
-                      </div>
-                      <div class="break-all text-muted-foreground">
-                        {{ authServiceMapping.target }}
+                        {{ authServiceMapping.host }}:{{ displayAccessEntryPort }}
                       </div>
                       <div class="mt-1 text-xs text-muted-foreground">
                         在尚未登录时，会自动跳转到
-                        <code>https://{{ authServiceMapping.host }}</code>
+                        <code>https://{{ authServiceMapping.host }}:{{ displayAccessEntryPort }}</code>
                         完成登录。
                       </div>
                     </template>
