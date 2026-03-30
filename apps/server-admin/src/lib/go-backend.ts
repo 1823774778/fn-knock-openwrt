@@ -114,6 +114,12 @@ export interface ReverseProxyThrottleConfig {
   block_seconds: number;
 }
 
+export interface GatewayVisibilityConfig {
+  enabled: boolean;
+  cidrs: string[];
+  updated_at?: string | null;
+}
+
 export interface GatewayLoggingDirectory {
   logs_dir: string;
 }
@@ -336,6 +342,25 @@ export class GoBackendService {
       "/api/config/reverse-proxy-throttle",
       "POST",
       config,
+    );
+  }
+
+  async getGatewayVisibility(): Promise<GoResponse<GatewayVisibilityConfig>> {
+    return this.request<GatewayVisibilityConfig>("/api/config/visibility");
+  }
+
+  async setGatewayVisibility(
+    config: GatewayVisibilityConfig,
+  ): Promise<GoResponse<GatewayVisibilityConfig>> {
+    const payload = {
+      enabled: config.enabled,
+      cidrs: config.cidrs,
+      ...(config.updated_at ? { updated_at: config.updated_at } : {}),
+    };
+    return this.request<GatewayVisibilityConfig>(
+      "/api/config/visibility",
+      "POST",
+      payload,
     );
   }
 

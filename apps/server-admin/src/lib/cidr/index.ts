@@ -18,7 +18,9 @@ const CIDR_REQUEST_TIMEOUT_MS = Math.max(
   Number.parseInt(process.env.CIDR_REQUEST_TIMEOUT_MS || "10000", 10) || 10000,
 );
 const CIDR_SUCCESS_CACHE_TTL_SECONDS = 30 * 24 * 60 * 60;
+const CIDR_ERROR_BODY_PREVIEW_LENGTH = 280;
 const CIDR_USER_AGENT = "fn-knock-server-admin/1.0";
+const CIDR_CITY_ONLY_PROVINCES = new Set(["广东", "浙江"]);
 const PREFIX = "fn_knock:cidr";
 
 const KEYS = {
@@ -35,6 +37,17 @@ type UpstreamEnvelope<T> = {
   code?: number;
   message?: string;
   data?: T;
+};
+
+type UpstreamErrorContext = {
+  bodyPreview?: string;
+  contentType?: string;
+  requestId?: string;
+  status?: number;
+  statusText?: string;
+  upstreamCode?: number;
+  upstreamMessage?: string;
+  url: string;
 };
 
 type UpstreamProvinceItem = {
@@ -86,6 +99,70 @@ const ensureBaseUrl = (value: string) =>
   value.endsWith("/") ? value : `${value}/`;
 
 const normalizeName = (value: unknown): string => String(value ?? "").trim();
+
+const sanitizeBodyPreview = (value: string): string | undefined => {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) return "<空响应>";
+  if (normalized.length <= CIDR_ERROR_BODY_PREVIEW_LENGTH) {
+    return normalized;
+  }
+  return `${normalized.slice(0, CIDR_ERROR_BODY_PREVIEW_LENGTH)}...`;
+};
+
+const getHeaderValue = (
+  headers: Headers,
+  names: readonly string[],
+): string | undefined => {
+  for (const name of names) {
+    const value = headers.get(name)?.trim();
+    if (value) return value;
+  }
+  return undefined;
+};
+
+const buildUpstreamErrorMessage = (
+  summary: string,
+  context: UpstreamErrorContext,
+): string => {
+  const details: string[] = [`上游地址: ${context.url}`];
+
+  if (typeof context.status === "number") {
+    const statusText = normalizeName(context.statusText);
+    details.push(
+      `状态: ${context.status}${statusText ? ` ${statusText}` : ""}`,
+    );
+  }
+
+  if (context.contentType) {
+    details.push(`类型: ${context.contentType}`);
+  }
+
+  if (typeof context.upstreamCode === "number") {
+    details.push(`上游 code: ${context.upstreamCode}`);
+  }
+
+  if (context.upstreamMessage && context.upstreamMessage !== summary) {
+    details.push(`上游消息: ${context.upstreamMessage}`);
+  }
+
+  if (context.requestId) {
+    details.push(`请求 ID: ${context.requestId}`);
+  }
+
+  if (context.bodyPreview) {
+    details.push(`响应摘要: ${context.bodyPreview}`);
+  }
+
+  return `${summary}。${details.join("；")}`;
+};
+
+const supportsProvinceWideSelection = (
+  province: string,
+  isMunicipality: boolean,
+): boolean => {
+  if (isMunicipality) return false;
+  return !CIDR_CITY_ONLY_PROVINCES.has(normalizeName(province));
+};
 
 const toSafeInt = (value: unknown, fallback = 0): number => {
   const parsed = Number(value);
@@ -199,20 +276,59 @@ class CidrService {
     }
 
     const response = await fetchWithTimeout(url);
+    const rawBody = (await response.text().catch(() => "")).replace(
+      /^\uFEFF/,
+      "",
+    );
+    const context: UpstreamErrorContext = {
+      url: url.toString(),
+      status: response.status,
+      statusText: response.statusText,
+      contentType: response.headers.get("content-type")?.trim() || undefined,
+      requestId: getHeaderValue(response.headers, [
+        "x-scf-request-id",
+        "x-request-id",
+        "cf-ray",
+      ]),
+      bodyPreview: sanitizeBodyPreview(rawBody),
+    };
+
     if (!response.ok) {
-      throw new CidrServiceError(`CIDR 上游请求失败 (${response.status})`, 502);
+      console.error("[CIDR] upstream request failed", context);
+      throw new CidrServiceError(
+        buildUpstreamErrorMessage(
+          `CIDR 上游请求失败 (${response.status})`,
+          context,
+        ),
+        502,
+      );
     }
 
     let payload: UpstreamEnvelope<T> | null = null;
     try {
-      payload = (await response.json()) as UpstreamEnvelope<T>;
+      payload = JSON.parse(rawBody) as UpstreamEnvelope<T>;
     } catch {
-      throw new CidrServiceError("CIDR 上游返回了无效 JSON", 502);
+      console.error("[CIDR] upstream returned invalid JSON", context);
+      throw new CidrServiceError(
+        buildUpstreamErrorMessage("CIDR 上游返回了无效 JSON", context),
+        502,
+      );
     }
 
     if (payload?.code !== 0 || payload.data == null) {
+      const upstreamMessage = normalizeName(payload?.message);
+      const nextContext: UpstreamErrorContext = {
+        ...context,
+        upstreamCode:
+          typeof payload?.code === "number" ? payload.code : undefined,
+        upstreamMessage: upstreamMessage || undefined,
+      };
+      console.error("[CIDR] upstream returned unexpected payload", nextContext);
       throw new CidrServiceError(
-        payload?.message?.trim() || "CIDR 上游返回异常",
+        buildUpstreamErrorMessage(
+          upstreamMessage || "CIDR 上游返回异常",
+          nextContext,
+        ),
         502,
       );
     }
@@ -257,7 +373,10 @@ class CidrService {
     const resolvedProvince = normalizeName(data.province) || province;
     const isMunicipality =
       items.length === 1 && normalizeName(items[0]?.name) === resolvedProvince;
-    const supportsProvinceWide = !isMunicipality;
+    const supportsProvinceWide = supportsProvinceWideSelection(
+      resolvedProvince,
+      isMunicipality,
+    );
 
     const options: CidrCityOption[] = [];
     if (supportsProvinceWide) {
@@ -291,9 +410,9 @@ class CidrService {
       total: toSafeInt(data.total, items.length),
       isMunicipality,
       supportsProvinceWide,
-      defaultValue: isMunicipality
-        ? resolvedProvince
-        : CIDR_PROVINCE_WIDE_VALUE,
+      defaultValue: supportsProvinceWide
+        ? CIDR_PROVINCE_WIDE_VALUE
+        : items[0]?.name || "",
     };
   }
 

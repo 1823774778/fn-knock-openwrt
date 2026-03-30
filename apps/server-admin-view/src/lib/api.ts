@@ -22,6 +22,7 @@ import type {
   ThreatOverview,
   FnosShareBypassConfig,
   GatewaySettings,
+  GatewayVisibilityDetails,
   FnKnockBackupImportArchiveRequest,
   FnKnockBackupImportResult,
   BackupDirectoryFilesPayload,
@@ -316,6 +317,21 @@ export const ConfigAPI = {
     payload: Partial<GatewaySettings>,
   ): Promise<GatewaySettings> {
     const res = await apiClient.post("/config/gateway", payload);
+    return res.data.data;
+  },
+  async getGatewayVisibility(): Promise<GatewayVisibilityDetails> {
+    const res = await apiClient.get("/config/gateway/visibility");
+    return res.data.data;
+  },
+  async updateGatewayVisibility(payload: {
+    enabled: boolean;
+    selections: Array<{
+      province: string;
+      query_city?: string | null;
+    }>;
+    custom_cidrs: string[];
+  }): Promise<GatewayVisibilityDetails> {
+    const res = await apiClient.post("/config/gateway/visibility", payload);
     return res.data.data;
   },
   async getProxyProtocolForce(): Promise<ProxyProtocolForce> {

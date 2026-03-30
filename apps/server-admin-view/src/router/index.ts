@@ -91,6 +91,12 @@ const router = createRouter({
           component: () => import("../views/SystemSettings.vue"),
         },
         {
+          path: "system/gateway-visibility",
+          name: "GatewayVisibilitySettings",
+          component: () =>
+            import("../views/system-settings/GatewayVisibilitySettings.vue"),
+        },
+        {
           path: "sessions",
           name: "SessionManagement",
           component: () => import("../views/SessionManagement.vue"),

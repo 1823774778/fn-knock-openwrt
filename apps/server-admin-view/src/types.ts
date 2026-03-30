@@ -463,10 +463,40 @@ export type ReverseProxyThrottleConfig = {
   block_seconds: number;
 };
 
+export type GatewayVisibilitySelection = {
+  province: string;
+  city: string | null;
+  label: string;
+  value: string;
+  query_city: string | null;
+  is_province_wide: boolean;
+  is_municipality: boolean;
+};
+
+export type GatewayVisibilitySummary = {
+  enabled: boolean;
+  selection_count: number;
+  custom_cidr_count: number;
+  cidr_count: number;
+  updated_at: string | null;
+};
+
+export type GatewayVisibilityConfig = {
+  enabled: boolean;
+  selections: GatewayVisibilitySelection[];
+  custom_cidrs: string[];
+};
+
+export type GatewayVisibilityDetails = {
+  config: GatewayVisibilityConfig;
+  summary: GatewayVisibilitySummary;
+};
+
 export type GatewaySettings = {
   auth_cache_ttl_seconds: number;
   auth_cache_unauthorized_ttl_seconds: number;
   reverse_proxy_throttle: ReverseProxyThrottleConfig;
+  visibility: GatewayVisibilitySummary;
 };
 
 export type TrafficStats = {

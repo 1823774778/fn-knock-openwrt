@@ -2,7 +2,9 @@ import { Elysia, t } from "elysia";
 import {
   type AppConfig,
   configManager,
+  DEFAULT_GATEWAY_VISIBILITY_CONFIG,
   DEFAULT_REVERSE_PROXY_THROTTLE_CONFIG,
+  type GatewayVisibilityRuntimeState,
   type HostMapping,
   type LoginSession,
   type ProtocolMappingFeatureConfig,
@@ -32,6 +34,12 @@ import {
   buildHostMappingsBookmarksDocument,
 } from "../lib/host-mapping-bookmarks";
 import { getGatewayLoggingConfigForResponse } from "../lib/gateway-logging";
+import {
+  buildGatewayVisibilitySummary,
+  compileGatewayVisibilityConfig,
+  getGatewayVisibilityDetails,
+  syncGatewayVisibilityToGateway,
+} from "../lib/gateway-visibility";
 import { syncSSLDeploymentToGateway } from "../lib/ssl-gateway";
 import {
   isAnySubdomainRoutingMode,
@@ -341,8 +349,37 @@ const rollbackProtocolMappingFeatureAndRuntime = async (
   return null;
 };
 
+const rollbackGatewayVisibilityConfigAndRuntime = async (
+  previousConfig: AppConfig,
+  previousRuntime: GatewayVisibilityRuntimeState,
+): Promise<string | null> => {
+  try {
+    await configManager.saveConfig(previousConfig);
+  } catch (error: any) {
+    return error?.message || "恢复可见性原始配置失败";
+  }
+
+  try {
+    await configManager.saveGatewayVisibilityRuntimeState(previousRuntime);
+  } catch (error: any) {
+    return error?.message || "恢复可见性运行时 CIDR 失败";
+  }
+
+  try {
+    await syncGatewayVisibilityToGateway(previousRuntime);
+  } catch (error: any) {
+    return error?.message || "恢复网关可见性运行态失败";
+  }
+
+  return null;
+};
+
 const buildGatewaySettingsResponse = (
-  config: Pick<AppConfig, "subdomain_mode" | "reverse_proxy_throttle">,
+  config: Pick<
+    AppConfig,
+    "subdomain_mode" | "reverse_proxy_throttle" | "gateway_visibility"
+  >,
+  visibilityRuntime: GatewayVisibilityRuntimeState,
 ) => ({
   auth_cache_ttl_seconds: config.subdomain_mode?.auth_cache_ttl_seconds ?? 1,
   auth_cache_unauthorized_ttl_seconds:
@@ -350,6 +387,10 @@ const buildGatewaySettingsResponse = (
   reverse_proxy_throttle: config.reverse_proxy_throttle ?? {
     ...DEFAULT_REVERSE_PROXY_THROTTLE_CONFIG,
   },
+  visibility: buildGatewayVisibilitySummary(
+    config.gateway_visibility ?? DEFAULT_GATEWAY_VISIBILITY_CONFIG,
+    visibilityRuntime,
+  ),
 });
 
 const buildCountSeries = (
@@ -630,10 +671,13 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
     },
   )
   .get("/config/gateway", async () => {
-    const config = await configManager.getConfig();
+    const [config, visibilityRuntime] = await Promise.all([
+      configManager.getConfig(),
+      configManager.getGatewayVisibilityRuntimeState(),
+    ]);
     return {
       success: true,
-      data: buildGatewaySettingsResponse(config),
+      data: buildGatewaySettingsResponse(config, visibilityRuntime),
     };
   })
   .post(
@@ -663,14 +707,18 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
         }
 
         const updatedConfig = await configManager.getConfig();
-        const [authConfigResult, reverseProxyThrottleResult] =
-          await Promise.all([
-            goBackend.setAuthConfig(buildGatewayAuthConfig(updatedConfig)),
-            goBackend.setReverseProxyThrottle(
-              updatedConfig.reverse_proxy_throttle ??
-                DEFAULT_REVERSE_PROXY_THROTTLE_CONFIG,
-            ),
-          ]);
+        const [
+          visibilityRuntime,
+          authConfigResult,
+          reverseProxyThrottleResult,
+        ] = await Promise.all([
+          configManager.getGatewayVisibilityRuntimeState(),
+          goBackend.setAuthConfig(buildGatewayAuthConfig(updatedConfig)),
+          goBackend.setReverseProxyThrottle(
+            updatedConfig.reverse_proxy_throttle ??
+              DEFAULT_REVERSE_PROXY_THROTTLE_CONFIG,
+          ),
+        ]);
 
         const syncErrors: string[] = [];
         if (!authConfigResult.success) {
@@ -689,7 +737,7 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
 
         return {
           success: true,
-          data: buildGatewaySettingsResponse(updatedConfig),
+          data: buildGatewaySettingsResponse(updatedConfig, visibilityRuntime),
         };
       } catch (error: any) {
         const rollbackError = await rollbackConfigAndRuntime(previousConfig);
@@ -714,6 +762,69 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
             block_seconds: t.Optional(t.Number()),
           }),
         ),
+      }),
+    },
+  )
+  .get("/config/gateway/visibility", async () => {
+    const details = await getGatewayVisibilityDetails();
+    return {
+      success: true,
+      data: details,
+    };
+  })
+  .post(
+    "/config/gateway/visibility",
+    async ({ body, set }) => {
+      const [previousConfig, previousRuntime] = await Promise.all([
+        configManager.getConfig(),
+        configManager.getGatewayVisibilityRuntimeState(),
+      ]);
+
+      try {
+        const compiled = await compileGatewayVisibilityConfig({
+          enabled: body.enabled,
+          selections: body.selections,
+          custom_cidrs: body.custom_cidrs,
+        });
+
+        const [savedConfig, savedRuntime] = await Promise.all([
+          configManager.updateGatewayVisibilityConfig(compiled.config),
+          configManager.saveGatewayVisibilityRuntimeState(compiled.runtime),
+        ]);
+
+        await syncGatewayVisibilityToGateway(savedRuntime);
+
+        return {
+          success: true,
+          data: {
+            config: savedConfig,
+            summary: buildGatewayVisibilitySummary(savedConfig, savedRuntime),
+          },
+        };
+      } catch (error: any) {
+        const rollbackError = await rollbackGatewayVisibilityConfigAndRuntime(
+          previousConfig,
+          previousRuntime,
+        );
+        set.status = 502;
+        return {
+          success: false,
+          message: rollbackError
+            ? `${error?.message || "更新网关可见性失败"}；回滚失败：${rollbackError}`
+            : error?.message || "更新网关可见性失败，已回滚配置",
+        };
+      }
+    },
+    {
+      body: t.Object({
+        enabled: t.Boolean(),
+        selections: t.Array(
+          t.Object({
+            province: t.String(),
+            query_city: t.Optional(t.Union([t.String(), t.Null()])),
+          }),
+        ),
+        custom_cidrs: t.Array(t.String()),
       }),
     },
   )

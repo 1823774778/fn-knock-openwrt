@@ -34,6 +34,7 @@ import {
   DEFAULT_AUTO_MANAGE_FIREWALL,
   normalizeAutoManageFirewall,
 } from "./firewall-automation";
+import { normalizeCidrLines } from "../../../../packages/admin-shared/src/utils/cidr";
 
 const REDIS_CONFIG = {
   host: process.env.REDIS_HOST || "127.0.0.1",
@@ -181,6 +182,28 @@ export interface ReverseProxyThrottleConfig {
   block_seconds: number;
 }
 
+export interface GatewayVisibilitySelection {
+  province: string;
+  city: string | null;
+  label: string;
+  value: string;
+  query_city: string | null;
+  is_province_wide: boolean;
+  is_municipality: boolean;
+}
+
+export interface GatewayVisibilityConfig {
+  enabled: boolean;
+  selections: GatewayVisibilitySelection[];
+  custom_cidrs: string[];
+}
+
+export interface GatewayVisibilityRuntimeState {
+  enabled: boolean;
+  cidrs: string[];
+  updated_at: string | null;
+}
+
 export interface ProtocolMappingFeatureConfig {
   enabled: boolean;
 }
@@ -312,6 +335,7 @@ export interface AppConfig {
   fnos_share_bypass?: FnosShareBypassConfig;
   gateway_logging?: GatewayLoggingSettings;
   reverse_proxy_throttle?: ReverseProxyThrottleConfig;
+  gateway_visibility?: GatewayVisibilityConfig;
   auth_credential_settings?: AuthCredentialSettings;
   terminal_feature?: TerminalFeatureConfig;
 }
@@ -343,6 +367,19 @@ const DEFAULT_GATEWAY_LOGGING_SETTINGS: GatewayLoggingSettings = {
   enabled: false,
   max_days: 7,
 };
+
+export const DEFAULT_GATEWAY_VISIBILITY_CONFIG: GatewayVisibilityConfig = {
+  enabled: false,
+  selections: [],
+  custom_cidrs: [],
+};
+
+const DEFAULT_GATEWAY_VISIBILITY_RUNTIME_STATE: GatewayVisibilityRuntimeState =
+  {
+    enabled: false,
+    cidrs: [],
+    updated_at: null,
+  };
 
 export const DEFAULT_REVERSE_PROXY_THROTTLE_CONFIG: ReverseProxyThrottleConfig =
   {
@@ -433,6 +470,11 @@ const DEFAULT_CONFIG: AppConfig = {
   reverse_proxy_throttle: {
     ...DEFAULT_REVERSE_PROXY_THROTTLE_CONFIG,
   },
+  gateway_visibility: {
+    ...DEFAULT_GATEWAY_VISIBILITY_CONFIG,
+    selections: [],
+    custom_cidrs: [],
+  },
   auth_credential_settings: {
     ...DEFAULT_AUTH_CREDENTIAL_SETTINGS,
   },
@@ -492,6 +534,68 @@ const normalizeReverseProxyThrottleConfig = (
       raw.block_seconds,
       DEFAULT_REVERSE_PROXY_THROTTLE_CONFIG.block_seconds,
     ),
+  };
+};
+
+const normalizeGatewayVisibilitySelection = (
+  value?: Partial<GatewayVisibilitySelection> | null,
+): GatewayVisibilitySelection | null => {
+  const raw = value ?? {};
+  const province = normalizeOptionalString(raw.province);
+  const label = normalizeOptionalString(raw.label);
+  const valueLabel = normalizeOptionalString(raw.value);
+  const city = normalizeOptionalString(raw.city);
+  const queryCity = normalizeOptionalString(raw.query_city);
+
+  if (!province || !label || !valueLabel) {
+    return null;
+  }
+
+  return {
+    province,
+    city: city || null,
+    label,
+    value: valueLabel,
+    query_city: queryCity || null,
+    is_province_wide: raw.is_province_wide === true,
+    is_municipality: raw.is_municipality === true,
+  };
+};
+
+const normalizeGatewayVisibilityConfig = (
+  value?: Partial<GatewayVisibilityConfig> | null,
+): GatewayVisibilityConfig => {
+  const raw = value ?? {};
+
+  return {
+    enabled: raw.enabled === true,
+    selections: Array.isArray(raw.selections)
+      ? raw.selections
+          .map((item) => normalizeGatewayVisibilitySelection(item))
+          .filter((item): item is GatewayVisibilitySelection => item !== null)
+      : [],
+    custom_cidrs: normalizeCidrLines(
+      Array.isArray(raw.custom_cidrs)
+        ? raw.custom_cidrs.map((item) => String(item ?? ""))
+        : [],
+    ),
+  };
+};
+
+const normalizeGatewayVisibilityRuntimeState = (
+  value?: Partial<GatewayVisibilityRuntimeState> | null,
+): GatewayVisibilityRuntimeState => {
+  const raw = value ?? {};
+  const updatedAt = normalizeOptionalString(raw.updated_at);
+
+  return {
+    enabled: raw.enabled === true,
+    cidrs: normalizeCidrLines(
+      Array.isArray(raw.cidrs)
+        ? raw.cidrs.map((item) => String(item ?? ""))
+        : [],
+    ),
+    updated_at: updatedAt || null,
   };
 };
 
@@ -1164,6 +1268,7 @@ const normalizeCaptchaSettings = (
 export class ConfigManager {
   private redis: Redis;
   private configKey = "fn_knock:config";
+  private gatewayVisibilityRuntimeKey = "fn_knock:gateway:visibility:runtime";
   private captchaSettingsKey = "fn_knock:captcha:settings";
   private protocolMappingFeatureKey = "fn_knock:protocol-mapping:feature";
   private caHostsKey = "fn_knock:ca:hosts";
@@ -1448,6 +1553,9 @@ export class ConfigManager {
         parsed.reverse_proxy_throttle = normalizeReverseProxyThrottleConfig(
           parsed.reverse_proxy_throttle,
         );
+        parsed.gateway_visibility = normalizeGatewayVisibilityConfig(
+          parsed.gateway_visibility,
+        );
         parsed.auth_credential_settings = normalizeAuthCredentialSettings(
           parsed.auth_credential_settings,
           {
@@ -1472,6 +1580,11 @@ export class ConfigManager {
       fnos_share_bypass: { ...DEFAULT_FNOS_SHARE_BYPASS_CONFIG },
       gateway_logging: { ...DEFAULT_GATEWAY_LOGGING_SETTINGS },
       reverse_proxy_throttle: { ...DEFAULT_REVERSE_PROXY_THROTTLE_CONFIG },
+      gateway_visibility: {
+        ...DEFAULT_GATEWAY_VISIBILITY_CONFIG,
+        selections: [],
+        custom_cidrs: [],
+      },
       auth_credential_settings: { ...DEFAULT_AUTH_CREDENTIAL_SETTINGS },
       terminal_feature: { ...DEFAULT_TERMINAL_FEATURE_CONFIG },
     };
@@ -3049,6 +3162,27 @@ export class ConfigManager {
     return normalizeReverseProxyThrottleConfig(config.reverse_proxy_throttle);
   }
 
+  async getGatewayVisibilityConfig(): Promise<GatewayVisibilityConfig> {
+    const config = await this.getConfig();
+    return normalizeGatewayVisibilityConfig(config.gateway_visibility);
+  }
+
+  async getGatewayVisibilityRuntimeState(): Promise<GatewayVisibilityRuntimeState> {
+    try {
+      const raw = await this.redis.get(this.gatewayVisibilityRuntimeKey);
+      if (raw) {
+        return normalizeGatewayVisibilityRuntimeState(JSON.parse(raw));
+      }
+    } catch (error) {
+      console.error("Failed to parse gateway visibility runtime state", error);
+    }
+
+    return {
+      ...DEFAULT_GATEWAY_VISIBILITY_RUNTIME_STATE,
+      cidrs: [],
+    };
+  }
+
   async updateFnosShareBypassConfig(
     patch: Partial<FnosShareBypassConfig>,
   ): Promise<FnosShareBypassConfig> {
@@ -3085,6 +3219,27 @@ export class ConfigManager {
     });
     config.reverse_proxy_throttle = next;
     await this.saveConfig(config);
+    return next;
+  }
+
+  async updateGatewayVisibilityConfig(
+    nextValue: GatewayVisibilityConfig,
+  ): Promise<GatewayVisibilityConfig> {
+    const config = await this.getConfig();
+    const next = normalizeGatewayVisibilityConfig(nextValue);
+    config.gateway_visibility = next;
+    await this.saveConfig(config);
+    return next;
+  }
+
+  async saveGatewayVisibilityRuntimeState(
+    nextValue: GatewayVisibilityRuntimeState,
+  ): Promise<GatewayVisibilityRuntimeState> {
+    const next = normalizeGatewayVisibilityRuntimeState(nextValue);
+    await this.redis.set(
+      this.gatewayVisibilityRuntimeKey,
+      JSON.stringify(next),
+    );
     return next;
   }
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
+import { useRouter } from "vue-router";
 import {
   Card,
   CardContent,
@@ -7,6 +8,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,8 +25,15 @@ import { useDelayedLoading } from "@admin-shared/composables/useDelayedLoading";
 import { useConfigStore } from "../../store/config";
 
 const configStore = useConfigStore();
+const router = useRouter();
+type GatewaySettingsForm = Pick<
+  GatewaySettings,
+  | "auth_cache_ttl_seconds"
+  | "auth_cache_unauthorized_ttl_seconds"
+  | "reverse_proxy_throttle"
+>;
 const settings = ref<GatewaySettings | null>(null);
-const form = reactive<GatewaySettings>({
+const form = reactive<GatewaySettingsForm>({
   auth_cache_ttl_seconds: 1,
   auth_cache_unauthorized_ttl_seconds: 1,
   reverse_proxy_throttle: {
@@ -86,6 +95,12 @@ const authCacheFailHint = computed(() =>
     ? "未通过鉴权结果缓存已关闭，拒绝请求不会复用失败缓存。"
     : `未通过鉴权结果会缓存 ${clampCacheTtl(form.auth_cache_unauthorized_ttl_seconds)} 秒。`,
 );
+
+const visibilitySummary = computed(() => settings.value?.visibility ?? null);
+
+const openVisibilityEditor = () => {
+  void router.push("/system/gateway-visibility");
+};
 
 const toggleThrottleEnabled = () => {
   form.reverse_proxy_throttle.enabled = !form.reverse_proxy_throttle.enabled;
@@ -314,6 +329,30 @@ onMounted(fetchSettings);
             />
             <span class="w-12 text-sm text-muted-foreground">秒</span>
           </div>
+        </div>
+      </div>
+
+      <div
+        class="grid gap-4 p-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center"
+      >
+        <div class="space-y-3">
+          <div class="flex flex-wrap items-center gap-2">
+            <Label class="text-base">可见性</Label>
+            <Badge
+              :variant="visibilitySummary?.enabled ? 'default' : 'secondary'"
+              class="rounded-full px-2.5"
+            >
+              {{ visibilitySummary?.enabled ? "已启用" : "未启用" }}
+            </Badge>
+          </div>
+          <div class="text-sm leading-6 text-muted-foreground">
+            控制哪些地区可以访问你的服务
+          </div>
+        </div>
+        <div class="flex justify-start lg:justify-end">
+          <Button variant="outline" @click="openVisibilityEditor"
+            >编辑可见性</Button
+          >
         </div>
       </div>
 
