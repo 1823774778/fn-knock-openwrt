@@ -2311,9 +2311,11 @@ export class ConfigManager {
     const existing = applications.find((item) => item.id === id) || null;
     if (!existing) return null;
 
-    await this.writeAcmeApplicationsStore(
-      applications.filter((item) => item.id !== id),
-    );
+    const nextApplications = applications.filter((item) => item.id !== id);
+    await this.writeAcmeApplicationsStore(nextApplications);
+    if (nextApplications.length === 0) {
+      await this.redis.del(this.acmeSettingsKey);
+    }
 
     const deletedIssuedCertificate = await this.deleteAcmeIssuedCertificate(id);
     const deletedBySourceRef = await this.deleteSSLCertificatesBySourceRef(
