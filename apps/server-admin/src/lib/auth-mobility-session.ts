@@ -68,7 +68,6 @@ type BootstrapOwnerResolution = {
 };
 
 const PREFIX = "fn_knock:auth_mobility";
-const FNOS_ACTIVITY_WINDOW_SECONDS = 12 * 3600;
 const MAX_TIMELINE_EVENTS = 100;
 
 const parseCookieValue = (
@@ -293,12 +292,10 @@ export class AuthMobilitySessionManager {
     if (identity.fnosToken) {
       const binding = await this.getBinding("fnos-token", identity.fnosToken);
       if (binding?.ownerSessionId) {
-        const ownerSession = await configManager.getSession(
-          binding.ownerSessionId,
-        );
-        if (!ownerSession) return false;
-
-        return !!this.resolveFnosSessionTTL(ownerSession.expiresAt);
+        const owner = await this.resolveSessionOwner(binding.ownerSessionId);
+        if (owner) {
+          return !!this.resolveFnosSessionTTL(owner.ownerSession.expiresAt);
+        }
       }
     }
 
@@ -405,13 +402,11 @@ export class AuthMobilitySessionManager {
     sessionId: string | null,
   ): Promise<void> {
     const storageKey = this.bindingKey("fnos-token", fnosToken);
-    const existing = await this.getBinding("fnos-token", fnosToken);
+    let existing = await this.getBinding("fnos-token", fnosToken);
     if (!sessionId) {
       if (existing?.ownerSessionId) {
-        const ownerSession = await configManager.getSession(
-          existing.ownerSessionId,
-        );
-        if (!ownerSession) {
+        const owner = await this.resolveSessionOwner(existing.ownerSessionId);
+        if (!owner) {
           const orphanedBinding: MobilityBinding = {
             ...existing,
             ownerSessionId: undefined,
@@ -424,34 +419,35 @@ export class AuthMobilitySessionManager {
             storageKey,
           );
           await pipeline.exec();
+          existing = orphanedBinding;
+        } else {
+          const ttlSeconds = this.resolveFnosSessionTTL(
+            owner.ownerSession.expiresAt,
+          );
+          if (!ttlSeconds) return;
+
+          existing.currentIp = clientIp;
+          existing.expireAt = toUnixSeconds(owner.ownerSession.expiresAt);
+          existing.lastSeenAt = new Date().toISOString();
+          await this.r.set(
+            storageKey,
+            JSON.stringify(existing),
+            "EX",
+            ttlSeconds,
+          );
+          await this.r.sadd(
+            this.sessionIndexKey(owner.ownerSessionId),
+            storageKey,
+          );
+          await this.ensureSessionIndexTTL(
+            owner.ownerSessionId,
+            this.resolveProxySessionTTL(
+              toUnixSeconds(owner.ownerSession.expiresAt),
+            ) || ttlSeconds,
+          );
           return;
         }
-
-        const ttlSeconds = this.resolveFnosSessionTTL(ownerSession.expiresAt);
-        if (!ttlSeconds) return;
-
-        existing.currentIp = clientIp;
-        existing.expireAt = toUnixSeconds(ownerSession.expiresAt);
-        existing.lastSeenAt = new Date().toISOString();
-        await this.r.set(
-          storageKey,
-          JSON.stringify(existing),
-          "EX",
-          ttlSeconds,
-        );
-        await this.r.sadd(
-          this.sessionIndexKey(existing.ownerSessionId),
-          storageKey,
-        );
-        await this.ensureSessionIndexTTL(
-          existing.ownerSessionId,
-          this.resolveProxySessionTTL(toUnixSeconds(ownerSession.expiresAt)) ||
-            ttlSeconds,
-        );
-        return;
       }
-
-      if (existing) return;
 
       const bootstrap = await this.resolveBootstrapOwner(clientIp);
       if (!bootstrap) return;
@@ -464,13 +460,21 @@ export class AuthMobilitySessionManager {
       const fnosTtl = this.resolveFnosSessionTTL(ownerSession.expiresAt);
       if (!sessionTtl || !fnosTtl) return;
 
-      const binding = this.buildBinding({
-        subjectType: "fnos-token",
-        subjectKey: fnosToken,
-        currentIp: clientIp,
-        expireAt: toUnixSeconds(ownerSession.expiresAt),
-        ownerSessionId,
-      });
+      const binding: MobilityBinding = existing
+        ? {
+            ...existing,
+            currentIp: clientIp,
+            expireAt: toUnixSeconds(ownerSession.expiresAt),
+            ownerSessionId,
+            lastSeenAt: new Date().toISOString(),
+          }
+        : this.buildBinding({
+            subjectType: "fnos-token",
+            subjectKey: fnosToken,
+            currentIp: clientIp,
+            expireAt: toUnixSeconds(ownerSession.expiresAt),
+            ownerSessionId,
+          });
 
       await this.r.set(
         this.bindingKey("fnos-token", fnosToken),
@@ -546,11 +550,44 @@ export class AuthMobilitySessionManager {
     };
   }
 
+  private async resolveSessionOwner(
+    ownerSessionId: string,
+  ): Promise<BootstrapOwnerResolution | null> {
+    const ownerSession = await configManager.getSession(ownerSessionId);
+    if (!ownerSession) return null;
+
+    return {
+      ownerSessionId,
+      ownerSession,
+    };
+  }
+
   private async restoreFnosToken(
     fnosToken: string,
     clientIp: string,
   ): Promise<boolean> {
     let binding = await this.getBinding("fnos-token", fnosToken);
+    if (binding?.ownerSessionId) {
+      const owner = await this.resolveSessionOwner(binding.ownerSessionId);
+      if (!owner) {
+        const orphanedBinding: MobilityBinding = {
+          ...binding,
+          ownerSessionId: undefined,
+          lastSeenAt: new Date().toISOString(),
+        };
+        await this.r.srem(
+          this.sessionIndexKey(binding.ownerSessionId),
+          this.bindingKey("fnos-token", fnosToken),
+        );
+        await this.r.set(
+          this.bindingKey("fnos-token", fnosToken),
+          JSON.stringify(orphanedBinding),
+          "KEEPTTL",
+        );
+        binding = orphanedBinding;
+      }
+    }
+
     if (!binding?.ownerSessionId) {
       const bootstrap = await this.resolveBootstrapOwner(clientIp);
       if (!bootstrap) return false;
@@ -560,13 +597,21 @@ export class AuthMobilitySessionManager {
       );
       if (!ttlSeconds) return false;
 
-      binding = this.buildBinding({
-        subjectType: "fnos-token",
-        subjectKey: fnosToken,
-        currentIp: clientIp,
-        expireAt: toUnixSeconds(bootstrap.ownerSession.expiresAt),
-        ownerSessionId: bootstrap.ownerSessionId,
-      });
+      binding = binding
+        ? {
+            ...binding,
+            currentIp: clientIp,
+            expireAt: toUnixSeconds(bootstrap.ownerSession.expiresAt),
+            ownerSessionId: bootstrap.ownerSessionId,
+            lastSeenAt: new Date().toISOString(),
+          }
+        : this.buildBinding({
+            subjectType: "fnos-token",
+            subjectKey: fnosToken,
+            currentIp: clientIp,
+            expireAt: toUnixSeconds(bootstrap.ownerSession.expiresAt),
+            ownerSessionId: bootstrap.ownerSessionId,
+          });
 
       await this.r.set(
         this.bindingKey("fnos-token", fnosToken),
@@ -589,8 +634,9 @@ export class AuthMobilitySessionManager {
     const ownerSessionId = binding.ownerSessionId;
     if (!ownerSessionId) return false;
 
-    const ownerSession = await configManager.getSession(ownerSessionId);
-    if (!ownerSession) return false;
+    const owner = await this.resolveSessionOwner(ownerSessionId);
+    if (!owner) return false;
+    const ownerSession = owner.ownerSession;
 
     const ttlSeconds = this.resolveFnosSessionTTL(ownerSession.expiresAt);
     if (!ttlSeconds) return false;
@@ -807,13 +853,7 @@ export class AuthMobilitySessionManager {
   }
 
   private resolveFnosTTL(expireAt: number | null): number | null {
-    if (expireAt === null) {
-      return FNOS_ACTIVITY_WINDOW_SECONDS;
-    }
-
-    const remaining = this.remainingSeconds(expireAt);
-    if (!remaining) return null;
-    return Math.min(remaining, FNOS_ACTIVITY_WINDOW_SECONDS);
+    return this.remainingSeconds(expireAt);
   }
 
   private resolveFnosSessionTTL(expiresAt?: string): number | null {
