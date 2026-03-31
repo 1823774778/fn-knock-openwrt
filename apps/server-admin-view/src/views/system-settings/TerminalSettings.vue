@@ -15,9 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import {
-  TerminalSquare,
-} from "lucide-vue-next";
+import { TerminalSquare } from "lucide-vue-next";
 import { toast } from "@admin-shared/utils/toast";
 import { ConfigAPI, TerminalAPI } from "../../lib/api";
 import type {
@@ -38,7 +36,6 @@ const settings = ref<TerminalFeatureConfig | null>(null);
 const runtimeStatus = ref<TerminalRuntimeStatus | null>(null);
 const form = reactive<TerminalFeatureConfig>({
   enabled: false,
-  default_shell: "",
   default_cwd: "",
   max_sessions: 3,
   idle_timeout_seconds: 24 * 60 * 60,
@@ -140,7 +137,6 @@ const showLoadingSkeleton = useDelayedLoading(isInitialLoading);
 const applyFromSettings = (data: TerminalFeatureConfig) => {
   settings.value = data;
   form.enabled = data.enabled;
-  form.default_shell = data.default_shell;
   form.default_cwd = data.default_cwd;
   form.max_sessions = data.max_sessions;
   form.idle_timeout_seconds = data.idle_timeout_seconds;
@@ -155,7 +151,6 @@ const loadSettings = async () => {
     applyFromSettings(config);
   });
 };
-
 
 const refreshAll = async () => {
   await Promise.all([loadSettings(), refreshStatus()]);
@@ -219,8 +214,7 @@ onMounted(loadSettings);
             <Badge :variant="tmuxStatusVariant">{{ tmuxStatusLabel }}</Badge>
           </CardTitle>
           <CardDescription>
-            使用 <code>tmux</code> 承载可恢复的 Web
-            终端会话。
+            使用 <code>tmux</code> 承载可恢复的 Web 终端会话。
           </CardDescription>
         </div>
         <RefreshButton
@@ -244,7 +238,6 @@ onMounted(loadSettings);
 
     <CardContent v-else class="border-t p-0">
       <div class="space-y-6 p-6">
-
         <div class="grid gap-4 md:grid-cols-1">
           <div class="rounded-lg border bg-muted/20 p-4">
             <div class="mb-2 flex items-center gap-2 text-sm font-medium">
@@ -263,7 +256,6 @@ onMounted(loadSettings);
               </p>
             </div>
           </div>
-
         </div>
 
         <div v-if="!isTmuxInstalled" class="rounded-lg border bg-muted/10 p-4">
@@ -347,8 +339,6 @@ onMounted(loadSettings);
               />
             </div>
           </div>
-
-          
 
           <div class="flex items-center justify-end gap-3">
             <Button

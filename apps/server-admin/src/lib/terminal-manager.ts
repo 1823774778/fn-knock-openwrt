@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import { mkdir, open, rm, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { v4 as uuidv4 } from "uuid";
 import { dataPath } from "./AppDirManager";
 import { homedir } from "node:os";
@@ -26,7 +26,6 @@ import {
 
 const DEFAULT_CWD = homedir();
 
-const DEFAULT_SHELL = process.env.SHELL || "/bin/bash";
 const TMUX_TARGET_PANE_SUFFIX = ":0.0";
 const TERMINAL_STREAM_DIR_NAME = "terminal-streams";
 const TERMINAL_STREAM_CHUNK_MAX_BYTES = 256 * 1024;
@@ -36,6 +35,15 @@ const INPUT_PIPE_OPEN_FLAGS =
 const DEFAULT_SESSION_TITLE_PREFIX = "会话-";
 const TMUX_ABSOLUTE_FALLBACK_PATH = "/usr/bin/tmux";
 const DEBIAN_APT_GET_PATH = "/usr/bin/apt-get";
+const ZSH_SHELL_CANDIDATES = ["zsh", "/bin/zsh", "/usr/bin/zsh"];
+const FALLBACK_SHELL_CANDIDATES = [
+  "bash",
+  "/bin/bash",
+  "/usr/bin/bash",
+  "sh",
+  "/bin/sh",
+  "/usr/bin/sh",
+];
 const TERMINAL_RELAY_NODE_SCRIPT = [
   "const fs=require('node:fs');",
   "const [logPath,inputPath]=process.argv.slice(-2);",
@@ -87,6 +95,8 @@ const parseOutputCursor = (
 
 const shellQuote = (value: string): string =>
   `'${value.replace(/'/g, `'\"'\"'`)}'`;
+const dedupeStrings = (values: string[]): string[] =>
+  Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
 
 class TerminalManager {
   private tmuxExecutableInfoPromise: Promise<TmuxExecutableInfo | null> | null =
@@ -455,28 +465,85 @@ class TerminalManager {
     }
   }
 
+  private isZshShell(shell: string): boolean {
+    return basename(shell).toLowerCase() === "zsh";
+  }
+
+  private async canStartShell(command: string): Promise<boolean> {
+    try {
+      const result = await this.runProcess(command, ["-c", "exit 0"]);
+      return result.code === 0;
+    } catch {
+      return false;
+    }
+  }
+
+  private async pickAvailableShell(
+    candidates: string[],
+  ): Promise<string | null> {
+    for (const candidate of dedupeStrings(candidates)) {
+      if (await this.canStartShell(candidate)) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  private buildAutoShellCandidates(): string[] {
+    const envShell = (process.env.SHELL || "").trim();
+    return dedupeStrings([
+      // Prefer zsh so Oh My Zsh works in the web terminal without extra setup.
+      ...(envShell && this.isZshShell(envShell) ? [envShell] : []),
+      ...ZSH_SHELL_CANDIDATES,
+      envShell,
+      ...FALLBACK_SHELL_CANDIDATES,
+    ]);
+  }
+
   private async resolveShell(shell?: string): Promise<string> {
-    const config = await this.getFeatureConfig();
-    return (
-      (shell || config.default_shell || DEFAULT_SHELL).trim() || DEFAULT_SHELL
+    const requestedShell = (shell || "").trim();
+    if (requestedShell) {
+      const resolvedRequestedShell = await this.pickAvailableShell([
+        requestedShell,
+      ]);
+      if (!resolvedRequestedShell) {
+        throw new Error(`请求的 shell 不可用: ${requestedShell}`);
+      }
+      return resolvedRequestedShell;
+    }
+
+    const autoDetectedShell = await this.pickAvailableShell(
+      this.buildAutoShellCandidates(),
     );
+    if (autoDetectedShell) {
+      return autoDetectedShell;
+    }
+
+    throw new Error("未检测到可用 shell，请确认系统已安装 zsh、bash 或 sh");
+  }
+
+  private buildSessionShellCommand(shell: string): string {
+    if (this.isZshShell(shell)) {
+      return `exec ${shellQuote(shell)} -il`;
+    }
+    return `exec ${shellQuote(shell)}`;
   }
 
   private async resolveCwd(cwd?: string): Promise<string> {
-  const config = await this.getFeatureConfig();
-  const configuredCwd = (config.default_cwd || "").trim();
-  const nextCwd = (cwd || configuredCwd).trim();
+    const config = await this.getFeatureConfig();
+    const configuredCwd = (config.default_cwd || "").trim();
+    const nextCwd = (cwd || configuredCwd).trim();
 
-  const resolvedCwd =
-    !nextCwd || nextCwd === "~"
-      ? DEFAULT_CWD
-      : nextCwd.startsWith("~/")
-        ? join(DEFAULT_CWD, nextCwd.slice(2))
-        : nextCwd;
+    const resolvedCwd =
+      !nextCwd || nextCwd === "~"
+        ? DEFAULT_CWD
+        : nextCwd.startsWith("~/")
+          ? join(DEFAULT_CWD, nextCwd.slice(2))
+          : nextCwd;
 
-  await this.ensureDirectoryExists(resolvedCwd);
-  return resolvedCwd;
-}
+    await this.ensureDirectoryExists(resolvedCwd);
+    return resolvedCwd;
+  }
 
   private async refreshSessionExpiry(
     session: TerminalSessionRecord,
@@ -801,7 +868,7 @@ class TerminalManager {
       String(rows),
       "-c",
       cwd,
-      shell,
+      this.buildSessionShellCommand(shell),
     ]);
     if (createResult.code !== 0) {
       throw new Error(createResult.stderr || "tmux 会话创建失败");

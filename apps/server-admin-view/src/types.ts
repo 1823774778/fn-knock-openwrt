@@ -272,7 +272,6 @@ export interface FnKnockBackupExportToDirectoryResult {
 
 export interface TerminalFeatureConfig {
   enabled: boolean;
-  default_shell: string;
   default_cwd: string;
   max_sessions: number;
   idle_timeout_seconds: number;

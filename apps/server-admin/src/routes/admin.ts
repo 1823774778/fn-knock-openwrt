@@ -904,7 +904,6 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
     {
       body: t.Object({
         enabled: t.Optional(t.Boolean()),
-        default_shell: t.Optional(t.String()),
         default_cwd: t.Optional(t.String()),
         max_sessions: t.Optional(t.Number()),
         idle_timeout_seconds: t.Optional(t.Number()),

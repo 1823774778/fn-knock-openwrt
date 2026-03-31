@@ -28,7 +28,6 @@ export interface TerminalTmuxInstallState {
 
 export interface TerminalFeatureConfig {
   enabled: boolean;
-  default_shell: string;
   default_cwd: string;
   max_sessions: number;
   idle_timeout_seconds: number;
@@ -93,7 +92,6 @@ export const DEFAULT_TERMINAL_ATTACHMENT_TTL_SECONDS = 120;
 
 export const DEFAULT_TERMINAL_FEATURE_CONFIG: TerminalFeatureConfig = {
   enabled: false,
-  default_shell: "/bin/bash",
   default_cwd: "~",
   max_sessions: 3,
   idle_timeout_seconds: 24 * 60 * 60,
@@ -134,7 +132,6 @@ export const normalizeTerminalFeatureConfig = (
 
   return {
     enabled: raw.enabled === true,
-    default_shell: normalizeString(raw.default_shell),
     default_cwd: normalizeString(
       raw.default_cwd,
       DEFAULT_TERMINAL_FEATURE_CONFIG.default_cwd,
