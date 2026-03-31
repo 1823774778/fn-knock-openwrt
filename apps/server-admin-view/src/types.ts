@@ -447,9 +447,18 @@ export type SessionMobilityDetails = {
   events: SessionMobilityEvent[];
 };
 
+export type SessionFnosAttachmentRecord = {
+  subjectHash: string;
+  currentIp: string;
+  createdAt: string;
+  lastSeenAt: string;
+  expiresAt: string | null;
+};
+
 export type SessionRecord = LoginSession & {
   id: string;
   mobility?: SessionMobilitySummary;
+  fnosAttachments?: SessionFnosAttachmentRecord[];
 };
 
 export type ProxyProtocolForce = {

@@ -50,6 +50,14 @@ export type SessionMobilityDetails = {
   events: MobilityTimelineEvent[];
 };
 
+export type SessionFnosAttachment = {
+  subjectHash: string;
+  currentIp: string;
+  createdAt: string;
+  lastSeenAt: string;
+  expiresAt: string | null;
+};
+
 type RequestIdentity = {
   sessionId: string | null;
   fnosToken: string | null;
@@ -396,6 +404,67 @@ export class AuthMobilitySessionManager {
     };
   }
 
+  async listSessionFnosAttachments(
+    sessionId: string,
+  ): Promise<SessionFnosAttachment[]> {
+    const sessionKey = this.sessionIndexKey(sessionId);
+    const subjectKeys = await this.r.smembers(sessionKey);
+    const fnosKeys = subjectKeys.filter((key) =>
+      key.startsWith(`${PREFIX}:binding:fnos-token:`),
+    );
+    if (fnosKeys.length === 0) {
+      return [];
+    }
+
+    const resolved = await Promise.all(
+      fnosKeys.map(async (storageKey) => {
+        const binding = await this.getBindingByStorageKey(storageKey);
+        return { storageKey, binding };
+      }),
+    );
+
+    const staleKeys = resolved
+      .filter(
+        ({ binding }) =>
+          !binding ||
+          binding.subjectType !== "fnos-token" ||
+          binding.ownerSessionId !== sessionId,
+      )
+      .map(({ storageKey }) => storageKey);
+
+    if (staleKeys.length > 0) {
+      await this.r.srem(sessionKey, ...staleKeys);
+    }
+
+    return resolved
+      .flatMap(({ binding }) => {
+        if (
+          !binding ||
+          binding.subjectType !== "fnos-token" ||
+          binding.ownerSessionId !== sessionId
+        ) {
+          return [];
+        }
+
+        return [
+          {
+            subjectHash: binding.subjectHash,
+            currentIp: binding.currentIp,
+            createdAt: binding.createdAt,
+            lastSeenAt: binding.lastSeenAt,
+            expiresAt: binding.expireAt
+              ? new Date(binding.expireAt * 1000).toISOString()
+              : null,
+          } satisfies SessionFnosAttachment,
+        ];
+      })
+      .sort((a, b) => {
+        return (
+          (Date.parse(b.lastSeenAt) || 0) - (Date.parse(a.lastSeenAt) || 0)
+        );
+      });
+  }
+
   private async refreshFnosBinding(
     fnosToken: string,
     clientIp: string,
@@ -656,13 +725,10 @@ export class AuthMobilitySessionManager {
       ttlSeconds,
     );
 
-    const updatedSession = await configManager.updateSession(
-      ownerSessionId,
-      {
-        ip: clientIp,
-        ...(nextIpLocation ? { ipLocation: nextIpLocation } : {}),
-      },
-    );
+    const updatedSession = await configManager.updateSession(ownerSessionId, {
+      ip: clientIp,
+      ...(nextIpLocation ? { ipLocation: nextIpLocation } : {}),
+    });
     const sessionTtl = this.resolveProxySessionTTL(
       toUnixSeconds(updatedSession?.expiresAt),
     );

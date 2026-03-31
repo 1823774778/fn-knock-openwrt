@@ -33,6 +33,7 @@ import {
 } from "@admin-shared/composables/useAsyncAction";
 import { buildDetailFields } from "@admin-shared/utils/buildDetailFields";
 import { formatDateTimeSafe } from "@admin-shared/utils/formatDateTimeSafe";
+import FnosAttachmentIndicator from "./FnosAttachmentIndicator.vue";
 
 const router = useRouter();
 const sessions = ref<SessionRecord[]>([]);
@@ -115,7 +116,9 @@ function openMobility(session: SessionRecord) {
 async function kickSession(sessionId: string) {
   await runKickSession(() => SessionAPI.kick(sessionId), {
     onSuccess: async () => {
-      sessions.value = sessions.value.filter((session) => session.id !== sessionId);
+      sessions.value = sessions.value.filter(
+        (session) => session.id !== sessionId,
+      );
       if (detailSession.value?.id === sessionId) {
         detailSession.value = null;
         showDetail.value = false;
@@ -206,7 +209,13 @@ watch(
               </TableCell>
 
               <TableCell>
-                <div class="text-sm">{{ session.credentialName }}</div>
+                <div class="flex items-center gap-2">
+                  <div class="text-sm">{{ session.credentialName }}</div>
+                  <FnosAttachmentIndicator
+                    v-if="session.fnosAttachments?.length"
+                    :attachments="session.fnosAttachments"
+                  />
+                </div>
               </TableCell>
 
               <TableCell class="min-w-[180px]">
