@@ -139,8 +139,11 @@ export class FirewallService {
     await this.runGoBackend(request, "初始化默认防火墙规则失败");
   }
 
-  private async syncActiveWhitelistRecords(strict = false): Promise<number> {
-    const records = await whitelistManager.getAllActiveRecords("manual");
+  private async syncActiveWhitelistRecords(
+    strict = false,
+    source?: "manual" | "auto",
+  ): Promise<number> {
+    const records = await whitelistManager.getAllActiveRecords(source);
 
     for (const record of records) {
       const fallbackMessage = `同步白名单 IP ${record.ip} 失败`;

@@ -271,10 +271,7 @@ export const handleLoginSuccess = async ({
   const expireAt = Math.floor(Date.now() / 1000) + durationSeconds;
   const expiresAtISO = new Date(expireAt * 1000).toISOString();
   const autoWhitelistComment = "登录后自动授权";
-  const postLoginIpGrantMode =
-    config.run_type === 0
-      ? "disabled"
-      : credentialSettings.post_login_ip_grant_mode;
+  const postLoginIpGrantMode = credentialSettings.post_login_ip_grant_mode;
 
   let whitelistRecordId: string | null = null;
   let sessionComment: string | undefined;

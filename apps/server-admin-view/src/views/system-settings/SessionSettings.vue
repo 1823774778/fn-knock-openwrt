@@ -309,7 +309,7 @@ onMounted(fetchSettings);
     <CardHeader>
       <CardTitle class="text-md">凭据与会话</CardTitle>
       <CardDescription class="mt-1.5">
-        统一管理登录凭据签发后的会话时长，以及非直连模式下登录成功后是否自动给当前
+        统一管理登录凭据签发后的会话时长，以及登录成功后是否自动给当前
         IP 授权。
       </CardDescription>
     </CardHeader>
@@ -418,8 +418,7 @@ onMounted(fetchSettings);
         >
           <div class="text-sm font-medium text-zinc-900">当前为直连模式</div>
           <div class="mt-1 text-sm leading-6 text-zinc-700">
-            登录后 IP
-            授权策略仅在反代模式和子域模式下生效。直连模式下，这里的设置不会参与实际放行。
+            这里的设置会直接决定登录后是否把当前 IP 自动加入白名单；通常建议保持“跟随会话”，在退出、踢出或过期时一并撤销。
           </div>
         </div>
 
@@ -441,7 +440,7 @@ onMounted(fetchSettings);
                 ? 'border-primary bg-primary/5'
                 : 'border-border bg-background hover:border-zinc-300'
             "
-            :disabled="isSaving || isDirectMode"
+            :disabled="isSaving"
             @click="form.postLoginIpGrantMode = option.value"
           >
             <div class="text-sm font-medium text-foreground">
@@ -470,11 +469,11 @@ onMounted(fetchSettings);
               min="1"
               step="1"
               class="w-24 text-center"
-              :disabled="isSaving || isDirectMode"
+              :disabled="isSaving"
             />
             <Select
               v-model="form.customGrant.unit"
-              :disabled="isSaving || isDirectMode"
+              :disabled="isSaving"
             >
               <SelectTrigger class="w-[110px]">
                 <SelectValue />
