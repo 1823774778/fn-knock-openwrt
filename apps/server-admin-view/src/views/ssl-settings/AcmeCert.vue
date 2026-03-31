@@ -73,7 +73,7 @@
                   <TableHead class="w-[150px] whitespace-normal"
                     >有效期</TableHead
                   >
-                  <TableHead class="w-[108px] whitespace-normal text-right">
+                  <TableHead class="w-[156px] whitespace-normal text-right">
                     操作
                   </TableHead>
                 </TableRow>
@@ -180,79 +180,103 @@
                   </TableCell>
 
                   <TableCell class="align-top whitespace-normal text-right">
-                    <div class="inline-flex">
-                      <Button
-                        type="button"
-                        size="sm"
-                        class="rounded-r-none"
-                        :disabled="isActionBlocked()"
-                        @click="requestCertificate(application.id)"
+                    <div class="inline-flex items-center gap-2">
+                      <div class="inline-flex">
+                        <Button
+                          type="button"
+                          size="sm"
+                          class="rounded-r-none"
+                          :disabled="isActionBlocked()"
+                          @click="requestCertificate(application.id)"
+                        >
+                          {{ primaryActionLabel(application) }}
+                        </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger as-child>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="default"
+                              class="rounded-l-none border-l border-primary-foreground/20 px-2"
+                              :disabled="isSecondaryActionDisabled(application)"
+                            >
+                              <ChevronDown class="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" class="w-44">
+                            <DropdownMenuItem
+                              :disabled="isActionBlocked()"
+                              @select="openEditDialog(application.id)"
+                            >
+                              编辑申请项
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              v-if="application.latestJob?.id"
+                              @select="viewJob(application.latestJob.id)"
+                            >
+                              查看日志
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              v-if="application.certificate?.exists"
+                              :disabled="isActionBlocked()"
+                              @select="downloadCertificate(application)"
+                            >
+                              下载证书
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              v-if="application.certificate?.exists"
+                              :disabled="isActionBlocked()"
+                              @select="syncLibrary(application)"
+                            >
+                              {{
+                                application.library?.linked
+                                  ? "更新到证书库"
+                                  : "添加到证书库"
+                              }}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              v-if="application.certificate?.exists"
+                              :disabled="isActionBlocked()"
+                              @select="deployCertificate(application)"
+                            >
+                              设为当前证书
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator
+                              v-if="application.certificate?.exists"
+                            />
+                            <DropdownMenuItem
+                              v-if="application.certificate?.exists"
+                              variant="destructive"
+                              :disabled="isActionBlocked()"
+                              @select="openDeleteDialog(application)"
+                            >
+                              删除证书
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+
+                      <ConfirmDangerPopover
+                        title="确认删除申请项？"
+                        :description="deleteApplicationDescription(application)"
+                        confirm-text="删除申请项"
+                        :loading="deletingApplicationId === application.id"
+                        :disabled="isDeleteApplicationBlocked()"
+                        :on-confirm="() => removeApplication(application)"
+                        content-class="w-80 text-left"
                       >
-                        {{ primaryActionLabel(application) }}
-                      </Button>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger as-child>
+                        <template #trigger>
                           <Button
                             type="button"
-                            size="sm"
-                            variant="default"
-                            class="rounded-l-none border-l border-primary-foreground/20 px-2"
-                            :disabled="isSecondaryActionDisabled(application)"
+                            variant="ghost"
+                            size="icon"
+                            class="h-8 w-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                            :disabled="isDeleteApplicationBlocked()"
                           >
-                            <ChevronDown class="h-4 w-4" />
+                            <Trash2 class="h-4 w-4" />
                           </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" class="w-44">
-                          <DropdownMenuItem
-                            :disabled="isActionBlocked()"
-                            @select="openEditDialog(application.id)"
-                          >
-                            编辑申请项
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            v-if="application.latestJob?.id"
-                            @select="viewJob(application.latestJob.id)"
-                          >
-                            查看日志
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            v-if="application.certificate?.exists"
-                            :disabled="isActionBlocked()"
-                            @select="downloadCertificate(application)"
-                          >
-                            下载证书
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            v-if="application.certificate?.exists"
-                            :disabled="isActionBlocked()"
-                            @select="syncLibrary(application)"
-                          >
-                            {{
-                              application.library?.linked
-                                ? "更新到证书库"
-                                : "添加到证书库"
-                            }}
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            v-if="application.certificate?.exists"
-                            :disabled="isActionBlocked()"
-                            @select="deployCertificate(application)"
-                          >
-                            设为当前证书
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator
-                            v-if="application.certificate?.exists"
-                          />
-                          <DropdownMenuItem
-                            v-if="application.certificate?.exists"
-                            variant="destructive"
-                            :disabled="isActionBlocked()"
-                            @select="openDeleteDialog(application)"
-                          >
-                            删除证书
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                        </template>
+                      </ConfirmDangerPopover>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -373,9 +397,10 @@ import {
   extractErrorMessage,
   useAsyncAction,
 } from "@admin-shared/composables/useAsyncAction";
+import ConfirmDangerPopover from "@admin-shared/components/common/ConfirmDangerPopover.vue";
 import AcmeApplicationDialog from "./AcmeApplicationDialog.vue";
 import AcmeJobPanel from "./AcmeJobPanel.vue";
-import { ChevronDown } from "lucide-vue-next";
+import { ChevronDown, Trash2 } from "lucide-vue-next";
 
 const overview = ref<AcmeOverview | null>(null);
 const dnsProviders = ref<AcmeDnsProvider[]>([]);
@@ -383,6 +408,7 @@ const isDialogOpen = ref(false);
 const dialogMode = ref<"create" | "edit">("create");
 const editingApplication = ref<AcmeApplicationRecord | null>(null);
 const deleteCandidate = ref<AcmeApplicationOverviewItem | null>(null);
+const deletingApplicationId = ref("");
 const selectedJobId = ref("");
 const job = ref<AcmeJobData | null>(null);
 const logs = ref<string[]>([]);
@@ -673,6 +699,33 @@ const deleteCertificate = async (application: AcmeApplicationOverviewItem) => {
   });
 };
 
+const removeApplication = async (application: AcmeApplicationOverviewItem) => {
+  deletingApplicationId.value = application.id;
+  try {
+    await runMutating(async () => {
+      await AcmeAPI.deleteApplication(application.id);
+      toast.success("已删除申请项");
+      await fetchOverview({ silent: true, preserveSelection: true });
+
+      if (editingApplication.value?.id === application.id) {
+        editingApplication.value = null;
+        isDialogOpen.value = false;
+      }
+
+      if (job.value?.applicationId === application.id) {
+        job.value = null;
+        logs.value = [];
+        analysis.value = null;
+        selectedJobId.value = "";
+      }
+    });
+  } finally {
+    if (deletingApplicationId.value === application.id) {
+      deletingApplicationId.value = "";
+    }
+  }
+};
+
 const confirmDeleteCandidate = async () => {
   if (!deleteCandidate.value) return;
   const application = deleteCandidate.value;
@@ -704,6 +757,14 @@ const focusCredentialsFromJob = async () => {
 
 const isActionBlocked = () => {
   if (!isAcmeInstalled.value) return true;
+  if (isTableLocked.value) return true;
+  if (isMutating.value || isDialogSubmitting.value || isDownloading.value) {
+    return true;
+  }
+  return false;
+};
+
+const isDeleteApplicationBlocked = () => {
   if (isTableLocked.value) return true;
   if (isMutating.value || isDialogSubmitting.value || isDownloading.value) {
     return true;
@@ -760,7 +821,8 @@ const jobBadgeVariant = (status?: string | null) => {
   if (status === "queued") return "outline";
   if (status === "running") return "default";
   if (status === "succeeded") return "secondary";
-  return "destructive";
+  if (status === "failed") return "outline";
+  return "outline";
 };
 
 const libraryStatusLabel = (application: AcmeApplicationOverviewItem) => {
@@ -773,6 +835,16 @@ const libraryBadgeVariant = (application: AcmeApplicationOverviewItem) => {
   if (application.library?.isActive) return "default";
   if (application.library?.linked) return "secondary";
   return "outline";
+};
+
+const deleteApplicationDescription = (
+  application: AcmeApplicationOverviewItem,
+) => {
+  const target = application.name || application.primaryDomain;
+  if (application.certificate?.exists || application.library?.linked) {
+    return `删除后会移除 ${target} 申请项，并清理该项对应的已签发证书和证书库关联，此操作不可恢复。`;
+  }
+  return `删除后会移除 ${target} 申请项记录，此操作不可恢复。`;
 };
 
 const formatDate = (value: string) => {

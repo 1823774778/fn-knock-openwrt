@@ -1287,6 +1287,9 @@ export const AcmeAPI = {
     );
     return res.data.data;
   },
+  async deleteApplication(id: string): Promise<void> {
+    await apiClient.delete(`/acme/applications/${encodeURIComponent(id)}`);
+  },
   async deleteApplicationCertificate(id: string): Promise<void> {
     await apiClient.delete(
       `/acme/applications/${encodeURIComponent(id)}/certificate`,

@@ -292,6 +292,14 @@ export type AcmeApplicationSaveResult = {
   removedDomains: string[];
 };
 
+export type AcmeApplicationDeleteResult = {
+  application: AcmeApplication;
+  deletedIssuedCertificate: AcmeIssuedCertificate | null;
+  removedLibraryCertificates: SSLManagedCertificate[];
+  removedActiveLibraryCertificate: boolean;
+  removedDomains: string[];
+};
+
 export type AcmeSettings = {
   domains: string[];
   dnsType: string;
@@ -2293,6 +2301,68 @@ export class ConfigManager {
   }): Promise<AcmeApplication> {
     const result = await this.saveAcmeApplicationWithEffects(input);
     return result.application;
+  }
+
+  async deleteAcmeApplication(
+    id: string,
+  ): Promise<AcmeApplicationDeleteResult | null> {
+    await this.ensureAcmeDataMigrated();
+    const applications = await this.readAcmeApplicationsStore();
+    const existing = applications.find((item) => item.id === id) || null;
+    if (!existing) return null;
+
+    await this.writeAcmeApplicationsStore(
+      applications.filter((item) => item.id !== id),
+    );
+
+    const deletedIssuedCertificate = await this.deleteAcmeIssuedCertificate(id);
+    const deletedBySourceRef = await this.deleteSSLCertificatesBySourceRef(
+      "acme",
+      id,
+    );
+    const deletedByPrimaryDomain = await this.deleteSSLCertificatesBySource(
+      "acme",
+      existing.primaryDomain,
+    );
+    const removedLibraryCertificates = [
+      ...deletedBySourceRef.removed,
+      ...deletedByPrimaryDomain.removed.filter(
+        (certificate) =>
+          !deletedBySourceRef.removed.some(
+            (item) => item.id === certificate.id,
+          ),
+      ),
+    ];
+    const removedDomains = Array.from(
+      new Set(
+        [
+          existing.primaryDomain,
+          deletedIssuedCertificate?.primaryDomain,
+        ].filter((value): value is string => Boolean(value)),
+      ),
+    );
+
+    if (removedDomains.length > 0) {
+      const { join } = await import("node:path");
+      const { rm } = await import("node:fs/promises");
+      for (const domain of removedDomains) {
+        await this.deleteAcmeCert(domain);
+        await rm(join(process.cwd(), "data", "ssl", domain), {
+          recursive: true,
+          force: true,
+        });
+      }
+    }
+
+    return {
+      application: existing,
+      deletedIssuedCertificate,
+      removedLibraryCertificates,
+      removedActiveLibraryCertificate:
+        deletedBySourceRef.removedActive ||
+        deletedByPrimaryDomain.removedActive,
+      removedDomains,
+    };
   }
 
   async saveAcmeApplicationWithEffects(input: {

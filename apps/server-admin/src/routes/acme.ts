@@ -715,6 +715,20 @@ const deleteAcmeApplicationCertificate = async (applicationId: string) => {
   };
 };
 
+const deleteAcmeApplication = async (applicationId: string) => {
+  const deleted = await configManager.deleteAcmeApplication(applicationId);
+  if (!deleted) {
+    throw new Error("申请项不存在");
+  }
+
+  await syncGatewayIfAcmeLibraryRemoved({
+    removedActive: deleted.removedActiveLibraryCertificate,
+    removedCount: deleted.removedLibraryCertificates.length,
+  });
+
+  return deleted;
+};
+
 const buildApplicationOverview = async () => {
   const [applications, issuedCertificates, sslStatus] = await Promise.all([
     configManager.listAcmeApplications(),
@@ -1194,6 +1208,30 @@ export const acmeRoutes = new Elysia({ prefix: "/api/admin/acme" })
     } catch (e: any) {
       const message = e?.message || String(e);
       set.status = /稍后再试|请先安装|安装中/.test(message) ? 409 : 400;
+      return { success: false, message };
+    }
+  })
+  .delete("/applications/:id", async ({ params, set }) => {
+    try {
+      const lock = await configManager.getActiveAcmeRuntimeLock();
+      if (lock.locked) {
+        set.status = 409;
+        return {
+          success: false,
+          message: "当前已有 ACME 任务正在执行，请稍后再试",
+        };
+      }
+
+      const deleted = await deleteAcmeApplication(params.id);
+      return {
+        success: true,
+        data: {
+          id: deleted.application.id,
+        },
+      };
+    } catch (e: any) {
+      const message = e?.message || String(e);
+      set.status = message === "申请项不存在" ? 404 : 400;
       return { success: false, message };
     }
   })
