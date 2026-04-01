@@ -477,11 +477,12 @@ class DnsmasqManager {
   }
 
   buildManagedConfig(selectedIpv4: string, domains: string[]): string {
+    const normalizedIpv4 = selectedIpv4.trim();
     const normalizedDomains = Array.from(
       new Set(domains.map((item) => item.trim().toLowerCase()).filter(Boolean)),
     );
     const listenAddresses = Array.from(
-      new Set(["127.0.0.1", selectedIpv4.trim()].filter(Boolean)),
+      new Set(["127.0.0.1", normalizedIpv4].filter(Boolean)),
     );
 
     return [
@@ -489,9 +490,10 @@ class DnsmasqManager {
       `local-ttl=${SMART_CONNECT_LOCAL_TTL_SECONDS}`,
       `listen-address=${listenAddresses.join(",")}`,
       "bind-interfaces",
-      ...normalizedDomains.map(
-        (domain) => `address=/${domain}/${selectedIpv4.trim()}`,
-      ),
+      ...normalizedDomains.flatMap((domain) => [
+        `address=/${domain}/${normalizedIpv4}`,
+        `local=/${domain}/`,
+      ]),
       "",
     ].join("\n");
   }

@@ -1,5 +1,4 @@
-import { computed, ref, shallowRef } from 'vue';
-import { watchDebounced } from '@vueuse/core';
+import { computed, onScopeDispose, ref, shallowRef, watch } from 'vue';
 
 export type PagedQueryParams = {
   page: number;
@@ -110,13 +109,25 @@ export function usePagedSelectionList<TItem, TKey extends string>(
     fetchList();
   };
 
-  watchDebounced(
-    searchQuery,
-    () => {
+  let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const clearSearchDebounceTimer = () => {
+    if (searchDebounceTimer === null) return;
+    clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = null;
+  };
+
+  watch(searchQuery, () => {
+    clearSearchDebounceTimer();
+    searchDebounceTimer = setTimeout(() => {
+      searchDebounceTimer = null;
       handleSearch();
-    },
-    { debounce: options.debounce ?? 500 },
-  );
+    }, options.debounce ?? 500);
+  });
+
+  onScopeDispose(() => {
+    clearSearchDebounceTimer();
+  });
 
   return {
     items,
