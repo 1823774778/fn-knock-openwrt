@@ -572,7 +572,9 @@ const saveSettings = async () => {
                   <div class="space-y-1">
                     <Label class="text-base">说明</Label>
                     <p class="text-sm leading-6 text-muted-foreground">
-                      要让设备真正生效，请修改路由器DHCP服务器的DNS服务器为 {{ form.selected_ipv4 || "本机的局域网IP" }}，或者在设备上手动设置 DNS 服务器为 {{ form.selected_ipv4 || "本机的局域网IP" }}。
+                      要让设备真正生效，请修改路由器DHCP服务器的DNS服务器为 {{ form.selected_ipv4 || "本机的局域网IP" }}，或者在设备上手动设置 DNS 服务器为 {{ form.selected_ipv4 || "本机的局域网IP" }}。配置好后请重新连接Wi-Fi
+
+                      <span>注意：Android版的飞牛App客户端可能存在兼容问题，如遇到无法登录的问题，请关闭此功能</span>
                     </p>
                   </div>
                 </section>
