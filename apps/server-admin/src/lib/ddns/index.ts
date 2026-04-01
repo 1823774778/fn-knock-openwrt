@@ -114,12 +114,13 @@ export class DDNSManager {
     config: Record<string, string>,
   ): Promise<void> {
     const key = KEYS.configPrefix + providerName;
+    const ipSource = normalizeIpSource(config[DDNS_IP_SOURCE_FIELD]);
     const normalizedConfig = {
       ...config,
       [DDNS_UPDATE_SCOPE_FIELD]: normalizeUpdateScope(
         config[DDNS_UPDATE_SCOPE_FIELD],
       ),
-      [DDNS_IP_SOURCE_FIELD]: normalizeIpSource(config[DDNS_IP_SOURCE_FIELD]),
+      [DDNS_IP_SOURCE_FIELD]: ipSource,
       [DDNS_NETWORK_INTERFACE_FIELD]: normalizeNetworkInterface(
         config[DDNS_NETWORK_INTERFACE_FIELD],
       ),
@@ -130,6 +131,20 @@ export class DDNSManager {
         config[DDNS_INTERFACE_IPV6_INDEX_FIELD],
       ),
     };
+    if (ipSource === DEFAULT_DDNS_IP_SOURCE) {
+      delete normalizedConfig[DDNS_IP_SOURCE_FIELD];
+    }
+    if (ipSource !== "interface") {
+      delete normalizedConfig[DDNS_INTERFACE_IPV4_INDEX_FIELD];
+      delete normalizedConfig[DDNS_INTERFACE_IPV6_INDEX_FIELD];
+    } else {
+      if (!normalizedConfig[DDNS_INTERFACE_IPV4_INDEX_FIELD]) {
+        delete normalizedConfig[DDNS_INTERFACE_IPV4_INDEX_FIELD];
+      }
+      if (!normalizedConfig[DDNS_INTERFACE_IPV6_INDEX_FIELD]) {
+        delete normalizedConfig[DDNS_INTERFACE_IPV6_INDEX_FIELD];
+      }
+    }
     await redis.del(key);
     if (Object.keys(normalizedConfig).length > 0) {
       await redis.hmset(key, normalizedConfig);
