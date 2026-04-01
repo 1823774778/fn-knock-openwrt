@@ -1436,6 +1436,7 @@ export type DDNSStatusPayload = {
   enabled: boolean;
   provider: string | null;
   updateScope: "dual_stack" | "ipv6_only" | "ipv4_only";
+  ipSource: "public" | "interface";
   networkInterface: string;
   lastIP: {
     ipv4: string | null;
@@ -1456,6 +1457,12 @@ export type DDNSNetworkInterfacePayload = {
   hasIpv4: boolean;
   hasIpv6: boolean;
   addresses: Array<{
+    family: "ipv4" | "ipv6";
+    address: string;
+    cidr: string | null;
+    internal: boolean;
+  }>;
+  selectableAddresses: Array<{
     family: "ipv4" | "ipv6";
     address: string;
     cidr: string | null;

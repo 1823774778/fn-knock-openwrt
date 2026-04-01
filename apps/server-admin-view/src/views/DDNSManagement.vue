@@ -81,15 +81,24 @@ interface LastCheck {
 }
 
 type DDNSUpdateScope = "dual_stack" | "ipv6_only" | "ipv4_only";
+type DDNSIpSource = "public" | "interface";
 
 const UPDATE_SCOPE_KEY = "update_scope";
+const IP_SOURCE_KEY = "ip_source";
 const NETWORK_INTERFACE_KEY = "network_interface";
+const INTERFACE_IPV4_INDEX_KEY = "interface_ipv4_index";
+const INTERFACE_IPV6_INDEX_KEY = "interface_ipv6_index";
 const NETWORK_INTERFACE_AUTO_VALUE = "__auto__";
 const DEFAULT_DDNS_UPDATE_SCOPE: DDNSUpdateScope = "dual_stack";
+const DEFAULT_DDNS_IP_SOURCE: DDNSIpSource = "public";
 const UPDATE_SCOPE_OPTIONS: Array<{ label: string; value: DDNSUpdateScope }> = [
   { label: "IPv4 & IPv6", value: "dual_stack" },
   { label: "仅更新 IPv6", value: "ipv6_only" },
   { label: "仅更新 IPv4", value: "ipv4_only" },
+];
+const IP_SOURCE_OPTIONS: Array<{ label: string; value: DDNSIpSource }> = [
+  { label: "从公网获取", value: "public" },
+  { label: "从网卡直接获取", value: "interface" },
 ];
 
 const normalizeUpdateScope = (
@@ -105,8 +114,26 @@ const normalizeUpdateScope = (
   return DEFAULT_DDNS_UPDATE_SCOPE;
 };
 
+const normalizeIpSource = (value: string | null | undefined): DDNSIpSource => {
+  return value === "interface" ? "interface" : DEFAULT_DDNS_IP_SOURCE;
+};
+
 const normalizeNetworkInterface = (value: string | null | undefined) => {
   return value?.trim() || "";
+};
+
+const normalizeInterfaceAddressIndex = (value: string | null | undefined) => {
+  const trimmed = value?.trim() || "";
+  if (!trimmed) {
+    return "";
+  }
+
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    return "";
+  }
+
+  return String(parsed);
 };
 
 const toNetworkInterfaceSelectValue = (value: string | null | undefined) => {
@@ -137,6 +164,7 @@ const lastCheck = ref<LastCheck>({
 });
 const logs = ref<LogEntry[]>([]);
 const statusUpdateScope = ref<DDNSUpdateScope>(DEFAULT_DDNS_UPDATE_SCOPE);
+const statusIpSource = ref<DDNSIpSource>(DEFAULT_DDNS_IP_SOURCE);
 const statusNetworkInterface = ref("");
 const networkInterfaces = ref<DDNSNetworkInterfacePayload[]>([]);
 
@@ -288,6 +316,16 @@ const currentUpdateScopeLabel = computed(() => {
   );
 });
 
+const currentIpSourceLabel = computed(() => {
+  const ipSource = normalizeIpSource(
+    providerConfig.value[IP_SOURCE_KEY] || statusIpSource.value,
+  );
+  return (
+    IP_SOURCE_OPTIONS.find((option) => option.value === ipSource)?.label ||
+    "从公网获取"
+  );
+});
+
 const selectedNetworkInterface = computed(() => {
   return normalizeNetworkInterface(
     providerConfig.value[NETWORK_INTERFACE_KEY] || statusNetworkInterface.value,
@@ -309,6 +347,7 @@ const resolvedNetworkInterfaces = computed(() => {
       hasIpv4: false,
       hasIpv6: false,
       addresses: [],
+      selectableAddresses: [],
     });
   }
   return items;
@@ -347,6 +386,66 @@ const effectiveUpdateScope = computed<DDNSUpdateScope>(() => {
     providerConfig.value[UPDATE_SCOPE_KEY] || statusUpdateScope.value,
   );
 });
+
+const effectiveIpSource = computed<DDNSIpSource>(() => {
+  return normalizeIpSource(
+    providerConfig.value[IP_SOURCE_KEY] || statusIpSource.value,
+  );
+});
+
+const selectedNetworkInterfaceOption = computed(() => {
+  const selected = configuredNetworkInterface.value;
+  if (!selected) {
+    return null;
+  }
+
+  return (
+    resolvedNetworkInterfaces.value.find((item) => item.name === selected) ||
+    null
+  );
+});
+
+const interfaceIPv4Options = computed(() => {
+  return (selectedNetworkInterfaceOption.value?.selectableAddresses || [])
+    .filter((item) => item.family === "ipv4")
+    .map((item, index) => ({
+      value: String(index),
+      label: `第 ${index + 1} 个 IPv4: ${item.address}`,
+    }));
+});
+
+const interfaceIPv6Options = computed(() => {
+  return (selectedNetworkInterfaceOption.value?.selectableAddresses || [])
+    .filter((item) => item.family === "ipv6")
+    .map((item, index) => ({
+      value: String(index),
+      label: `第 ${index + 1} 个 IPv6: ${item.address}`,
+    }));
+});
+
+const shouldShowInterfaceAddressBlock = computed(
+  () => !!selectedProvider.value && effectiveIpSource.value === "interface",
+);
+const showInterfaceIPv4Select = computed(
+  () =>
+    shouldShowInterfaceAddressBlock.value &&
+    effectiveUpdateScope.value !== "ipv6_only",
+);
+const showInterfaceIPv6Select = computed(
+  () =>
+    shouldShowInterfaceAddressBlock.value &&
+    effectiveUpdateScope.value !== "ipv4_only",
+);
+const hasConfiguredInterfaceIPv4Selection = computed(() =>
+  normalizeInterfaceAddressIndex(
+    providerConfig.value[INTERFACE_IPV4_INDEX_KEY],
+  ),
+);
+const hasConfiguredInterfaceIPv6Selection = computed(() =>
+  normalizeInterfaceAddressIndex(
+    providerConfig.value[INTERFACE_IPV6_INDEX_KEY],
+  ),
+);
 
 const showIPv4Status = computed(
   () => effectiveUpdateScope.value !== "ipv6_only",
@@ -390,6 +489,7 @@ async function loadStatus() {
     lastIP.value = status.lastIP;
     lastCheck.value = status.lastCheck;
     statusUpdateScope.value = normalizeUpdateScope(status.updateScope);
+    statusIpSource.value = normalizeIpSource(status.ipSource);
     statusNetworkInterface.value = normalizeNetworkInterface(
       status.networkInterface,
     );
@@ -426,8 +526,15 @@ async function loadConfig() {
     const def = currentProviderDef.value;
     const merged: Record<string, string> = {
       [UPDATE_SCOPE_KEY]: normalizeUpdateScope(config[UPDATE_SCOPE_KEY]),
+      [IP_SOURCE_KEY]: normalizeIpSource(config[IP_SOURCE_KEY]),
       [NETWORK_INTERFACE_KEY]: normalizeNetworkInterface(
         config[NETWORK_INTERFACE_KEY],
+      ),
+      [INTERFACE_IPV4_INDEX_KEY]: normalizeInterfaceAddressIndex(
+        config[INTERFACE_IPV4_INDEX_KEY],
+      ),
+      [INTERFACE_IPV6_INDEX_KEY]: normalizeInterfaceAddressIndex(
+        config[INTERFACE_IPV6_INDEX_KEY],
       ),
     };
 
@@ -460,6 +567,7 @@ const ddnsPolling = useTargetPolling({
     lastIP.value = status.lastIP;
     lastCheck.value = status.lastCheck;
     statusUpdateScope.value = normalizeUpdateScope(status.updateScope);
+    statusIpSource.value = normalizeIpSource(status.ipSource);
     statusNetworkInterface.value = normalizeNetworkInterface(
       status.networkInterface,
     );
@@ -504,8 +612,111 @@ async function onProviderChange(val: string) {
   });
 }
 
+function updateConfiguredNetworkInterface(value: string) {
+  providerConfig.value[NETWORK_INTERFACE_KEY] = value;
+  providerConfig.value[INTERFACE_IPV4_INDEX_KEY] = "";
+  providerConfig.value[INTERFACE_IPV6_INDEX_KEY] = "";
+}
+
+function validateCommonConfig() {
+  if (effectiveIpSource.value !== "interface") {
+    return true;
+  }
+
+  if (!configuredNetworkInterface.value) {
+    toast.error("请先选择出站网卡", {
+      description: "从网卡直接获取时，必须明确指定一张网卡。",
+    });
+    return false;
+  }
+
+  if (
+    effectiveUpdateScope.value === "ipv4_only" &&
+    interfaceIPv4Options.value.length === 0
+  ) {
+    toast.error("当前网卡没有可用的 IPv4 地址", {
+      description: "地址选择列表已过滤明显内网地址，请更换网卡或切换获取方式。",
+    });
+    return false;
+  }
+
+  if (
+    effectiveUpdateScope.value === "ipv6_only" &&
+    interfaceIPv6Options.value.length === 0
+  ) {
+    toast.error("当前网卡没有可用的 IPv6 地址", {
+      description: "地址选择列表已过滤明显内网地址，请更换网卡或切换获取方式。",
+    });
+    return false;
+  }
+
+  if (
+    effectiveUpdateScope.value === "dual_stack" &&
+    interfaceIPv4Options.value.length === 0 &&
+    interfaceIPv6Options.value.length === 0
+  ) {
+    toast.error("当前网卡没有可用的地址", {
+      description: "地址选择列表已过滤明显内网地址，请更换网卡或切换获取方式。",
+    });
+    return false;
+  }
+
+  if (
+    showInterfaceIPv4Select.value &&
+    interfaceIPv4Options.value.length > 0 &&
+    !hasConfiguredInterfaceIPv4Selection.value
+  ) {
+    toast.error("请选择 IPv4 地址", {
+      description:
+        "从网卡直接获取时，需要从过滤后的候选列表中选择一个 IPv4 地址。",
+    });
+    return false;
+  }
+
+  if (
+    showInterfaceIPv4Select.value &&
+    hasConfiguredInterfaceIPv4Selection.value &&
+    !interfaceIPv4Options.value.some(
+      (option) => option.value === hasConfiguredInterfaceIPv4Selection.value,
+    )
+  ) {
+    toast.error("所选 IPv4 地址已不可用", {
+      description: "当前网卡的 IPv4 候选顺序已变化，请重新选择。",
+    });
+    return false;
+  }
+
+  if (
+    showInterfaceIPv6Select.value &&
+    interfaceIPv6Options.value.length > 0 &&
+    !hasConfiguredInterfaceIPv6Selection.value
+  ) {
+    toast.error("请选择 IPv6 地址", {
+      description:
+        "从网卡直接获取时，需要从过滤后的候选列表中选择一个 IPv6 地址。",
+    });
+    return false;
+  }
+
+  if (
+    showInterfaceIPv6Select.value &&
+    hasConfiguredInterfaceIPv6Selection.value &&
+    !interfaceIPv6Options.value.some(
+      (option) => option.value === hasConfiguredInterfaceIPv6Selection.value,
+    )
+  ) {
+    toast.error("所选 IPv6 地址已不可用", {
+      description: "当前网卡的 IPv6 候选顺序已变化，请重新选择。",
+    });
+    return false;
+  }
+
+  return true;
+}
+
 async function onSaveConfigSilent() {
   if (!selectedProvider.value) return false;
+  if (!validateCommonConfig()) return false;
   await runSaveConfig(() =>
     DDNSAPI.saveConfig(selectedProvider.value, providerConfig.value),
   );
@@ -528,7 +739,10 @@ function applyCredentialTransfer() {
 
 async function onTest() {
   await runTestUpdate(async () => {
-    await onSaveConfigSilent();
+    const saved = await onSaveConfigSilent();
+    if (!saved) {
+      return;
+    }
     const result = await DDNSAPI.test();
     if (result.success) {
       toast.success("更新成功");
@@ -768,6 +982,20 @@ onUnmounted(() => {
 
             <div class="flex items-center gap-4 shrink-0">
               <div class="p-2.5 rounded-xl">
+                <RefreshCw class="h-5 w-5" />
+              </div>
+              <div class="space-y-1">
+                <p
+                  class="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground"
+                >
+                  获取方式
+                </p>
+                <p class="text-sm font-medium">{{ currentIpSourceLabel }}</p>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-4 shrink-0">
+              <div class="p-2.5 rounded-xl">
                 <Wifi class="h-5 w-5" />
               </div>
               <div class="space-y-1 max-w-[240px]">
@@ -865,10 +1093,11 @@ onUnmounted(() => {
                 "
                 @update:modelValue="
                   (val: any) =>
-                    (providerConfig[NETWORK_INTERFACE_KEY] =
+                    updateConfiguredNetworkInterface(
                       val === NETWORK_INTERFACE_AUTO_VALUE
                         ? ''
-                        : String(val ?? ''))
+                        : String(val ?? ''),
+                    )
                 "
               >
                 <SelectTrigger
@@ -922,6 +1151,55 @@ onUnmounted(() => {
             class="p-4 sm:p-6 grid gap-2 sm:grid-cols-[200px_1fr] md:grid-cols-[240px_1fr] items-start transition-colors hover:bg-muted/10"
           >
             <div class="space-y-1 mt-1.5">
+              <Label for="ddns-ip-source" class="text-sm font-medium"
+                >获取 IP 方式</Label
+              >
+              <p class="text-xs text-muted-foreground hidden sm:block pr-4">
+                可从公网探测当前出口地址，或直接使用所选网卡上的地址
+              </p>
+            </div>
+            <div class="w-full max-w-md space-y-2">
+              <Select
+                :modelValue="
+                  providerConfig[IP_SOURCE_KEY] || DEFAULT_DDNS_IP_SOURCE
+                "
+                @update:modelValue="
+                  (val: any) =>
+                    (providerConfig[IP_SOURCE_KEY] = normalizeIpSource(
+                      String(val ?? ''),
+                    ))
+                "
+              >
+                <SelectTrigger class="w-full" id="ddns-ip-source">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem
+                    v-for="option in IP_SOURCE_OPTIONS"
+                    :key="option.value"
+                    :value="option.value"
+                  >
+                    {{ option.label }}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+
+              <p class="text-[11px] text-muted-foreground">
+                从网卡直接获取时，只显示看起来可直接用于 DDNS
+                的地址，并过滤明显内网地址。
+              </p>
+
+              <p class="text-[11px] text-muted-foreground sm:hidden mt-1.5">
+                可从公网探测当前出口地址，或直接使用所选网卡上的地址
+              </p>
+            </div>
+          </div>
+
+          <div
+            v-if="selectedProvider"
+            class="p-4 sm:p-6 grid gap-2 sm:grid-cols-[200px_1fr] md:grid-cols-[240px_1fr] items-start transition-colors hover:bg-muted/10"
+          >
+            <div class="space-y-1 mt-1.5">
               <Label for="ddns-update-scope" class="text-sm font-medium"
                 >更新范围</Label
               >
@@ -957,6 +1235,149 @@ onUnmounted(() => {
 
               <p class="text-[11px] text-muted-foreground sm:hidden mt-1.5">
                 更新 IPv4、IPv6，或同时更新两者
+              </p>
+            </div>
+          </div>
+
+          <div
+            v-if="shouldShowInterfaceAddressBlock"
+            class="p-4 sm:p-6 grid gap-2 sm:grid-cols-[200px_1fr] md:grid-cols-[240px_1fr] items-start transition-colors hover:bg-muted/10"
+          >
+            <div class="space-y-1 mt-1.5">
+              <Label class="text-sm font-medium">网卡地址说明</Label>
+              <p class="text-xs text-muted-foreground hidden sm:block pr-4">
+                下方地址列表只展示过滤后的候选项，用于避免误选明显内网地址
+              </p>
+            </div>
+            <div class="w-full max-w-md space-y-2">
+              <p
+                v-if="!configuredNetworkInterface"
+                class="text-sm text-muted-foreground"
+              >
+                请先在上方明确选择一张出站网卡。
+              </p>
+              <template v-else>
+                <p class="text-[11px] leading-5 text-muted-foreground">
+                  当前按顺序保存“第几个 IPv4 /
+                  IPv6”。如果更换网卡，会自动清空已选地址。
+                </p>
+                <p class="text-[11px] leading-5 text-muted-foreground">
+                  已过滤明显内网地址；如果列表为空，请更换网卡或改用从公网获取。
+                </p>
+              </template>
+
+              <p class="text-[11px] text-muted-foreground sm:hidden mt-1.5">
+                下方地址列表只展示过滤后的候选项，用于避免误选明显内网地址
+              </p>
+            </div>
+          </div>
+
+          <div
+            v-if="showInterfaceIPv4Select"
+            class="p-4 sm:p-6 grid gap-2 sm:grid-cols-[200px_1fr] md:grid-cols-[240px_1fr] items-start transition-colors hover:bg-muted/10"
+          >
+            <div class="space-y-1 mt-1.5">
+              <Label for="ddns-interface-ipv4" class="text-sm font-medium"
+                >选择 IPv4 地址</Label
+              >
+              <p class="text-xs text-muted-foreground hidden sm:block pr-4">
+                将把所选网卡上的这个 IPv4 地址写入 DDNS
+              </p>
+            </div>
+            <div class="w-full max-w-md space-y-2">
+              <Select
+                :modelValue="
+                  normalizeInterfaceAddressIndex(
+                    providerConfig[INTERFACE_IPV4_INDEX_KEY],
+                  ) || undefined
+                "
+                :disabled="
+                  !configuredNetworkInterface ||
+                  interfaceIPv4Options.length === 0
+                "
+                @update:modelValue="
+                  (val: any) =>
+                    (providerConfig[INTERFACE_IPV4_INDEX_KEY] =
+                      normalizeInterfaceAddressIndex(String(val ?? '')))
+                "
+              >
+                <SelectTrigger class="w-full" id="ddns-interface-ipv4">
+                  <SelectValue placeholder="选择一个 IPv4 地址" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem
+                    v-for="option in interfaceIPv4Options"
+                    :key="option.value"
+                    :value="option.value"
+                  >
+                    {{ option.label }}
+                  </SelectItem>
+                  <div
+                    v-if="interfaceIPv4Options.length === 0"
+                    class="px-2 py-1.5 text-sm text-muted-foreground"
+                  >
+                    没有可选的 IPv4 地址
+                  </div>
+                </SelectContent>
+              </Select>
+
+              <p class="text-[11px] text-muted-foreground sm:hidden mt-1.5">
+                将把所选网卡上的这个 IPv4 地址写入 DDNS
+              </p>
+            </div>
+          </div>
+
+          <div
+            v-if="showInterfaceIPv6Select"
+            class="p-4 sm:p-6 grid gap-2 sm:grid-cols-[200px_1fr] md:grid-cols-[240px_1fr] items-start transition-colors hover:bg-muted/10"
+          >
+            <div class="space-y-1 mt-1.5">
+              <Label for="ddns-interface-ipv6" class="text-sm font-medium"
+                >选择 IPv6 地址</Label
+              >
+              <p class="text-xs text-muted-foreground hidden sm:block pr-4">
+                将把所选网卡上的这个 IPv6 地址写入 DDNS
+              </p>
+            </div>
+            <div class="w-full max-w-md space-y-2">
+              <Select
+                :modelValue="
+                  normalizeInterfaceAddressIndex(
+                    providerConfig[INTERFACE_IPV6_INDEX_KEY],
+                  ) || undefined
+                "
+                :disabled="
+                  !configuredNetworkInterface ||
+                  interfaceIPv6Options.length === 0
+                "
+                @update:modelValue="
+                  (val: any) =>
+                    (providerConfig[INTERFACE_IPV6_INDEX_KEY] =
+                      normalizeInterfaceAddressIndex(String(val ?? '')))
+                "
+              >
+                <SelectTrigger class="w-full" id="ddns-interface-ipv6">
+                  <SelectValue placeholder="选择一个 IPv6 地址" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem
+                    v-for="option in interfaceIPv6Options"
+                    :key="option.value"
+                    :value="option.value"
+                  >
+                    {{ option.label }}
+                  </SelectItem>
+                  <div
+                    v-if="interfaceIPv6Options.length === 0"
+                    class="px-2 py-1.5 text-sm text-muted-foreground"
+                  >
+                    没有可选的 IPv6 地址
+                  </div>
+                </SelectContent>
+              </Select>
+
+              <p class="text-[11px] text-muted-foreground sm:hidden mt-1.5">
+                将把所选网卡上的这个 IPv6 地址写入 DDNS
               </p>
             </div>
           </div>

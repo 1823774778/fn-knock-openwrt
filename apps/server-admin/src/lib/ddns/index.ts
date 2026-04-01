@@ -1,9 +1,44 @@
 import { redis } from "../redis";
-import { DEFAULT_REDIS_LOG_BUFFER_MAX_LEN, RedisLogBuffer } from "../redis-log-buffer";
-import type { DDNSLastCheck, DDNSLastIP, DDNSLogEntry, DDNSNetworkInterfaceOption, DDNSProviderDefinition, DDNSProviderField, DDNSStatus, DDNSUpdateResult, DDNSUpdateScope } from "./types";
+import {
+  DEFAULT_REDIS_LOG_BUFFER_MAX_LEN,
+  RedisLogBuffer,
+} from "../redis-log-buffer";
+import type {
+  DDNSIpSource,
+  DDNSLastCheck,
+  DDNSLastIP,
+  DDNSLogEntry,
+  DDNSNetworkInterfaceOption,
+  DDNSProviderDefinition,
+  DDNSProviderField,
+  DDNSStatus,
+  DDNSUpdateResult,
+  DDNSUpdateScope,
+} from "./types";
 import { providerDefinitions, providerUpdaters } from "./providers";
-import { applyUpdateScope, DDNS_UPDATE_SCOPE_FIELD, DEFAULT_DDNS_UPDATE_SCOPE, getUpdateScopeUnavailableMessage, normalizeUpdateScope } from "./providers/helpers";
-import { createDDNSHttpClient, DDNS_NETWORK_INTERFACE_FIELD, DEFAULT_DDNS_NETWORK_INTERFACE, listDDNSNetworkInterfaces, normalizeNetworkInterface } from "./network";
+import {
+  applyUpdateScope,
+  DDNS_UPDATE_SCOPE_FIELD,
+  DEFAULT_DDNS_UPDATE_SCOPE,
+  getUpdateScopeUnavailableMessage,
+  normalizeUpdateScope,
+} from "./providers/helpers";
+import {
+  DDNS_INTERFACE_IPV4_INDEX_FIELD,
+  DDNS_INTERFACE_IPV6_INDEX_FIELD,
+  DDNS_IP_SOURCE_FIELD,
+  DEFAULT_DDNS_IP_SOURCE,
+  normalizeInterfaceAddressIndex,
+  normalizeIpSource,
+} from "./ip-source";
+import {
+  createDDNSHttpClient,
+  DDNS_NETWORK_INTERFACE_FIELD,
+  DEFAULT_DDNS_NETWORK_INTERFACE,
+  findDDNSNetworkInterface,
+  listDDNSNetworkInterfaces,
+  normalizeNetworkInterface,
+} from "./network";
 import { runWithRetry } from "./retry";
 
 const KEYS = {
@@ -58,17 +93,42 @@ export class DDNSManager {
     const data = await redis.hgetall(KEYS.configPrefix + providerName);
     return {
       ...(data || {}),
-      [DDNS_UPDATE_SCOPE_FIELD]: normalizeUpdateScope(data?.[DDNS_UPDATE_SCOPE_FIELD]),
-      [DDNS_NETWORK_INTERFACE_FIELD]: normalizeNetworkInterface(data?.[DDNS_NETWORK_INTERFACE_FIELD]),
+      [DDNS_UPDATE_SCOPE_FIELD]: normalizeUpdateScope(
+        data?.[DDNS_UPDATE_SCOPE_FIELD],
+      ),
+      [DDNS_IP_SOURCE_FIELD]: normalizeIpSource(data?.[DDNS_IP_SOURCE_FIELD]),
+      [DDNS_NETWORK_INTERFACE_FIELD]: normalizeNetworkInterface(
+        data?.[DDNS_NETWORK_INTERFACE_FIELD],
+      ),
+      [DDNS_INTERFACE_IPV4_INDEX_FIELD]: normalizeInterfaceAddressIndex(
+        data?.[DDNS_INTERFACE_IPV4_INDEX_FIELD],
+      ),
+      [DDNS_INTERFACE_IPV6_INDEX_FIELD]: normalizeInterfaceAddressIndex(
+        data?.[DDNS_INTERFACE_IPV6_INDEX_FIELD],
+      ),
     };
   }
 
-  async saveConfig(providerName: string, config: Record<string, string>): Promise<void> {
+  async saveConfig(
+    providerName: string,
+    config: Record<string, string>,
+  ): Promise<void> {
     const key = KEYS.configPrefix + providerName;
     const normalizedConfig = {
       ...config,
-      [DDNS_UPDATE_SCOPE_FIELD]: normalizeUpdateScope(config[DDNS_UPDATE_SCOPE_FIELD]),
-      [DDNS_NETWORK_INTERFACE_FIELD]: normalizeNetworkInterface(config[DDNS_NETWORK_INTERFACE_FIELD]),
+      [DDNS_UPDATE_SCOPE_FIELD]: normalizeUpdateScope(
+        config[DDNS_UPDATE_SCOPE_FIELD],
+      ),
+      [DDNS_IP_SOURCE_FIELD]: normalizeIpSource(config[DDNS_IP_SOURCE_FIELD]),
+      [DDNS_NETWORK_INTERFACE_FIELD]: normalizeNetworkInterface(
+        config[DDNS_NETWORK_INTERFACE_FIELD],
+      ),
+      [DDNS_INTERFACE_IPV4_INDEX_FIELD]: normalizeInterfaceAddressIndex(
+        config[DDNS_INTERFACE_IPV4_INDEX_FIELD],
+      ),
+      [DDNS_INTERFACE_IPV6_INDEX_FIELD]: normalizeInterfaceAddressIndex(
+        config[DDNS_INTERFACE_IPV6_INDEX_FIELD],
+      ),
     };
     await redis.del(key);
     if (Object.keys(normalizedConfig).length > 0) {
@@ -102,7 +162,7 @@ export class DDNSManager {
   }
 
   async getUpdateScope(providerName?: string | null): Promise<DDNSUpdateScope> {
-    const resolvedProviderName = providerName ?? await this.getProvider();
+    const resolvedProviderName = providerName ?? (await this.getProvider());
     if (!resolvedProviderName) {
       return DEFAULT_DDNS_UPDATE_SCOPE;
     }
@@ -111,8 +171,18 @@ export class DDNSManager {
     return normalizeUpdateScope(config[DDNS_UPDATE_SCOPE_FIELD]);
   }
 
+  async getIpSource(providerName?: string | null): Promise<DDNSIpSource> {
+    const resolvedProviderName = providerName ?? (await this.getProvider());
+    if (!resolvedProviderName) {
+      return DEFAULT_DDNS_IP_SOURCE;
+    }
+
+    const config = await this.getConfig(resolvedProviderName);
+    return normalizeIpSource(config[DDNS_IP_SOURCE_FIELD]);
+  }
+
   async getNetworkInterface(providerName?: string | null): Promise<string> {
-    const resolvedProviderName = providerName ?? await this.getProvider();
+    const resolvedProviderName = providerName ?? (await this.getProvider());
     if (!resolvedProviderName) {
       return DEFAULT_DDNS_NETWORK_INTERFACE;
     }
@@ -124,9 +194,13 @@ export class DDNSManager {
   async getLastCheck(): Promise<DDNSLastCheck> {
     const data = await redis.hgetall(KEYS.lastCheck);
     const rawOutcome = data?.outcome;
-    const outcome = rawOutcome === "updated" || rawOutcome === "noop" || rawOutcome === "skipped" || rawOutcome === "error"
-      ? rawOutcome
-      : null;
+    const outcome =
+      rawOutcome === "updated" ||
+      rawOutcome === "noop" ||
+      rawOutcome === "skipped" ||
+      rawOutcome === "error"
+        ? rawOutcome
+        : null;
 
     return {
       checked_at: data?.checked_at || null,
@@ -155,26 +229,46 @@ export class DDNSManager {
       this.getLastIP(),
       this.getLastCheck(),
     ]);
-    const [updateScope, networkInterface] = await Promise.all([
+    const [updateScope, ipSource, networkInterface] = await Promise.all([
       this.getUpdateScope(provider),
+      this.getIpSource(provider),
       this.getNetworkInterface(provider),
     ]);
-    return { enabled, provider, updateScope, networkInterface, lastIP, lastCheck };
+    return {
+      enabled,
+      provider,
+      updateScope,
+      ipSource,
+      networkInterface,
+      lastIP,
+      lastCheck,
+    };
   }
 
   listNetworkInterfaces(): DDNSNetworkInterfaceOption[] {
     return listDDNSNetworkInterfaces();
   }
 
-  async appendLog(level: DDNSLogEntry["level"], message: string): Promise<void> {
-    const entry: DDNSLogEntry = { time: new Date().toISOString(), level, message };
+  async appendLog(
+    level: DDNSLogEntry["level"],
+    message: string,
+  ): Promise<void> {
+    const entry: DDNSLogEntry = {
+      time: new Date().toISOString(),
+      level,
+      message,
+    };
     await ddnsLogBuffer.append([JSON.stringify(entry)]);
   }
 
   async getLogs(limit: number = 200): Promise<DDNSLogEntry[]> {
     const raw = await ddnsLogBuffer.list(limit);
     return raw.map((s) => {
-      try { return JSON.parse(s); } catch { return { time: "", level: "info", message: s }; }
+      try {
+        return JSON.parse(s);
+      } catch {
+        return { time: "", level: "info", message: s };
+      }
     });
   }
 
@@ -182,7 +276,10 @@ export class DDNSManager {
     await ddnsLogBuffer.clear();
   }
 
-  async executeUpdate(ipv4: string | null, ipv6: string | null): Promise<DDNSUpdateResult> {
+  async executeUpdate(
+    ipv4: string | null,
+    ipv6: string | null,
+  ): Promise<DDNSUpdateResult> {
     const providerName = await this.getProvider();
     if (!providerName) {
       return { success: false, message: "未选择 DDNS 提供商" };
@@ -197,7 +294,10 @@ export class DDNSManager {
     const updateScope = normalizeUpdateScope(config[DDNS_UPDATE_SCOPE_FIELD]);
     const scopedIPs = applyUpdateScope(updateScope, ipv4, ipv6);
     if (!scopedIPs.ipv4 && !scopedIPs.ipv6) {
-      return { success: false, message: getUpdateScopeUnavailableMessage(updateScope) };
+      return {
+        success: false,
+        message: getUpdateScopeUnavailableMessage(updateScope),
+      };
     }
 
     const retryCount = Number(process.env.DDNS_RETRY_COUNT || "1");
@@ -227,7 +327,55 @@ export class DDNSManager {
 
     const config = await this.getConfig(providerName);
     const requiredFields = def.fields.filter((f) => f.required !== false);
-    return requiredFields.every((f) => !!config[f.key]);
+    const providerFieldsComplete = requiredFields.every((f) => !!config[f.key]);
+    if (!providerFieldsComplete) {
+      return false;
+    }
+
+    const ipSource = normalizeIpSource(config[DDNS_IP_SOURCE_FIELD]);
+    if (ipSource !== "interface") {
+      return true;
+    }
+
+    const networkInterface = normalizeNetworkInterface(
+      config[DDNS_NETWORK_INTERFACE_FIELD],
+    );
+    if (!networkInterface) {
+      return false;
+    }
+
+    const network = findDDNSNetworkInterface(networkInterface);
+    if (!network) {
+      return false;
+    }
+
+    const updateScope = normalizeUpdateScope(config[DDNS_UPDATE_SCOPE_FIELD]);
+    const requiresIPv4 = updateScope !== "ipv6_only";
+    const requiresIPv6 = updateScope !== "ipv4_only";
+    const hasSelectableIPv4 = network.selectableAddresses.some(
+      (item) => item.family === "ipv4",
+    );
+    const hasSelectableIPv6 = network.selectableAddresses.some(
+      (item) => item.family === "ipv6",
+    );
+
+    if (
+      requiresIPv4 &&
+      hasSelectableIPv4 &&
+      !normalizeInterfaceAddressIndex(config[DDNS_INTERFACE_IPV4_INDEX_FIELD])
+    ) {
+      return false;
+    }
+
+    if (
+      requiresIPv6 &&
+      hasSelectableIPv6 &&
+      !normalizeInterfaceAddressIndex(config[DDNS_INTERFACE_IPV6_INDEX_FIELD])
+    ) {
+      return false;
+    }
+
+    return true;
   }
 }
 
@@ -236,6 +384,7 @@ export { ddnsLogBuffer };
 
 export type {
   DDNSLastCheck,
+  DDNSIpSource,
   DDNSLastIP,
   DDNSLogEntry,
   DDNSNetworkInterfaceOption,

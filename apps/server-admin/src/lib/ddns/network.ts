@@ -2,7 +2,11 @@ import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { networkInterfaces, tmpdir } from "node:os";
 import { join } from "node:path";
-import type { DDNSHttpClient, DDNSNetworkInterfaceAddress, DDNSNetworkInterfaceOption } from "./types";
+import type {
+  DDNSHttpClient,
+  DDNSNetworkInterfaceAddress,
+  DDNSNetworkInterfaceOption,
+} from "./types";
 
 export const DDNS_NETWORK_INTERFACE_FIELD = "network_interface";
 export const DEFAULT_DDNS_NETWORK_INTERFACE = "";
@@ -14,6 +18,17 @@ type DDNSFetchInit = RequestInit & {
   preferredFamily?: DDNSAddressFamily;
 };
 
+const CURL_PROXY_ENV_KEYS = [
+  "http_proxy",
+  "https_proxy",
+  "all_proxy",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "ALL_PROXY",
+  "no_proxy",
+  "NO_PROXY",
+] as const;
+
 function isUsableIPv4(address: string): boolean {
   return !(address.startsWith("127.") || address.startsWith("169.254."));
 }
@@ -21,11 +36,11 @@ function isUsableIPv4(address: string): boolean {
 function isUsableIPv6(address: string): boolean {
   const normalized = address.replace(/:/g, "").toLowerCase();
   return !(
-    normalized === "1"
-    || normalized.startsWith("fe8")
-    || normalized.startsWith("fe9")
-    || normalized.startsWith("fea")
-    || normalized.startsWith("feb")
+    normalized === "1" ||
+    normalized.startsWith("fe8") ||
+    normalized.startsWith("fe9") ||
+    normalized.startsWith("fea") ||
+    normalized.startsWith("feb")
   );
 }
 
@@ -39,10 +54,60 @@ function toAddressFamily(value: string | number): DDNSAddressFamily | null {
   return null;
 }
 
-function formatAddressSummary(addresses: DDNSNetworkInterfaceAddress[]): string {
+function formatAddressSummary(
+  addresses: DDNSNetworkInterfaceAddress[],
+): string {
   return addresses
-    .map((item) => `${item.family === "ipv4" ? "IPv4" : "IPv6"}: ${item.address}`)
+    .map(
+      (item) => `${item.family === "ipv4" ? "IPv4" : "IPv6"}: ${item.address}`,
+    )
     .join(" / ");
+}
+
+function parseIPv4Octets(address: string): number[] | null {
+  const parts = address.split(".");
+  if (parts.length !== 4) {
+    return null;
+  }
+
+  const octets = parts.map((part) => Number(part));
+  if (
+    octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)
+  ) {
+    return null;
+  }
+
+  return octets;
+}
+
+function isPrivateIPv4(address: string): boolean {
+  const octets = parseIPv4Octets(address);
+  if (!octets) {
+    return false;
+  }
+
+  const first = octets[0];
+  const second = octets[1];
+  return (
+    first === 10 ||
+    (first === 172 && second !== undefined && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168)
+  );
+}
+
+function isUniqueLocalIPv6(address: string): boolean {
+  const normalized = address.split("%")[0]?.toLowerCase() || "";
+  return normalized.startsWith("fc") || normalized.startsWith("fd");
+}
+
+export function isSelectableDDNSInterfaceAddress(
+  address: DDNSNetworkInterfaceAddress,
+): boolean {
+  if (address.family === "ipv4") {
+    return !isPrivateIPv4(address.address);
+  }
+
+  return !isUniqueLocalIPv6(address.address);
 }
 
 function toNetworkInterfaceOption(
@@ -63,18 +128,23 @@ function toNetworkInterfaceOption(
       return [];
     }
 
-    return [{
-      family: family === 4 ? "ipv4" : "ipv6",
-      address: item.address,
-      cidr: item.cidr ?? null,
-      internal: item.internal,
-    }];
+    return [
+      {
+        family: family === 4 ? "ipv4" : "ipv6",
+        address: item.address,
+        cidr: item.cidr ?? null,
+        internal: item.internal,
+      },
+    ];
   });
 
   if (addresses.length === 0) {
     return null;
   }
 
+  const selectableAddresses = addresses.filter(
+    isSelectableDDNSInterfaceAddress,
+  );
   const summary = formatAddressSummary(addresses);
   return {
     name,
@@ -83,10 +153,13 @@ function toNetworkInterfaceOption(
     hasIpv4: addresses.some((item) => item.family === "ipv4"),
     hasIpv6: addresses.some((item) => item.family === "ipv6"),
     addresses,
+    selectableAddresses,
   };
 }
 
-export function normalizeNetworkInterface(value: string | null | undefined): string {
+export function normalizeNetworkInterface(
+  value: string | null | undefined,
+): string {
   return value?.trim() || DEFAULT_DDNS_NETWORK_INTERFACE;
 }
 
@@ -102,8 +175,34 @@ export function listDDNSNetworkInterfaces(): DDNSNetworkInterfaceOption[] {
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
+export function findDDNSNetworkInterface(
+  interfaceName: string | null | undefined,
+): DDNSNetworkInterfaceOption | null {
+  const normalizedName = normalizeNetworkInterface(interfaceName);
+  if (!normalizedName) {
+    return null;
+  }
+
+  return (
+    listDDNSNetworkInterfaces().find((item) => item.name === normalizedName) ||
+    null
+  );
+}
+
+export function listSelectableDDNSInterfaceAddresses(
+  interfaceName: string,
+  family: DDNSNetworkInterfaceAddress["family"],
+): DDNSNetworkInterfaceAddress[] {
+  const selected = findDDNSNetworkInterface(interfaceName);
+  if (!selected) {
+    return [];
+  }
+
+  return selected.selectableAddresses.filter((item) => item.family === family);
+}
+
 function ensureNetworkInterfaceExists(interfaceName: string): void {
-  const selected = listDDNSNetworkInterfaces().find((item) => item.name === interfaceName);
+  const selected = findDDNSNetworkInterface(interfaceName);
   if (!selected) {
     throw new Error(`未找到可用网卡: ${interfaceName}`);
   }
@@ -192,7 +291,13 @@ async function executeCurl(
   signal: AbortSignal | null | undefined,
 ): Promise<void> {
   await new Promise<void>((resolve, reject) => {
+    const env = { ...process.env };
+    for (const key of CURL_PROXY_ENV_KEYS) {
+      delete env[key];
+    }
+
     const child = spawn("curl", args, {
+      env,
       stdio: ["pipe", "ignore", "pipe"],
     });
     let stderr = "";
@@ -246,7 +351,8 @@ async function executeCurl(
           resolve();
           return;
         }
-        const detail = stderr.trim() || closeSignal || `exit ${code ?? "unknown"}`;
+        const detail =
+          stderr.trim() || closeSignal || `exit ${code ?? "unknown"}`;
         reject(new Error(`curl 请求失败: ${detail}`));
       });
     });
@@ -275,9 +381,12 @@ async function fetchViaCurl(
     const requestForCurl = request.clone();
     const body = await readRequestBody(requestForCurl);
     const args = [
+      "-q",
       "--silent",
       "--show-error",
       "--location",
+      "--proxy",
+      "",
       ...getPreferredFamilyArgs(options.preferredFamily),
       "--dump-header",
       headerPath,
@@ -337,9 +446,11 @@ export async function ddnsFetch(
   });
 }
 
-export function createDDNSHttpClient(options: {
-  networkInterface?: string | null;
-} = {}): DDNSHttpClient {
+export function createDDNSHttpClient(
+  options: {
+    networkInterface?: string | null;
+  } = {},
+): DDNSHttpClient {
   return {
     fetch(input: RequestInfo | URL, init?: RequestInit) {
       return ddnsFetch(input, {

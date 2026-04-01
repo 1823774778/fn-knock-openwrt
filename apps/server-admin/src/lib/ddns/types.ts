@@ -28,6 +28,7 @@ export type DDNSNetworkInterfaceOption = {
   hasIpv4: boolean;
   hasIpv6: boolean;
   addresses: DDNSNetworkInterfaceAddress[];
+  selectableAddresses: DDNSNetworkInterfaceAddress[];
 };
 
 export type DDNSUpdateResult = {
@@ -38,6 +39,7 @@ export type DDNSUpdateResult = {
 };
 
 export type DDNSUpdateScope = "dual_stack" | "ipv6_only" | "ipv4_only";
+export type DDNSIpSource = "public" | "interface";
 
 export type DDNSLogEntry = {
   time: string;
@@ -61,6 +63,7 @@ export type DDNSStatus = {
   enabled: boolean;
   provider: string | null;
   updateScope: DDNSUpdateScope;
+  ipSource: DDNSIpSource;
   networkInterface: string;
   lastIP: DDNSLastIP;
   lastCheck: DDNSLastCheck;
@@ -78,5 +81,5 @@ export type DDNSProviderContext = {
 export type DDNSProviderUpdater = (
   context: DDNSProviderContext,
   ipv4: string | null,
-  ipv6: string | null
+  ipv6: string | null,
 ) => Promise<DDNSUpdateResult>;
