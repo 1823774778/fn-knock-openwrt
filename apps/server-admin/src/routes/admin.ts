@@ -13,7 +13,7 @@ import {
   type StreamMapping,
 } from "../lib/redis";
 import { generateSecret, generateURI, verifySync } from "otplib";
-import { goBackend } from "../lib/go-backend";
+import { goBackend, type GoResponse } from "../lib/go-backend";
 import { firewallService } from "../lib/firewall-service";
 import { randomBytes } from "node:crypto";
 import { authLogManager } from "../lib/auth-log";
@@ -27,7 +27,10 @@ import {
   getAuthHostMapping,
 } from "../lib/subdomain-mode";
 import { isAuthServiceTarget } from "../lib/auth-service";
-import { refreshAllHostMappingTitles } from "../lib/host-mapping-metadata";
+import {
+  refreshAllHostMappingTitles,
+  scheduleHostMappingsMetadataRefresh,
+} from "../lib/host-mapping-metadata";
 import { fetchUrlMetadata } from "../lib/url-metadata";
 import {
   buildHostMappingsBookmarkFilename,
@@ -40,6 +43,11 @@ import {
   getGatewayVisibilityDetails,
   syncGatewayVisibilityToGateway,
 } from "../lib/gateway-visibility";
+import {
+  getSmartConnectDetails,
+  scheduleSmartConnectSyncAfterHostMappingsChange,
+  syncSmartConnect,
+} from "../lib/smart-connect";
 import { syncSSLDeploymentToGateway } from "../lib/ssl-gateway";
 import {
   isAnySubdomainRoutingMode,
@@ -135,6 +143,17 @@ const haveSyncedHostRulesChanged = (
 
 const isSameJsonValue = (left: unknown, right: unknown): boolean =>
   JSON.stringify(left) === JSON.stringify(right);
+
+const ensureGoResponseSuccess = <T>(
+  response: GoResponse<T>,
+  fallbackMessage: string,
+): GoResponse<T> => {
+  if (response.success) {
+    return response;
+  }
+
+  throw new Error(response.message || fallbackMessage);
+};
 
 const isValidStreamTarget = (target: string): boolean => {
   return isValidHostPort(target);
@@ -310,6 +329,12 @@ const rollbackConfigAndRuntime = async (
   }
 
   try {
+    await syncSmartConnect(previousConfig);
+  } catch (error: any) {
+    return error?.message || "恢复之前的智能连接运行态失败";
+  }
+
+  try {
     await firewallService.applyRunTypeConfig(
       previousConfig.run_type,
       previousConfig.run_type,
@@ -335,6 +360,12 @@ const rollbackProtocolMappingFeatureAndRuntime = async (
     await configManager.updateProtocolMappingFeatureConfig(previousSettings);
   } catch (error: any) {
     return error?.message || "恢复协议映射功能开关失败";
+  }
+
+  try {
+    await syncSmartConnect(previousConfig);
+  } catch (error: any) {
+    return error?.message || "恢复智能连接运行态失败";
   }
 
   try {
@@ -392,6 +423,31 @@ const buildGatewaySettingsResponse = (
     visibilityRuntime,
   ),
 });
+
+const syncHostMappingsRuntime = async (
+  previousConfig: AppConfig,
+  nextConfig: AppConfig,
+  normalizedMappings: HostMapping[],
+): Promise<void> => {
+  const previousGatewayAuthConfig = buildGatewayAuthConfig(previousConfig);
+  const nextGatewayAuthConfig = buildGatewayAuthConfig(nextConfig);
+
+  if (
+    haveSyncedHostRulesChanged(previousConfig.host_mappings, normalizedMappings)
+  ) {
+    ensureGoResponseSuccess(
+      await goBackend.setHostRules(normalizedMappings),
+      "同步 Host 路由失败",
+    );
+  }
+
+  if (!isSameJsonValue(previousGatewayAuthConfig, nextGatewayAuthConfig)) {
+    ensureGoResponseSuccess(
+      await goBackend.setAuthConfig(nextGatewayAuthConfig),
+      "同步鉴权网关配置失败",
+    );
+  }
+};
 
 const buildCountSeries = (
   timestamps: number[],
@@ -457,6 +513,7 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
             enabled: false,
           });
         }
+        await syncSmartConnect(await configManager.getConfig());
         await firewallService.applyRunTypeConfig(
           body.run_type,
           previousRunType,
@@ -647,6 +704,62 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
     {
       body: t.Object({
         enabled: t.Optional(t.Boolean()),
+      }),
+    },
+  )
+  .get("/config/smart_connect/details", async () => {
+    const details = await getSmartConnectDetails();
+    return { success: true, data: details };
+  })
+  .post(
+    "/config/smart_connect",
+    async ({ body, set }) => {
+      const previousConfig = await configManager.getConfig();
+      if (body.enabled === true && previousConfig.run_type !== 3) {
+        set.status = 400;
+        return {
+          success: false,
+          message: "智能连接仅可在子域模式下启用",
+        };
+      }
+
+      const nextConfig: AppConfig = {
+        ...previousConfig,
+        smart_connect: {
+          ...(previousConfig.smart_connect ?? {
+            enabled: false,
+            selected_ipv4: "",
+          }),
+          ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
+          ...(body.selected_ipv4 !== undefined
+            ? { selected_ipv4: body.selected_ipv4 }
+            : {}),
+        },
+      };
+
+      try {
+        await configManager.saveConfig(nextConfig);
+        const details = await syncSmartConnect(nextConfig);
+        await firewallService.applyRunTypeConfig(
+          nextConfig.run_type,
+          previousConfig.run_type,
+        );
+        return { success: true, data: details };
+      } catch (error: any) {
+        const rollbackError = await rollbackConfigAndRuntime(previousConfig);
+        set.status = 502;
+        return {
+          success: false,
+          message: rollbackError
+            ? `${error?.message || "更新智能连接失败"}；回滚失败：${rollbackError}`
+            : error?.message || "更新智能连接失败，已回滚配置",
+        };
+      }
+    },
+    {
+      body: t.Object({
+        enabled: t.Optional(t.Boolean()),
+        selected_ipv4: t.Optional(t.String()),
       }),
     },
   )
@@ -1034,23 +1147,27 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
         ...config,
         host_mappings: normalizedMappings,
       };
-      const previousGatewayAuthConfig = buildGatewayAuthConfig(config);
-      const nextGatewayAuthConfig = buildGatewayAuthConfig(updatedConfig);
 
-      await configManager.saveConfig(updatedConfig);
+      try {
+        await configManager.saveConfig(updatedConfig);
+        await syncHostMappingsRuntime(
+          config,
+          updatedConfig,
+          normalizedMappings,
+        );
+      } catch (error: any) {
+        const rollbackError = await rollbackConfigAndRuntime(config);
+        set.status = 502;
+        return {
+          success: false,
+          message: rollbackError
+            ? `${error?.message || "更新 Host 映射失败"}；回滚失败：${rollbackError}`
+            : error?.message || "更新 Host 映射失败，已回滚配置",
+        };
+      }
 
-      const syncTasks: Array<Promise<unknown>> = [];
-      if (
-        haveSyncedHostRulesChanged(config.host_mappings, normalizedMappings)
-      ) {
-        syncTasks.push(goBackend.setHostRules(normalizedMappings));
-      }
-      if (!isSameJsonValue(previousGatewayAuthConfig, nextGatewayAuthConfig)) {
-        syncTasks.push(goBackend.setAuthConfig(nextGatewayAuthConfig));
-      }
-      if (syncTasks.length > 0) {
-        await Promise.all(syncTasks);
-      }
+      scheduleHostMappingsMetadataRefresh(normalizedMappings);
+      scheduleSmartConnectSyncAfterHostMappingsChange(updatedConfig);
 
       return { success: true, data: normalizedMappings };
     },

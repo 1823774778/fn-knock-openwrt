@@ -50,6 +50,7 @@ import { createStaticFilesPlugin } from "./plugins/static-files";
 import { firewallService } from "./lib/firewall-service";
 import { syncGatewayLoggingToGateway } from "./lib/gateway-logging";
 import { syncSSLDeploymentToGateway } from "./lib/ssl-gateway";
+import { syncSmartConnectOnBoot } from "./lib/smart-connect";
 import { terminalRoutes } from "./routes/terminal";
 import { terminalManager } from "./lib/terminal-manager";
 import { cidrRoutes } from "./routes/cidr";
@@ -388,6 +389,9 @@ if (reverseProxyThrottlePatchApplied) {
     "[gateway-throttle] applied legacy reverse proxy throttle patch (20/50/30 -> 100/200/30)",
   );
 }
+await syncSmartConnectOnBoot().catch((error) => {
+  console.error("[smart-connect] failed to sync dnsmasq state on boot:", error);
+});
 await firewallService.applyRunTypeConfig(config.run_type);
 syncGatewayLoggingToGateway(config.gateway_logging).catch((error) => {
   console.error(

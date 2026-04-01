@@ -178,6 +178,60 @@ export interface ProtocolMappingFeatureConfig {
   enabled: boolean;
 }
 
+export interface SmartConnectConfig {
+  enabled: boolean;
+  selected_ipv4: string;
+}
+
+export interface SmartConnectRuntimeState {
+  selected_ipv4: string;
+  synced_domains: string[];
+  managed_rule_count: number;
+  last_sync_at: string | null;
+  last_sync_error: string | null;
+}
+
+export type DnsmasqInstallStatus =
+  | "uninstalled"
+  | "installing"
+  | "installed"
+  | "error";
+
+export interface DnsmasqInstallState {
+  status: DnsmasqInstallStatus;
+  progress: number;
+  message: string;
+}
+
+export interface DnsmasqStatus {
+  installed: boolean;
+  service_active: boolean;
+  initialized: boolean;
+  version: string;
+  install_state: DnsmasqInstallState;
+}
+
+export interface SmartConnectAvailability {
+  available: boolean;
+  reason: string;
+}
+
+export interface SmartConnectLocalIpOption {
+  label: string;
+  value: string;
+  interface: string;
+}
+
+export interface SmartConnectDetails {
+  config: SmartConnectConfig;
+  availability: SmartConnectAvailability;
+  dnsmasq: DnsmasqStatus & {
+    runtime: SmartConnectRuntimeState;
+  };
+  domains: string[];
+  local_ip_options: SmartConnectLocalIpOption[];
+}
+
 export interface AuthCredentialSettings {
   session_ttl_seconds: number;
   remember_me_ttl_seconds: number;
@@ -369,6 +423,7 @@ export interface AppConfig {
   gateway_logging?: GatewayLoggingConfig;
   reverse_proxy_throttle?: ReverseProxyThrottleConfig;
   protocol_mapping_feature?: ProtocolMappingFeatureConfig;
+  smart_connect?: SmartConnectConfig;
   auth_credential_settings?: AuthCredentialSettings;
   terminal_feature?: TerminalFeatureConfig;
   ssl: {

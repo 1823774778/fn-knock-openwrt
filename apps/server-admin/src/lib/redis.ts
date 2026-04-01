@@ -208,6 +208,19 @@ export interface ProtocolMappingFeatureConfig {
   enabled: boolean;
 }
 
+export interface SmartConnectConfig {
+  enabled: boolean;
+  selected_ipv4: string;
+}
+
+export interface SmartConnectRuntimeState {
+  selected_ipv4: string;
+  synced_domains: string[];
+  managed_rule_count: number;
+  last_sync_at: string | null;
+  last_sync_error: string | null;
+}
+
 export type CaptchaProvider = "pow" | "turnstile";
 
 export type CaptchaWidgetMode = "normal";
@@ -344,6 +357,7 @@ export interface AppConfig {
   gateway_logging?: GatewayLoggingSettings;
   reverse_proxy_throttle?: ReverseProxyThrottleConfig;
   gateway_visibility?: GatewayVisibilityConfig;
+  smart_connect?: SmartConnectConfig;
   auth_credential_settings?: AuthCredentialSettings;
   terminal_feature?: TerminalFeatureConfig;
 }
@@ -411,6 +425,19 @@ const LEGACY_REVERSE_PROXY_THROTTLE_CONFIG: Pick<
 
 const DEFAULT_PROTOCOL_MAPPING_FEATURE_CONFIG: ProtocolMappingFeatureConfig = {
   enabled: false,
+};
+
+export const DEFAULT_SMART_CONNECT_CONFIG: SmartConnectConfig = {
+  enabled: false,
+  selected_ipv4: "",
+};
+
+const DEFAULT_SMART_CONNECT_RUNTIME_STATE: SmartConnectRuntimeState = {
+  selected_ipv4: "",
+  synced_domains: [],
+  managed_rule_count: 0,
+  last_sync_at: null,
+  last_sync_error: null,
 };
 
 export type TOTPCredential = {
@@ -482,6 +509,9 @@ const DEFAULT_CONFIG: AppConfig = {
     ...DEFAULT_GATEWAY_VISIBILITY_CONFIG,
     selections: [],
     custom_cidrs: [],
+  },
+  smart_connect: {
+    ...DEFAULT_SMART_CONNECT_CONFIG,
   },
   auth_credential_settings: {
     ...DEFAULT_AUTH_CREDENTIAL_SETTINGS,
@@ -614,6 +644,36 @@ const normalizeProtocolMappingFeatureConfig = (
 
   return {
     enabled: raw.enabled === true,
+  };
+};
+
+const normalizeSmartConnectConfig = (
+  value?: Partial<SmartConnectConfig> | null,
+): SmartConnectConfig => {
+  const raw = value ?? {};
+
+  return {
+    enabled: raw.enabled === true,
+    selected_ipv4: normalizeOptionalString(raw.selected_ipv4) ?? "",
+  };
+};
+
+const normalizeSmartConnectRuntimeState = (
+  value?: Partial<SmartConnectRuntimeState> | null,
+): SmartConnectRuntimeState => {
+  const raw = value ?? {};
+  const lastSyncAt = normalizeOptionalString(raw.last_sync_at);
+  const lastSyncError = normalizeOptionalString(raw.last_sync_error);
+
+  return {
+    selected_ipv4: normalizeOptionalString(raw.selected_ipv4) ?? "",
+    synced_domains: normalizeDomainList(raw.synced_domains),
+    managed_rule_count: normalizePositiveInt(raw.managed_rule_count, 0, {
+      min: 0,
+      max: 65535,
+    }),
+    last_sync_at: lastSyncAt || null,
+    last_sync_error: lastSyncError || null,
   };
 };
 
@@ -1277,6 +1337,7 @@ export class ConfigManager {
   private redis: Redis;
   private configKey = "fn_knock:config";
   private gatewayVisibilityRuntimeKey = "fn_knock:gateway:visibility:runtime";
+  private smartConnectRuntimeKey = "fn_knock:smart-connect:runtime";
   private captchaSettingsKey = "fn_knock:captcha:settings";
   private protocolMappingFeatureKey = "fn_knock:protocol-mapping:feature";
   private caHostsKey = "fn_knock:ca:hosts";
@@ -1564,6 +1625,9 @@ export class ConfigManager {
         parsed.gateway_visibility = normalizeGatewayVisibilityConfig(
           parsed.gateway_visibility,
         );
+        parsed.smart_connect = normalizeSmartConnectConfig(
+          parsed.smart_connect,
+        );
         parsed.auth_credential_settings = normalizeAuthCredentialSettings(
           parsed.auth_credential_settings,
           {
@@ -1592,6 +1656,9 @@ export class ConfigManager {
         ...DEFAULT_GATEWAY_VISIBILITY_CONFIG,
         selections: [],
         custom_cidrs: [],
+      },
+      smart_connect: {
+        ...DEFAULT_SMART_CONNECT_CONFIG,
       },
       auth_credential_settings: { ...DEFAULT_AUTH_CREDENTIAL_SETTINGS },
       terminal_feature: { ...DEFAULT_TERMINAL_FEATURE_CONFIG },
@@ -3142,6 +3209,11 @@ export class ConfigManager {
       config.default_route = DEFAULT_ROUTE_PLACEHOLDER;
     }
 
+    config.smart_connect = normalizeSmartConnectConfig(config.smart_connect);
+    if (run_type !== 3) {
+      config.smart_connect.enabled = false;
+    }
+
     await this.saveConfig(config);
   }
 
@@ -3253,6 +3325,48 @@ export class ConfigManager {
       ...DEFAULT_GATEWAY_VISIBILITY_RUNTIME_STATE,
       cidrs: [],
     };
+  }
+
+  async getSmartConnectConfig(): Promise<SmartConnectConfig> {
+    const config = await this.getConfig();
+    return normalizeSmartConnectConfig(config.smart_connect);
+  }
+
+  async updateSmartConnectConfig(
+    patch: Partial<SmartConnectConfig>,
+  ): Promise<SmartConnectConfig> {
+    const config = await this.getConfig();
+    const next = normalizeSmartConnectConfig({
+      ...config.smart_connect,
+      ...patch,
+    });
+    config.smart_connect = next;
+    await this.saveConfig(config);
+    return next;
+  }
+
+  async getSmartConnectRuntimeState(): Promise<SmartConnectRuntimeState> {
+    try {
+      const raw = await this.redis.get(this.smartConnectRuntimeKey);
+      if (raw) {
+        return normalizeSmartConnectRuntimeState(JSON.parse(raw));
+      }
+    } catch (error) {
+      console.error("Failed to parse smart connect runtime state", error);
+    }
+
+    return {
+      ...DEFAULT_SMART_CONNECT_RUNTIME_STATE,
+      synced_domains: [],
+    };
+  }
+
+  async saveSmartConnectRuntimeState(
+    nextValue: SmartConnectRuntimeState,
+  ): Promise<SmartConnectRuntimeState> {
+    const next = normalizeSmartConnectRuntimeState(nextValue);
+    await this.redis.set(this.smartConnectRuntimeKey, JSON.stringify(next));
+    return next;
   }
 
   async updateFnosShareBypassConfig(

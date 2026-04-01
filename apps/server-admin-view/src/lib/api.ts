@@ -32,6 +32,10 @@ import type {
   GatewayLogEntriesPayload,
   GatewayLoggingConfig,
   ProtocolMappingFeatureConfig,
+  SmartConnectConfig,
+  SmartConnectDetails,
+  DnsmasqStatus,
+  DnsmasqInstallState,
   AuthCredentialSettings,
   TerminalAttachmentRecord,
   TerminalFeatureConfig,
@@ -740,6 +744,24 @@ export const SystemAPI = {
       "/config/protocol_mapping_feature",
       payload,
     );
+    return res.data.data;
+  },
+  async getSmartConnectDetails(): Promise<SmartConnectDetails> {
+    const res = await apiClient.get("/config/smart_connect/details");
+    return res.data.data;
+  },
+  async updateSmartConnect(
+    payload: Partial<SmartConnectConfig>,
+  ): Promise<SmartConnectDetails> {
+    const res = await apiClient.post("/config/smart_connect", payload);
+    return res.data.data;
+  },
+  async getDnsmasqStatus(): Promise<DnsmasqStatus> {
+    const res = await apiClient.get("/system/dnsmasq/status");
+    return res.data.data;
+  },
+  async installDnsmasq(): Promise<DnsmasqInstallState> {
+    const res = await apiClient.post("/system/dnsmasq/install");
     return res.data.data;
   },
   async getFnosShareBypassConfig(): Promise<FnosShareBypassConfig> {

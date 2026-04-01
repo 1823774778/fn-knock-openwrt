@@ -15,6 +15,76 @@ export const useConfigStore = defineStore("config", () => {
   const config = ref<AppConfig | null>(null);
   const isLoading = ref(true);
   const isError = ref(false);
+  let hostMappingsFollowUpRefreshTimer: number | null = null;
+  let hostMappingsFollowUpRefreshAttempts = 0;
+
+  const hasPendingHostMappingMetadata = (mappings: HostMapping[]): boolean =>
+    mappings.some(
+      (mapping) =>
+        Boolean(mapping.target.trim()) &&
+        (!mapping.title.trim() || !mapping.favicon.trim()),
+    );
+
+  const refreshHostMappingsOnly = async () => {
+    const nextMappings = await ConfigAPI.getHostMappings();
+    if (config.value) {
+      config.value = {
+        ...config.value,
+        host_mappings: nextMappings,
+      };
+    } else {
+      await loadConfig();
+    }
+    return nextMappings;
+  };
+
+  const clearHostMappingsFollowUpRefresh = () => {
+    if (hostMappingsFollowUpRefreshTimer !== null) {
+      window.clearTimeout(hostMappingsFollowUpRefreshTimer);
+      hostMappingsFollowUpRefreshTimer = null;
+    }
+    hostMappingsFollowUpRefreshAttempts = 0;
+  };
+
+  const scheduleHostMappingsFollowUpRefresh = (mappings: HostMapping[]) => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (!hasPendingHostMappingMetadata(mappings)) {
+      clearHostMappingsFollowUpRefresh();
+      return;
+    }
+
+    clearHostMappingsFollowUpRefresh();
+    hostMappingsFollowUpRefreshAttempts = 2;
+
+    const runFollowUpRefresh = async () => {
+      hostMappingsFollowUpRefreshTimer = null;
+
+      try {
+        const nextMappings = await refreshHostMappingsOnly();
+        if (
+          hostMappingsFollowUpRefreshAttempts > 0 &&
+          hasPendingHostMappingMetadata(nextMappings)
+        ) {
+          hostMappingsFollowUpRefreshAttempts -= 1;
+          hostMappingsFollowUpRefreshTimer = window.setTimeout(() => {
+            void runFollowUpRefresh();
+          }, 2500);
+          return;
+        }
+      } catch (error) {
+        console.error("Failed to refresh host mappings after save", error);
+      }
+
+      clearHostMappingsFollowUpRefresh();
+    };
+
+    hostMappingsFollowUpRefreshTimer = window.setTimeout(() => {
+      void runFollowUpRefresh();
+    }, 1800);
+  };
 
   async function loadConfig() {
     isLoading.value = true;
@@ -72,6 +142,7 @@ export const useConfigStore = defineStore("config", () => {
   async function saveHostMappings(mappings: HostMapping[]) {
     const nextMappings = await ConfigAPI.updateHostMappings(mappings);
     if (!config.value) {
+      scheduleHostMappingsFollowUpRefresh(nextMappings);
       await loadConfig();
       return nextMappings;
     }
@@ -80,6 +151,7 @@ export const useConfigStore = defineStore("config", () => {
       ...config.value,
       host_mappings: nextMappings,
     };
+    scheduleHostMappingsFollowUpRefresh(nextMappings);
     return nextMappings;
   }
 

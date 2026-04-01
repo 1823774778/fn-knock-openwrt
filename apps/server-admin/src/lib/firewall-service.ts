@@ -9,6 +9,7 @@ import { syncGatewayVisibilityToGateway } from "./gateway-visibility";
 import { whitelistManager } from "./whitelist-manager";
 import { isReverseProxySubdomainMode } from "./reverse-proxy-submode";
 import { shouldAutoManageFirewallForRunType } from "./firewall-automation";
+import { SMART_CONNECT_DNS_PORT } from "./dnsmasq-manager";
 
 const DISABLED_DEFAULT_ROUTE = "/__select__";
 
@@ -87,6 +88,14 @@ export class FirewallService {
           ports.add(String(mapping.listen_port));
         }
       }
+    }
+
+    if (
+      runType === 3 &&
+      config.smart_connect?.enabled === true &&
+      config.smart_connect.selected_ipv4.trim()
+    ) {
+      ports.add(String(SMART_CONNECT_DNS_PORT));
     }
 
     return [...ports];

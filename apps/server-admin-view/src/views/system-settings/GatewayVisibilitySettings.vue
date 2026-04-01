@@ -377,7 +377,11 @@ onMounted(() => {
     <Breadcrumb>
       <BreadcrumbList>
         <BreadcrumbItem>
-          <BreadcrumbLink href="#/system?tab=gateway">系统设置</BreadcrumbLink>
+          <BreadcrumbLink href="#/system">系统设置</BreadcrumbLink>
+        </BreadcrumbItem>
+        <BreadcrumbSeparator />
+        <BreadcrumbItem>
+          <BreadcrumbLink href="#/system?tab=gateway">网关</BreadcrumbLink>
         </BreadcrumbItem>
         <BreadcrumbSeparator />
         <BreadcrumbItem>
@@ -412,20 +416,19 @@ onMounted(() => {
         </div>
 
         <template v-else>
-          <div class="rounded-xl border border-border/60 px-4 py-4">
-            <div
-              class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
-            >
-              <div class="space-y-1">
-                <Label class="text-base">可见性约束</Label>
+          <div class="rounded-2xl border border-border/60 bg-muted/10 px-4 py-4">
+            <div class="flex items-start justify-between gap-4">
+              <div class="min-w-0 space-y-2">
+                <div class="flex flex-wrap items-center gap-2">
+                  <Label class="text-base font-medium">可见性约束</Label>
+                </div>
               </div>
 
-              <div class="flex items-center gap-3">
-                <span class="text-sm text-muted-foreground">
-                  {{ form.enabled ? "已启用" : "未启用" }}
-                </span>
-                <Switch v-model="form.enabled" :disabled="isSaving" />
-              </div>
+              <Switch
+                v-model="form.enabled"
+                class="mt-0.5 shrink-0"
+                :disabled="isSaving"
+              />
             </div>
           </div>
 

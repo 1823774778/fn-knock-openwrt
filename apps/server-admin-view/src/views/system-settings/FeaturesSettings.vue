@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
+import { useRouter } from "vue-router";
 import {
   Card,
   CardContent,
@@ -7,10 +8,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { ChevronRight } from "lucide-vue-next";
 import { toast } from "@admin-shared/utils/toast";
 import { SystemAPI } from "../../lib/api";
 import type { ProtocolMappingFeatureConfig } from "../../types";
@@ -21,11 +22,10 @@ import {
 import { useDelayedLoading } from "@admin-shared/composables/useDelayedLoading";
 import { useConfigStore } from "../../store/config";
 
+const router = useRouter();
 const configStore = useConfigStore();
 const settings = ref<ProtocolMappingFeatureConfig | null>(null);
-const form = reactive<ProtocolMappingFeatureConfig>({
-  enabled: false,
-});
+const protocolMappingEnabled = ref(false);
 const runTypeLabelMap = {
   0: "直连模式",
   1: "反代模式",
@@ -42,14 +42,15 @@ const { isPending: isLoading, run: runLoadSettings } = useAsyncAction({
 const showLoadingSkeleton = useDelayedLoading(isLoading);
 const { isPending: isSaving, run: runSaveSettings } = useAsyncAction({
   onError: (error) => {
-    toast.error("保存失败", {
-      description: extractErrorMessage(error, "功能设置保存失败"),
+    toast.error("更新失败", {
+      description: extractErrorMessage(error, "功能设置更新失败"),
     });
   },
 });
 const isProtocolMappingAvailable = computed(
   () => configStore.config?.run_type === 3,
 );
+const isSmartConnectAvailable = isProtocolMappingAvailable;
 const currentRunTypeLabel = computed(() => {
   const runType = configStore.config?.run_type;
   if (runType === 0 || runType === 1 || runType === 3) {
@@ -61,22 +62,14 @@ const protocolMappingDisabledReason = computed(() => {
   if (isProtocolMappingAvailable.value) return "";
   return `仅子域模式可开启，当前为${currentRunTypeLabel.value}。`;
 });
-
-const isDirty = computed(() => {
-  if (!settings.value) return false;
-  return settings.value.enabled !== form.enabled;
+const smartConnectDisabledReason = computed(() => {
+  if (isSmartConnectAvailable.value) return "";
+  return `仅子域模式可用，当前为${currentRunTypeLabel.value}。`;
 });
-
-const syncFormEnabledWithAvailability = () => {
-  if (!settings.value) return;
-  form.enabled = isProtocolMappingAvailable.value
-    ? settings.value.enabled
-    : false;
-};
 
 const applyFromSettings = (data: ProtocolMappingFeatureConfig) => {
   settings.value = data;
-  syncFormEnabledWithAvailability();
+  protocolMappingEnabled.value = data.enabled;
 };
 
 const fetchSettings = async () => {
@@ -86,20 +79,18 @@ const fetchSettings = async () => {
   });
 };
 
-const resetForm = () => {
-  if (settings.value) applyFromSettings(settings.value);
-};
+const saveProtocolMappingEnabled = async (nextValue: boolean) => {
+  if (!isProtocolMappingAvailable.value || isSaving.value) {
+    return;
+  }
 
-const toggleEnabled = () => {
-  if (!isProtocolMappingAvailable.value) return;
-  form.enabled = !form.enabled;
-};
+  const previousValue = protocolMappingEnabled.value;
+  protocolMappingEnabled.value = nextValue;
 
-const saveSettings = async () => {
-  await runSaveSettings(
+  const result = await runSaveSettings(
     () =>
       SystemAPI.updateProtocolMappingFeatureConfig({
-        enabled: form.enabled,
+        enabled: nextValue,
       }),
     {
       onSuccess: async (data) => {
@@ -109,14 +100,31 @@ const saveSettings = async () => {
       },
     },
   );
+
+  if (!result) {
+    protocolMappingEnabled.value = previousValue;
+  }
+};
+
+const openSmartConnect = () => {
+  if (!isSmartConnectAvailable.value) {
+    return;
+  }
+
+  void router.push("/system/smart-connect");
 };
 
 onMounted(fetchSettings);
 
 watch(
   () => configStore.config?.run_type,
-  () => {
-    syncFormEnabledWithAvailability();
+  (runType) => {
+    if (runType === 3) {
+      void fetchSettings();
+      return;
+    }
+
+    protocolMappingEnabled.value = false;
   },
 );
 </script>
@@ -126,9 +134,7 @@ watch(
     <CardHeader>
       <div class="space-y-1.5">
         <CardTitle class="text-md">功能开关</CardTitle>
-        <CardDescription>
-          控制可选功能的启用状态。
-        </CardDescription>
+        <CardDescription>控制可选功能的启用状态。</CardDescription>
       </div>
     </CardHeader>
 
@@ -149,7 +155,7 @@ watch(
                 ? 'cursor-pointer'
                 : 'cursor-not-allowed text-zinc-500'
             "
-            @click="toggleEnabled"
+            @click="saveProtocolMappingEnabled(!protocolMappingEnabled)"
           >
             协议映射
           </Label>
@@ -161,8 +167,7 @@ watch(
                 : 'text-zinc-500'
             "
           >
-            开启后，显示“协议映射”入口并启用 TCP/UDP
-            转发
+            开启后，显示“协议映射”入口并启用 TCP/UDP 转发
           </div>
           <div
             v-if="!isProtocolMappingAvailable"
@@ -172,24 +177,58 @@ watch(
           </div>
         </div>
         <Switch
-          :model-value="isProtocolMappingAvailable ? form.enabled : false"
+          :model-value="
+            isProtocolMappingAvailable ? protocolMappingEnabled : false
+          "
           :disabled="!isProtocolMappingAvailable || isSaving"
-          @update:model-value="form.enabled = $event === true"
+          @update:model-value="saveProtocolMappingEnabled($event === true)"
         />
       </div>
 
-      <div class="flex items-center justify-end gap-3 p-6">
-        <Button
-          variant="outline"
-          :disabled="!isDirty || isSaving"
-          @click="resetForm"
-        >
-          重置
-        </Button>
-        <Button :disabled="!isDirty || isSaving" @click="saveSettings">
-          保存设置
-        </Button>
-      </div>
+      <button
+        type="button"
+        class="flex w-full items-center justify-between p-6 text-left transition-colors"
+        :class="
+          isSmartConnectAvailable
+            ? 'bg-muted/5 hover:bg-muted/15'
+            : 'cursor-not-allowed bg-muted/5'
+        "
+        :disabled="!isSmartConnectAvailable"
+        @click="openSmartConnect"
+      >
+        <div class="space-y-1 pr-6">
+          <div
+            class="text-base font-medium"
+            :class="
+              isSmartConnectAvailable ? 'text-foreground' : 'text-zinc-500'
+            "
+          >
+            智能连接
+          </div>
+          <div
+            class="text-sm"
+            :class="
+              isSmartConnectAvailable
+                ? 'text-muted-foreground'
+                : 'text-zinc-500'
+            "
+          >
+            根据网络环境自动选择局域网或公网访问
+          </div>
+          <div
+            v-if="!isSmartConnectAvailable"
+            class="text-xs leading-5 text-zinc-500"
+          >
+            {{ smartConnectDisabledReason }}
+          </div>
+        </div>
+        <ChevronRight
+          class="h-5 w-5 shrink-0"
+          :class="
+            isSmartConnectAvailable ? 'text-muted-foreground' : 'text-zinc-400'
+          "
+        />
+      </button>
     </CardContent>
   </Card>
 </template>

@@ -97,6 +97,12 @@ const router = createRouter({
             import("../views/system-settings/GatewayVisibilitySettings.vue"),
         },
         {
+          path: "system/smart-connect",
+          name: "SmartConnectSettings",
+          component: () =>
+            import("../views/system-settings/SmartConnectSettings.vue"),
+        },
+        {
           path: "sessions",
           name: "SessionManagement",
           component: () => import("../views/SessionManagement.vue"),
