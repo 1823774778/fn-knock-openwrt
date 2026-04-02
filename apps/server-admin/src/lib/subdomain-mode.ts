@@ -13,12 +13,45 @@ import { resolvePublicGatewayPort } from "./access-entry";
 
 const trimTrailingSlash = (value: string): string => value.replace(/\/+$/, "");
 
+const takeFirstHeaderValue = (value: string | null): string | null => {
+  if (!value) return null;
+  const first = value.split(",")[0]?.trim();
+  return first || null;
+};
+
+const parseForwardedHeader = (
+  value: string | null,
+): { host?: string; proto?: string } => {
+  if (!value) return {};
+  const firstPart = value.split(",")[0]?.trim();
+  if (!firstPart) return {};
+
+  const result: { host?: string; proto?: string } = {};
+  for (const segment of firstPart.split(";")) {
+    const [rawKey, ...rawValue] = segment.split("=");
+    if (!rawKey || rawValue.length === 0) continue;
+    const key = rawKey.trim().toLowerCase();
+    const val = rawValue.join("=").trim().replace(/^"|"$/g, "");
+    if (!val) continue;
+    if (key === "host") result.host = val;
+    if (key === "proto") result.proto = val;
+  }
+
+  return result;
+};
+
 const resolveForwardedProto = (request: Request): string => {
-  const forwarded = request.headers
-    .get("x-forwarded-proto")
-    ?.split(",")[0]
-    ?.trim();
-  if (forwarded === "http" || forwarded === "https") return forwarded;
+  const forwarded = parseForwardedHeader(request.headers.get("forwarded"));
+  const forwardedProto =
+    forwarded.proto ||
+    takeFirstHeaderValue(request.headers.get("x-forwarded-proto")) ||
+    takeFirstHeaderValue(request.headers.get("x-forwarded-scheme")) ||
+    takeFirstHeaderValue(request.headers.get("x-original-proto")) ||
+    takeFirstHeaderValue(request.headers.get("x-original-scheme"));
+  const normalizedProto = forwardedProto?.trim().replace(/:$/, "");
+  if (normalizedProto === "http" || normalizedProto === "https") {
+    return normalizedProto;
+  }
 
   try {
     return new URL(request.url).protocol.replace(":", "") || "https";
@@ -28,16 +61,18 @@ const resolveForwardedProto = (request: Request): string => {
 };
 
 const resolveForwardedHost = (request: Request): string => {
-  const forwarded = request.headers
-    .get("x-forwarded-host")
-    ?.split(",")[0]
-    ?.trim();
-  if (forwarded) return forwarded;
+  const forwarded = parseForwardedHeader(request.headers.get("forwarded"));
+  const forwardedHost =
+    forwarded.host ||
+    takeFirstHeaderValue(request.headers.get("x-forwarded-host")) ||
+    takeFirstHeaderValue(request.headers.get("x-original-host")) ||
+    takeFirstHeaderValue(request.headers.get("host"));
+  if (forwardedHost) return forwardedHost;
 
   try {
     return new URL(request.url).host;
   } catch {
-    return request.headers.get("host")?.trim() || "";
+    return "";
   }
 };
 
@@ -86,6 +121,52 @@ const normalizeDomainName = (value: string | undefined | null): string =>
     .toLowerCase()
     .replace(/^\./, "")
     .replace(/\.$/, "");
+
+const normalizePathname = (value: string | undefined | null): string => {
+  const pathname = String(value ?? "").trim();
+  if (!pathname) return "/";
+  const normalized = pathname.startsWith("/") ? pathname : `/${pathname}`;
+  return normalized.length > 1 && normalized.endsWith("/")
+    ? normalized.slice(0, -1)
+    : normalized;
+};
+
+const isLoggedOutLoginPath = (pathname: string): boolean => {
+  const normalized = normalizePathname(pathname);
+  return (
+    normalized === "/login" ||
+    normalized === "/auth/login" ||
+    normalized === "/__auth__/login"
+  );
+};
+
+const isPostLogoutRedirect = (target: {
+  pathname: string;
+  searchParams: Pick<URLSearchParams, "get">;
+}): boolean =>
+  target.searchParams.get("logged_out") === "1" &&
+  isLoggedOutLoginPath(target.pathname);
+
+const normalizePostLogoutRedirectPath = (pathname: string): string => {
+  const normalized = normalizePathname(pathname);
+  if (normalized === "/auth/login") return "/auth/";
+  if (normalized === "/__auth__/login") return "/__auth__/";
+  return "/";
+};
+
+const normalizePostLogoutRedirectTarget = (target: URL): URL => {
+  const normalized = new URL(target.toString());
+  normalized.pathname = normalizePostLogoutRedirectPath(normalized.pathname);
+  normalized.searchParams.delete("logged_out");
+  normalized.hash = "";
+  return normalized;
+};
+
+const toRelativeUrl = (target: URL): string => {
+  const search = target.search || "";
+  const hash = target.hash || "";
+  return `${target.pathname}${search}${hash}`;
+};
 
 const extractHostname = (value: string | undefined | null): string => {
   const normalized = String(value ?? "").trim();
@@ -881,6 +962,14 @@ export const resolveSafeRedirectUri = ({
   const requestHost = resolveForwardedHost(request);
 
   if (raw.startsWith("/")) {
+    try {
+      const relativeTarget = new URL(raw, "http://127.0.0.1");
+      if (isPostLogoutRedirect(relativeTarget)) {
+        return toRelativeUrl(normalizePostLogoutRedirectTarget(relativeTarget));
+      }
+    } catch {
+      return null;
+    }
     return raw;
   }
 
@@ -893,6 +982,10 @@ export const resolveSafeRedirectUri = ({
 
   if (target.protocol !== "http:" && target.protocol !== "https:") {
     return null;
+  }
+
+  if (isPostLogoutRedirect(target)) {
+    target = normalizePostLogoutRedirectTarget(target);
   }
 
   const currentOrigin = requestHost ? `${requestProto}://${requestHost}` : "";

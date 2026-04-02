@@ -70,13 +70,36 @@ const buildPasskeyStatus = async (request: Request) => {
 };
 
 const resolveAuthUiBasePrefix = (request: Request): string => {
-  const pathname = new URL(request.url).pathname;
-  if (pathname === "/__auth__" || pathname.startsWith("/__auth__/")) {
-    return "/__auth__";
+  const resolveBasePrefixFromPathname = (pathname: string): string => {
+    if (pathname === "/__auth__" || pathname.startsWith("/__auth__/")) {
+      return "/__auth__";
+    }
+    if (pathname === "/auth" || pathname.startsWith("/auth/")) {
+      return "/auth";
+    }
+    return "";
+  };
+
+  const parsePathname = (value: string | null): string => {
+    if (!value) return "";
+    try {
+      return new URL(value, "http://127.0.0.1").pathname;
+    } catch {
+      return "";
+    }
+  };
+
+  const candidates = [
+    parsePathname(request.url),
+    parsePathname(request.headers.get("x-forwarded-path")),
+    parsePathname(request.headers.get("referer")),
+  ];
+
+  for (const pathname of candidates) {
+    const basePrefix = resolveBasePrefixFromPathname(pathname);
+    if (basePrefix) return basePrefix;
   }
-  if (pathname === "/auth" || pathname.startsWith("/auth/")) {
-    return "/auth";
-  }
+
   return "";
 };
 
