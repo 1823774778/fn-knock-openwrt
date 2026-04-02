@@ -315,15 +315,80 @@
                   class="max-w-[16rem] text-sm"
                   :title="getMappingTitleForDisplay(mapping)"
                 >
-                  <div class="max-w-[16rem]">
-                    <InlineCommentEditor
-                      :text="getMappingDisplayTitle(mapping)"
-                      placeholder="输入展示标题..."
-                      empty-text="未获取"
-                      :save="
-                        (value) => saveMappingTitleOverride(mapping, value)
+                  <div class="flex max-w-[16rem] min-w-0 items-center gap-2">
+                    <Popover
+                      v-if="shouldShowProtocolHeadersWarning(mapping)"
+                      :open="isProtocolHeadersWarningOpen(mapping.host)"
+                      @update:open="
+                        (nextOpen) =>
+                          handleProtocolHeadersWarningOpenChange(
+                            mapping.host,
+                            nextOpen,
+                          )
                       "
-                    />
+                    >
+                      <PopoverAnchor as-child>
+                        <button
+                          type="button"
+                          class="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-destructive transition-colors hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/30"
+                          :class="{
+                            'bg-destructive/10': isProtocolHeadersWarningOpen(
+                              mapping.host,
+                            ),
+                          }"
+                          :aria-label="`${formatHostWithAccessEntryPort(mapping.host)} 的 Home Assistant 需要关闭协议头`"
+                          @mouseenter="
+                            openProtocolHeadersWarning(mapping.host)
+                          "
+                          @mouseleave="
+                            scheduleCloseProtocolHeadersWarning(mapping.host)
+                          "
+                          @click="toggleProtocolHeadersWarning(mapping.host)"
+                        >
+                          <CircleAlert class="h-3.5 w-3.5" />
+                        </button>
+                      </PopoverAnchor>
+                      <PopoverContent
+                        side="top"
+                        align="start"
+                        class="w-72 border-destructive/20 text-left"
+                        @mouseenter="openProtocolHeadersWarning(mapping.host)"
+                        @mouseleave="
+                          scheduleCloseProtocolHeadersWarning(mapping.host)
+                        "
+                      >
+                        <div class="space-y-3">
+                          <div class="space-y-1">
+                            <div class="flex items-center gap-2">
+                              <CircleAlert class="h-4 w-4 text-destructive" />
+                              <p class="text-sm font-medium">
+                                Home Assistant 需要关闭协议头
+                              </p>
+                            </div>
+                            <p class="text-xs leading-5 text-muted-foreground">
+                              检测到该应用是 Home Assistant。Home Assistant
+                              在开启协议头时可能无法正常访问，建议前往“协议头”页面将该应用关闭。
+                            </p>
+                          </div>
+                          <a
+                            href="#/system/gateway-proxy-headers"
+                            class="inline-flex rounded-md border border-destructive/20 bg-destructive/5 px-2.5 py-1.5 text-xs font-medium text-destructive transition hover:bg-destructive/10"
+                          >
+                            去关闭协议头
+                          </a>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                    <div class="min-w-0 flex-1">
+                      <InlineCommentEditor
+                        :text="getMappingDisplayTitle(mapping)"
+                        placeholder="输入展示标题..."
+                        empty-text="未获取"
+                        :save="
+                          (value) => saveMappingTitleOverride(mapping, value)
+                        "
+                      />
+                    </div>
                   </div>
                 </TableCell>
                 <TableCell class="break-all font-medium">
@@ -717,6 +782,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import {
+  CircleAlert,
   ChevronDown,
   Download,
   GripVertical,
@@ -755,6 +821,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Popover,
+  PopoverAnchor,
+  PopoverContent,
+} from "@/components/ui/popover";
 import { Switch } from "@/components/ui/switch";
 import { VueDraggable } from "vue-draggable-plus";
 import ConfirmDangerPopover from "@admin-shared/components/common/ConfirmDangerPopover.vue";
@@ -782,7 +853,11 @@ import {
   type ScanDiscoverResponse,
 } from "../lib/api";
 import { docsUrls } from "../lib/docs";
-import type { HostMapping, SubdomainModeConfig } from "../types";
+import type {
+  GatewayProxyHeadersDetails,
+  HostMapping,
+  SubdomainModeConfig,
+} from "../types";
 import {
   extractErrorMessage,
   useAsyncAction,
@@ -943,6 +1018,7 @@ const createDefaultModeForm = (): SubdomainModeConfig => ({
 
 const DEFAULT_AUTH_SUBDOMAIN = "auth";
 const DEFAULT_ACCESS_MODE: HostMapping["access_mode"] = "login_first";
+const HOME_ASSISTANT_TARGET_PORT = 8123;
 
 const createDefaultMapping = (): HostMapping => ({
   host: "",
@@ -966,7 +1042,9 @@ const mappingSubdomain = ref("");
 const accessEntryPort = ref("7999");
 const brokenFaviconKeys = ref(new Set<string>());
 const draggableVisibleMappings = ref<HostMapping[]>([]);
+const gatewayProxyHeadersDetails = ref<GatewayProxyHeadersDetails | null>(null);
 const mappingMetadataTarget = ref("");
+const openProtocolHeadersWarningHost = ref<string | null>(null);
 const modeForm = reactive<SubdomainModeConfig>(createDefaultModeForm());
 const mappingForm = reactive<HostMapping>(createDefaultMapping());
 
@@ -1182,6 +1260,75 @@ const markFaviconBroken = (mapping: HostMapping) => {
 const visibleMappings = computed(() =>
   allMappings.value.filter((mapping) => !isAuthServiceTarget(mapping.target)),
 );
+const visibleMappingsSignature = computed(() =>
+  visibleMappings.value
+    .map(
+      (mapping) =>
+        `${normalizeHostLike(mapping.host)}::${mapping.target.trim()}`,
+    )
+    .join("|"),
+);
+const hasProtocolHeadersSensitiveMappings = computed(() =>
+  visibleMappings.value.some(
+    (mapping) => parseTargetPort(mapping.target) === HOME_ASSISTANT_TARGET_PORT,
+  ),
+);
+const listedGatewayProxyHeaderTargets = computed(() => {
+  const targets = new Set<string>();
+
+  for (const item of gatewayProxyHeadersDetails.value?.items ?? []) {
+    const target = item.target.trim();
+    if (target) {
+      targets.add(target);
+    }
+  }
+
+  return targets;
+});
+const disabledGatewayProxyHeaderTargets = computed(() => {
+  const targets = new Set<string>();
+  const disabledHosts = new Set(
+    (configStore.config?.gateway_proxy_headers?.disabled_hosts ?? []).map(
+      normalizeHostLike,
+    ),
+  );
+
+  for (const mapping of visibleMappings.value) {
+    const target = mapping.target.trim();
+    if (target && disabledHosts.has(normalizeHostLike(mapping.host))) {
+      targets.add(target);
+    }
+  }
+
+  if (gatewayProxyHeadersDetails.value) {
+    for (const item of gatewayProxyHeadersDetails.value.items) {
+      const target = item.target.trim();
+      if (target && item.send_proxy_headers === false) {
+        targets.add(target);
+      }
+    }
+    return targets;
+  }
+
+  return targets;
+});
+const shouldShowProtocolHeadersWarning = (mapping: HostMapping): boolean => {
+  const target = mapping.target.trim();
+  if (!target || parseTargetPort(target) !== HOME_ASSISTANT_TARGET_PORT) {
+    return false;
+  }
+
+  if (
+    gatewayProxyHeadersDetails.value &&
+    !listedGatewayProxyHeaderTargets.value.has(target)
+  ) {
+    return false;
+  }
+
+  return !disabledGatewayProxyHeaderTargets.value.has(target);
+};
+const isProtocolHeadersWarningOpen = (host: string): boolean =>
+  openProtocolHeadersWarningHost.value === host;
 
 const filteredMappings = computed(() => {
   const query = searchQuery.value.trim().toLowerCase();
@@ -1364,6 +1511,14 @@ watch(
   { immediate: true },
 );
 
+watch(
+  visibleMappingsSignature,
+  () => {
+    void loadGatewayProxyHeadersDetails();
+  },
+  { immediate: true },
+);
+
 const {
   open: isDiscoverDialogOpen,
   discoveredData,
@@ -1394,6 +1549,79 @@ async function loadAccessEntryPort() {
     accessEntryPort.value = info.port.trim() || "7999";
   } catch (error) {
     console.warn("load access entry port failed:", error);
+  }
+}
+
+let gatewayProxyHeadersRequestId = 0;
+let protocolHeadersWarningCloseTimer: number | null = null;
+
+const clearProtocolHeadersWarningCloseTimer = () => {
+  if (protocolHeadersWarningCloseTimer !== null) {
+    window.clearTimeout(protocolHeadersWarningCloseTimer);
+    protocolHeadersWarningCloseTimer = null;
+  }
+};
+
+function openProtocolHeadersWarning(host: string) {
+  clearProtocolHeadersWarningCloseTimer();
+  openProtocolHeadersWarningHost.value = host;
+}
+
+function scheduleCloseProtocolHeadersWarning(host: string) {
+  if (openProtocolHeadersWarningHost.value !== host) {
+    return;
+  }
+
+  clearProtocolHeadersWarningCloseTimer();
+  protocolHeadersWarningCloseTimer = window.setTimeout(() => {
+    if (openProtocolHeadersWarningHost.value === host) {
+      openProtocolHeadersWarningHost.value = null;
+    }
+    protocolHeadersWarningCloseTimer = null;
+  }, 120);
+}
+
+function toggleProtocolHeadersWarning(host: string) {
+  clearProtocolHeadersWarningCloseTimer();
+  openProtocolHeadersWarningHost.value =
+    openProtocolHeadersWarningHost.value === host ? null : host;
+}
+
+function handleProtocolHeadersWarningOpenChange(
+  host: string,
+  nextOpen: boolean,
+) {
+  clearProtocolHeadersWarningCloseTimer();
+
+  if (nextOpen) {
+    openProtocolHeadersWarningHost.value = host;
+    return;
+  }
+
+  if (openProtocolHeadersWarningHost.value === host) {
+    openProtocolHeadersWarningHost.value = null;
+  }
+}
+
+async function loadGatewayProxyHeadersDetails() {
+  const requestId = ++gatewayProxyHeadersRequestId;
+
+  if (!hasProtocolHeadersSensitiveMappings.value) {
+    gatewayProxyHeadersDetails.value = null;
+    return;
+  }
+
+  try {
+    const details = await ConfigAPI.getGatewayProxyHeaders();
+    if (requestId !== gatewayProxyHeadersRequestId) {
+      return;
+    }
+    gatewayProxyHeadersDetails.value = details;
+  } catch (error) {
+    if (requestId !== gatewayProxyHeadersRequestId) {
+      return;
+    }
+    console.warn("load gateway proxy headers failed:", error);
   }
 }
 

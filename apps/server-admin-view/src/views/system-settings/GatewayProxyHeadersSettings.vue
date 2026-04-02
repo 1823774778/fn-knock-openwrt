@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/table";
 import { toast } from "@admin-shared/utils/toast";
 import { ConfigAPI, SystemAPI } from "../../lib/api";
+import { useConfigStore } from "../../store/config";
 import type {
   GatewayProxyHeadersDetails,
   GatewayProxyHeadersItem,
@@ -44,6 +45,7 @@ const details = ref<GatewayProxyHeadersDetails | null>(null);
 const formItems = ref<GatewayProxyHeadersItem[]>([]);
 const loadError = ref("");
 const accessEntryPort = ref("7999");
+const configStore = useConfigStore();
 
 const cloneItem = (item: GatewayProxyHeadersItem): GatewayProxyHeadersItem => ({
   ...item,
@@ -63,6 +65,15 @@ const applyDetails = (value: GatewayProxyHeadersDetails) => {
     },
   };
   formItems.value = value.items.map(cloneItem);
+
+  if (configStore.config) {
+    configStore.config = {
+      ...configStore.config,
+      gateway_proxy_headers: {
+        disabled_hosts: [...value.config.disabled_hosts],
+      },
+    };
+  }
 };
 
 const { isPending: isLoading, run: runLoad } = useAsyncAction({
