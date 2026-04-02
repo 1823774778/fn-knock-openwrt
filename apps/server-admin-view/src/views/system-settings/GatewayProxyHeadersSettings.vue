@@ -204,7 +204,7 @@ onMounted(() => {
       <CardHeader class="space-y-3">
         <div class="space-y-1.5">
           <CardTitle class="text-xl">协议头</CardTitle>
-          <CardDescription class="max-w-3xl leading-6">
+          <CardDescription class="leading-6">
             默认会向上游发送代理头，便于上游识别真实来源和访问域名。对于不兼容
             <code>X-Forwarded-*</code>
             的目标，可以在这里单独关闭。
@@ -252,7 +252,7 @@ onMounted(() => {
                     <TableRow class="hover:bg-transparent">
                       <TableHead class="px-4 py-3">子域</TableHead>
                       <TableHead class="w-32 px-4 py-3 text-center">
-                        发送代理头
+                        协议头
                       </TableHead>
                     </TableRow>
                   </TableHeader>
