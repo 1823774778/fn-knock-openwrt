@@ -174,6 +174,29 @@ export interface GatewayLoggingConfig {
   logs_dir: string;
 }
 
+export type IpLocationLookupStatus =
+  | "idle"
+  | "queued"
+  | "processing"
+  | "success"
+  | "failed"
+  | "skipped";
+
+export interface IpLocationSnapshot {
+  ip: string;
+  normalizedIp: string;
+  status: IpLocationLookupStatus;
+  attempts: number;
+  maxAttempts: number;
+  location: string;
+  error?: string;
+  updatedAt: number;
+}
+
+export interface IpLocationBatchPayload {
+  items: IpLocationSnapshot[];
+}
+
 export interface ProtocolMappingFeatureConfig {
   enabled: boolean;
 }
@@ -269,6 +292,7 @@ export interface GatewayLogEntry {
   websocket: boolean;
   x_forwarded_for?: string;
   x_real_ip?: string;
+  ipLocation?: string;
 }
 
 export interface GatewayLogDatesPayload {

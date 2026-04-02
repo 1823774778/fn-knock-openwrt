@@ -241,6 +241,29 @@ class IpLocationService {
     return this.buildSnapshot(ip, normalizedIp, nextState);
   }
 
+  async ensureEnqueuedBatch(ips: string[]): Promise<IpLocationSnapshot[]> {
+    const uniqueIps = new Map<string, string>();
+
+    for (const ip of ips) {
+      const rawIp = String(ip || "").trim();
+      if (!rawIp) continue;
+
+      const normalizedIp = this.normalizeIp(rawIp);
+      const dedupeKey = normalizedIp || `raw:${rawIp}`;
+      if (!uniqueIps.has(dedupeKey)) {
+        uniqueIps.set(dedupeKey, rawIp);
+      }
+    }
+
+    if (uniqueIps.size === 0) {
+      return [];
+    }
+
+    return Promise.all(
+      [...uniqueIps.values()].map((ip) => this.ensureEnqueued(ip)),
+    );
+  }
+
   async registerUsage(ip: string, references: string[] = []): Promise<string> {
     const normalizedIp = this.normalizeIp(ip);
     if (!normalizedIp) return "";

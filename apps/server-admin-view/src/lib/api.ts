@@ -32,6 +32,8 @@ import type {
   GatewayLogDeletePayload,
   GatewayLogEntriesPayload,
   GatewayLoggingConfig,
+  IpLocationBatchPayload,
+  IpLocationSnapshot,
   ProtocolMappingFeatureConfig,
   SmartConnectConfig,
   SmartConnectDetails,
@@ -503,6 +505,30 @@ export const GatewayLogsAPI = {
       data: { date },
     });
     return res.data.data;
+  },
+};
+
+const IP_LOCATION_BATCH_LIMIT = 20;
+
+export const IpLocationAPI = {
+  async lookupBatch(ips: string[]): Promise<IpLocationSnapshot[]> {
+    if (ips.length === 0) return [];
+
+    const tasks: Promise<IpLocationSnapshot[]>[] = [];
+    for (let index = 0; index < ips.length; index += IP_LOCATION_BATCH_LIMIT) {
+      const batch = ips.slice(index, index + IP_LOCATION_BATCH_LIMIT);
+      tasks.push(
+        apiClient
+          .post("/ip-location/batch", { ips: batch })
+          .then(
+            (res) =>
+              ((res.data.data as IpLocationBatchPayload).items || []) as IpLocationSnapshot[],
+          ),
+      );
+    }
+
+    const groups = await Promise.all(tasks);
+    return groups.flat();
   },
 };
 

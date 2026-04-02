@@ -58,6 +58,7 @@ import { syncSmartConnectOnBoot } from "./lib/smart-connect";
 import { terminalRoutes } from "./routes/terminal";
 import { terminalManager } from "./lib/terminal-manager";
 import { cidrRoutes } from "./routes/cidr";
+import { ipLocationRoutes } from "./routes/ip-location";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -285,6 +286,7 @@ app.use(cloudflaredRoutes);
 app.use(scannerRoutes);
 app.use(ddnsRoutes);
 app.use(gatewayLogsRoutes);
+app.use(ipLocationRoutes);
 app.use(updateRoutes);
 app.use(terminalRoutes);
 app.use(cidrRoutes);

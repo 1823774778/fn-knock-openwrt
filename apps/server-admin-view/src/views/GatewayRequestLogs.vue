@@ -54,6 +54,7 @@ import { buildDetailFields } from "@admin-shared/utils/buildDetailFields";
 import { formatDateTimeSafe } from "@admin-shared/utils/formatDateTimeSafe";
 import DocsLinkButton from "@/components/DocsLinkButton.vue";
 import { docsUrls } from "../lib/docs";
+import { useIpLocationBatch } from "../composables/useIpLocationBatch";
 
 const router = useRouter();
 const configStore = useConfigStore();
@@ -110,6 +111,7 @@ const tableScrollLeft = ref(0);
 const showTableSkeleton = useDelayedLoading(
   () => loading.value && entries.value.length === 0,
 );
+const { trackIps, getSnapshot } = useIpLocationBatch();
 const isLoggingEnabled = computed(
   () => configStore.config?.gateway_logging?.enabled ?? false,
 );
@@ -197,10 +199,12 @@ const fetchEntries = async () => {
     });
     logsDir.value = data.logs_dir || "";
     entries.value = data.items || [];
+    trackIps(entries.value.map((entry) => entry.remote_ip || ""));
     nextCursor.value = data.next_cursor || "";
     applyDates(data.available_dates || [], data.date || selectedDate.value);
   } catch (error) {
     entries.value = [];
+    trackIps([]);
     nextCursor.value = "";
     toast.error("加载失败", {
       description: extractErrorMessage(error, "请求日志加载失败"),
@@ -428,6 +432,47 @@ const formatBoolean = (value?: boolean) => {
 
 const formatDate = (value?: string) => formatDateTimeSafe(value);
 
+const getEntryIpSnapshot = (entry: GatewayLogEntry) =>
+  getSnapshot(entry.remote_ip || "");
+
+const getEntryIpLocation = (entry: GatewayLogEntry) =>
+  getEntryIpSnapshot(entry)?.location || entry.ipLocation || "";
+
+const getEntryIpLocationText = (entry: GatewayLogEntry) => {
+  const snapshot = getEntryIpSnapshot(entry);
+  const location = snapshot?.location || entry.ipLocation || "";
+  if (location) return location;
+
+  if (snapshot?.status === "queued" || snapshot?.status === "processing") {
+    return "归属地解析中...";
+  }
+
+  if (snapshot?.status === "failed") {
+    return "归属地暂未获取";
+  }
+
+  return "";
+};
+
+const getForwardedIpText = (entry: GatewayLogEntry) =>
+  entry.x_forwarded_for || entry.x_real_ip || "";
+
+const displayedEntries = computed(() =>
+  entries.value.map((entry) => ({
+    ...entry,
+    ipLocation: getEntryIpLocation(entry),
+  })),
+);
+
+const activeEntryWithIpLocation = computed(() =>
+  activeEntry.value
+    ? {
+        ...activeEntry.value,
+        ipLocation: getEntryIpLocation(activeEntry.value),
+      }
+    : null,
+);
+
 const detailFields = [
   { key: "time", label: "时间" },
   { key: "method", label: "方法" },
@@ -440,6 +485,7 @@ const detailFields = [
   { key: "status", label: "状态码" },
   { key: "duration_ms", label: "耗时" },
   { key: "remote_ip", label: "客户端 IP" },
+  { key: "ipLocation", label: "归属地" },
   { key: "remote_addr", label: "远端地址" },
   { key: "user_agent", label: "User-Agent" },
   { key: "referer", label: "Referer" },
@@ -460,7 +506,7 @@ const detailFields = [
 ] as const;
 
 const detailItems = computed(() =>
-  buildDetailFields(activeEntry.value, detailFields, {
+  buildDetailFields(activeEntryWithIpLocation.value, detailFields, {
     format: (key, value) => {
       if (key === "time") return formatDate(value);
       if (key === "duration_ms") return formatDuration(value);
@@ -745,7 +791,7 @@ onBeforeUnmount(() => {
               </TableRow>
               <TableRow
                 v-else
-                v-for="entry in entries"
+                v-for="entry in displayedEntries"
                 :key="`${entry.time}-${entry.request_uri}-${entry.remote_ip}`"
                 class="align-top"
               >
@@ -805,8 +851,17 @@ onBeforeUnmount(() => {
                   <div class="font-mono text-sm text-foreground">
                     {{ entry.remote_ip || "-" }}
                   </div>
-                  <div class="text-[11px] text-muted-foreground">
-                    {{ entry.x_forwarded_for || entry.x_real_ip || "-" }}
+                  <div
+                    v-if="getEntryIpLocationText(entry)"
+                    class="text-[11px] text-muted-foreground"
+                  >
+                    {{ getEntryIpLocationText(entry) }}
+                  </div>
+                  <div
+                    v-if="getForwardedIpText(entry)"
+                    class="break-all text-[10px] text-muted-foreground/75"
+                  >
+                    转发: {{ getForwardedIpText(entry) }}
                   </div>
                 </TableCell>
                 <TableCell class="min-w-[110px] py-2.5">
