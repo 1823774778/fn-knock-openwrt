@@ -422,6 +422,7 @@ export interface AppConfig {
   fnos_share_bypass?: FnosShareBypassConfig;
   gateway_logging?: GatewayLoggingConfig;
   reverse_proxy_throttle?: ReverseProxyThrottleConfig;
+  gateway_proxy_headers?: GatewayProxyHeadersConfig;
   protocol_mapping_feature?: ProtocolMappingFeatureConfig;
   smart_connect?: SmartConnectConfig;
   auth_credential_settings?: AuthCredentialSettings;
@@ -555,11 +556,41 @@ export type GatewayVisibilityDetails = {
   summary: GatewayVisibilitySummary;
 };
 
+export type GatewayProxyHeadersConfig = {
+  disabled_hosts: string[];
+};
+
+export type GatewayProxyHeadersItem = {
+  host: string;
+  target: string;
+  title: string;
+  send_proxy_headers: boolean;
+};
+
+export type GatewayProxyHeadersAvailability = {
+  available: boolean;
+  reason: string;
+};
+
+export type GatewayProxyHeadersSummary = {
+  total_count: number;
+  disabled_count: number;
+  updated_at: string | null;
+};
+
+export type GatewayProxyHeadersDetails = {
+  config: GatewayProxyHeadersConfig;
+  availability: GatewayProxyHeadersAvailability;
+  items: GatewayProxyHeadersItem[];
+  summary: GatewayProxyHeadersSummary;
+};
+
 export type GatewaySettings = {
   auth_cache_ttl_seconds: number;
   auth_cache_unauthorized_ttl_seconds: number;
   reverse_proxy_throttle: ReverseProxyThrottleConfig;
   visibility: GatewayVisibilitySummary;
+  proxy_headers: GatewayProxyHeadersSummary;
 };
 
 export type TrafficStats = {

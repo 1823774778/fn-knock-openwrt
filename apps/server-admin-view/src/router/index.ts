@@ -97,6 +97,12 @@ const router = createRouter({
             import("../views/system-settings/GatewayVisibilitySettings.vue"),
         },
         {
+          path: "system/gateway-proxy-headers",
+          name: "GatewayProxyHeadersSettings",
+          component: () =>
+            import("../views/system-settings/GatewayProxyHeadersSettings.vue"),
+        },
+        {
           path: "system/smart-connect",
           name: "SmartConnectSettings",
           component: () =>

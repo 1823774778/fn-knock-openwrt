@@ -2,8 +2,10 @@ import { Elysia, t } from "elysia";
 import {
   type AppConfig,
   configManager,
+  DEFAULT_GATEWAY_PROXY_HEADERS_CONFIG,
   DEFAULT_GATEWAY_VISIBILITY_CONFIG,
   DEFAULT_REVERSE_PROXY_THROTTLE_CONFIG,
+  type GatewayProxyHeadersRuntimeState,
   type GatewayVisibilityRuntimeState,
   type HostMapping,
   type LoginSession,
@@ -37,6 +39,13 @@ import {
   buildHostMappingsBookmarksDocument,
 } from "../lib/host-mapping-bookmarks";
 import { getGatewayLoggingConfigForResponse } from "../lib/gateway-logging";
+import {
+  buildGatewayProxyHeadersSummary,
+  compileGatewayProxyHeadersState,
+  getGatewayProxyHeadersDetails,
+  syncGatewayProxyHeadersRuntimeForConfig,
+  syncGatewayProxyHeadersToGateway,
+} from "../lib/gateway-proxy-headers";
 import {
   buildGatewayVisibilitySummary,
   compileGatewayVisibilityConfig,
@@ -405,12 +414,42 @@ const rollbackGatewayVisibilityConfigAndRuntime = async (
   return null;
 };
 
+const rollbackGatewayProxyHeadersConfigAndRuntime = async (
+  previousConfig: AppConfig,
+  previousRuntime: GatewayProxyHeadersRuntimeState,
+): Promise<string | null> => {
+  try {
+    await configManager.saveConfig(previousConfig);
+  } catch (error: any) {
+    return error?.message || "恢复协议头原始配置失败";
+  }
+
+  try {
+    await configManager.saveGatewayProxyHeadersRuntimeState(previousRuntime);
+  } catch (error: any) {
+    return error?.message || "恢复协议头运行态失败";
+  }
+
+  try {
+    await syncGatewayProxyHeadersToGateway(previousRuntime);
+  } catch (error: any) {
+    return error?.message || "恢复网关协议头运行态失败";
+  }
+
+  return null;
+};
+
 const buildGatewaySettingsResponse = (
   config: Pick<
     AppConfig,
-    "subdomain_mode" | "reverse_proxy_throttle" | "gateway_visibility"
+    | "subdomain_mode"
+    | "reverse_proxy_throttle"
+    | "gateway_visibility"
+    | "gateway_proxy_headers"
+    | "host_mappings"
   >,
   visibilityRuntime: GatewayVisibilityRuntimeState,
+  proxyHeadersRuntime: GatewayProxyHeadersRuntimeState,
 ) => ({
   auth_cache_ttl_seconds: config.subdomain_mode?.auth_cache_ttl_seconds ?? 1,
   auth_cache_unauthorized_ttl_seconds:
@@ -421,6 +460,18 @@ const buildGatewaySettingsResponse = (
   visibility: buildGatewayVisibilitySummary(
     config.gateway_visibility ?? DEFAULT_GATEWAY_VISIBILITY_CONFIG,
     visibilityRuntime,
+  ),
+  proxy_headers: buildGatewayProxyHeadersSummary(
+    compileGatewayProxyHeadersState(
+      {
+        run_type: 3,
+        host_mappings: config.host_mappings,
+        gateway_proxy_headers:
+          config.gateway_proxy_headers ?? DEFAULT_GATEWAY_PROXY_HEADERS_CONFIG,
+      },
+      config.gateway_proxy_headers ?? DEFAULT_GATEWAY_PROXY_HEADERS_CONFIG,
+    ).items,
+    proxyHeadersRuntime,
   ),
 });
 
@@ -447,6 +498,10 @@ const syncHostMappingsRuntime = async (
       "同步鉴权网关配置失败",
     );
   }
+
+  await syncGatewayProxyHeadersRuntimeForConfig(nextConfig, {
+    saveConfig: true,
+  });
 };
 
 const buildCountSeries = (
@@ -784,13 +839,18 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
     },
   )
   .get("/config/gateway", async () => {
-    const [config, visibilityRuntime] = await Promise.all([
+    const [config, visibilityRuntime, proxyHeadersRuntime] = await Promise.all([
       configManager.getConfig(),
       configManager.getGatewayVisibilityRuntimeState(),
+      configManager.getGatewayProxyHeadersRuntimeState(),
     ]);
     return {
       success: true,
-      data: buildGatewaySettingsResponse(config, visibilityRuntime),
+      data: buildGatewaySettingsResponse(
+        config,
+        visibilityRuntime,
+        proxyHeadersRuntime,
+      ),
     };
   })
   .post(
@@ -822,10 +882,12 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
         const updatedConfig = await configManager.getConfig();
         const [
           visibilityRuntime,
+          proxyHeadersRuntime,
           authConfigResult,
           reverseProxyThrottleResult,
         ] = await Promise.all([
           configManager.getGatewayVisibilityRuntimeState(),
+          configManager.getGatewayProxyHeadersRuntimeState(),
           goBackend.setAuthConfig(buildGatewayAuthConfig(updatedConfig)),
           goBackend.setReverseProxyThrottle(
             updatedConfig.reverse_proxy_throttle ??
@@ -850,7 +912,11 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
 
         return {
           success: true,
-          data: buildGatewaySettingsResponse(updatedConfig, visibilityRuntime),
+          data: buildGatewaySettingsResponse(
+            updatedConfig,
+            visibilityRuntime,
+            proxyHeadersRuntime,
+          ),
         };
       } catch (error: any) {
         const rollbackError = await rollbackConfigAndRuntime(previousConfig);
@@ -938,6 +1004,65 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
           }),
         ),
         custom_cidrs: t.Array(t.String()),
+      }),
+    },
+  )
+  .get("/config/gateway/proxy-headers", async () => {
+    const details = await getGatewayProxyHeadersDetails();
+    return {
+      success: true,
+      data: details,
+    };
+  })
+  .post(
+    "/config/gateway/proxy-headers",
+    async ({ body, set }) => {
+      const [previousConfig, previousRuntime] = await Promise.all([
+        configManager.getConfig(),
+        configManager.getGatewayProxyHeadersRuntimeState(),
+      ]);
+
+      if (previousConfig.run_type !== 3) {
+        set.status = 400;
+        return {
+          success: false,
+          message: "协议头仅可在子域模式下编辑",
+        };
+      }
+
+      try {
+        const compiled = compileGatewayProxyHeadersState(previousConfig, {
+          disabled_hosts: body.disabled_hosts,
+        });
+
+        await Promise.all([
+          configManager.updateGatewayProxyHeadersConfig(compiled.config),
+          configManager.saveGatewayProxyHeadersRuntimeState(compiled.runtime),
+        ]);
+
+        await syncGatewayProxyHeadersToGateway(compiled.runtime);
+
+        return {
+          success: true,
+          data: await getGatewayProxyHeadersDetails(),
+        };
+      } catch (error: any) {
+        const rollbackError = await rollbackGatewayProxyHeadersConfigAndRuntime(
+          previousConfig,
+          previousRuntime,
+        );
+        set.status = 502;
+        return {
+          success: false,
+          message: rollbackError
+            ? `${error?.message || "更新网关协议头失败"}；回滚失败：${rollbackError}`
+            : error?.message || "更新网关协议头失败，已回滚配置",
+        };
+      }
+    },
+    {
+      body: t.Object({
+        disabled_hosts: t.Array(t.String()),
       }),
     },
   )

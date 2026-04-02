@@ -21,6 +21,7 @@ import type {
   DashboardStats,
   ThreatOverview,
   FnosShareBypassConfig,
+  GatewayProxyHeadersDetails,
   GatewaySettings,
   GatewayVisibilityDetails,
   FnKnockBackupImportArchiveRequest,
@@ -336,6 +337,16 @@ export const ConfigAPI = {
     custom_cidrs: string[];
   }): Promise<GatewayVisibilityDetails> {
     const res = await apiClient.post("/config/gateway/visibility", payload);
+    return res.data.data;
+  },
+  async getGatewayProxyHeaders(): Promise<GatewayProxyHeadersDetails> {
+    const res = await apiClient.get("/config/gateway/proxy-headers");
+    return res.data.data;
+  },
+  async updateGatewayProxyHeaders(payload: {
+    disabled_hosts: string[];
+  }): Promise<GatewayProxyHeadersDetails> {
+    const res = await apiClient.post("/config/gateway/proxy-headers", payload);
     return res.data.data;
   },
   async getProxyProtocolForce(): Promise<ProxyProtocolForce> {

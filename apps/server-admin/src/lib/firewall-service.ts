@@ -5,6 +5,7 @@ import {
 } from "./redis";
 import { goBackend, type GoResponse } from "./go-backend";
 import { buildGatewayAuthConfig } from "./subdomain-mode";
+import { syncGatewayProxyHeadersRuntimeForConfig } from "./gateway-proxy-headers";
 import { syncGatewayVisibilityToGateway } from "./gateway-visibility";
 import { whitelistManager } from "./whitelist-manager";
 import { isReverseProxySubdomainMode } from "./reverse-proxy-submode";
@@ -256,6 +257,11 @@ export class FirewallService {
       await syncGatewayVisibilityToGateway();
     } catch (error) {
       console.error("Go 后端接口调用失败: 同步网关可见性配置失败", error);
+    }
+    try {
+      await syncGatewayProxyHeadersRuntimeForConfig(config);
+    } catch (error) {
+      console.error("Go 后端接口调用失败: 同步网关协议头配置失败", error);
     }
 
     if (runType === 1) {

@@ -120,6 +120,12 @@ export interface GatewayVisibilityConfig {
   updated_at?: string | null;
 }
 
+export interface ForwardedHeadersConfig {
+  enabled: boolean;
+  omit_targets: string[];
+  updated_at?: string | null;
+}
+
 export interface GatewayLoggingDirectory {
   logs_dir: string;
 }
@@ -359,6 +365,30 @@ export class GoBackendService {
     };
     return this.request<GatewayVisibilityConfig>(
       "/api/config/visibility",
+      "POST",
+      payload,
+    );
+  }
+
+  async getForwardedHeadersConfig(): Promise<
+    GoResponse<ForwardedHeadersConfig>
+  > {
+    return this.request<ForwardedHeadersConfig>(
+      "/api/config/forwarded-headers",
+    );
+  }
+
+  async setForwardedHeadersConfig(
+    config: ForwardedHeadersConfig,
+  ): Promise<GoResponse<ForwardedHeadersConfig>> {
+    const payload = {
+      enabled: config.enabled,
+      omit_targets: config.omit_targets,
+      ...(config.updated_at ? { updated_at: config.updated_at } : {}),
+    };
+
+    return this.request<ForwardedHeadersConfig>(
+      "/api/config/forwarded-headers",
       "POST",
       payload,
     );

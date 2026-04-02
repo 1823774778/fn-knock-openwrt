@@ -96,10 +96,40 @@ const authCacheFailHint = computed(() =>
     : `未通过鉴权结果会缓存 ${clampCacheTtl(form.auth_cache_unauthorized_ttl_seconds)} 秒。`,
 );
 
+const runTypeLabelMap = {
+  0: "直连模式",
+  1: "反代模式",
+  3: "子域模式",
+} as const;
+
+const currentRunTypeLabel = computed(() => {
+  const runType = configStore.config?.run_type;
+  if (runType === 0 || runType === 1 || runType === 3) {
+    return runTypeLabelMap[runType];
+  }
+  return "当前模式";
+});
+
 const visibilitySummary = computed(() => settings.value?.visibility ?? null);
+
+const isProxyHeadersAvailable = computed(
+  () => configStore.config?.run_type === 3,
+);
+const proxyHeadersDisabledReason = computed(() => {
+  if (isProxyHeadersAvailable.value) return "";
+  return `仅子域模式可用，当前为${currentRunTypeLabel.value}。`;
+});
 
 const openVisibilityEditor = () => {
   void router.push("/system/gateway-visibility");
+};
+
+const openProxyHeadersEditor = () => {
+  if (!isProxyHeadersAvailable.value) {
+    return;
+  }
+
+  void router.push("/system/gateway-proxy-headers");
 };
 
 const toggleThrottleEnabled = () => {
@@ -353,6 +383,46 @@ onMounted(fetchSettings);
           <Button variant="outline" @click="openVisibilityEditor"
             >编辑可见性</Button
           >
+        </div>
+      </div>
+
+      <div
+        class="grid gap-4 p-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center"
+      >
+        <div class="space-y-3">
+          <div class="flex flex-wrap items-center gap-2">
+            <Label
+              class="text-base"
+              :class="isProxyHeadersAvailable ? '' : 'text-zinc-500'"
+            >
+              协议头
+            </Label>
+          </div>
+          <div
+            class="text-sm leading-6"
+            :class="
+              isProxyHeadersAvailable
+                ? 'text-muted-foreground'
+                : 'text-zinc-500'
+            "
+          >
+            控制哪些子域在转发到上游时不发送代理头
+          </div>
+          <div
+            v-if="!isProxyHeadersAvailable"
+            class="text-xs leading-5 text-zinc-500"
+          >
+            {{ proxyHeadersDisabledReason }}
+          </div>
+        </div>
+        <div class="flex justify-start lg:justify-end">
+          <Button
+            variant="outline"
+            :disabled="!isProxyHeadersAvailable"
+            @click="openProxyHeadersEditor"
+          >
+            编辑协议头
+          </Button>
         </div>
       </div>
 

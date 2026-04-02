@@ -204,6 +204,16 @@ export interface GatewayVisibilityRuntimeState {
   updated_at: string | null;
 }
 
+export interface GatewayProxyHeadersConfig {
+  disabled_hosts: string[];
+}
+
+export interface GatewayProxyHeadersRuntimeState {
+  enabled: boolean;
+  omit_targets: string[];
+  updated_at: string | null;
+}
+
 export interface ProtocolMappingFeatureConfig {
   enabled: boolean;
 }
@@ -357,6 +367,7 @@ export interface AppConfig {
   gateway_logging?: GatewayLoggingSettings;
   reverse_proxy_throttle?: ReverseProxyThrottleConfig;
   gateway_visibility?: GatewayVisibilityConfig;
+  gateway_proxy_headers?: GatewayProxyHeadersConfig;
   smart_connect?: SmartConnectConfig;
   auth_credential_settings?: AuthCredentialSettings;
   terminal_feature?: TerminalFeatureConfig;
@@ -400,6 +411,17 @@ const DEFAULT_GATEWAY_VISIBILITY_RUNTIME_STATE: GatewayVisibilityRuntimeState =
   {
     enabled: false,
     cidrs: [],
+    updated_at: null,
+  };
+
+export const DEFAULT_GATEWAY_PROXY_HEADERS_CONFIG: GatewayProxyHeadersConfig = {
+  disabled_hosts: [],
+};
+
+const DEFAULT_GATEWAY_PROXY_HEADERS_RUNTIME_STATE: GatewayProxyHeadersRuntimeState =
+  {
+    enabled: false,
+    omit_targets: [],
     updated_at: null,
   };
 
@@ -509,6 +531,10 @@ const DEFAULT_CONFIG: AppConfig = {
     ...DEFAULT_GATEWAY_VISIBILITY_CONFIG,
     selections: [],
     custom_cidrs: [],
+  },
+  gateway_proxy_headers: {
+    ...DEFAULT_GATEWAY_PROXY_HEADERS_CONFIG,
+    disabled_hosts: [],
   },
   smart_connect: {
     ...DEFAULT_SMART_CONNECT_CONFIG,
@@ -633,6 +659,33 @@ const normalizeGatewayVisibilityRuntimeState = (
         ? raw.cidrs.map((item) => String(item ?? ""))
         : [],
     ),
+    updated_at: updatedAt || null,
+  };
+};
+
+const normalizeGatewayProxyHeadersConfig = (
+  value?: Partial<GatewayProxyHeadersConfig> | null,
+): GatewayProxyHeadersConfig => {
+  const raw = value ?? {};
+
+  return {
+    disabled_hosts: Array.isArray(raw.disabled_hosts)
+      ? [
+          ...new Set(raw.disabled_hosts.map((item) => normalizeHost(item))),
+        ].filter(Boolean)
+      : [],
+  };
+};
+
+const normalizeGatewayProxyHeadersRuntimeState = (
+  value?: Partial<GatewayProxyHeadersRuntimeState> | null,
+): GatewayProxyHeadersRuntimeState => {
+  const raw = value ?? {};
+  const updatedAt = normalizeOptionalString(raw.updated_at);
+
+  return {
+    enabled: raw.enabled === true,
+    omit_targets: normalizeStringList(raw.omit_targets),
     updated_at: updatedAt || null,
   };
 };
@@ -829,6 +882,19 @@ const normalizeDomainList = (value: unknown): string[] => {
     domains.push(domain);
   }
   return domains;
+};
+
+const normalizeStringList = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  const items: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of value) {
+    const item = String(raw ?? "").trim();
+    if (!item || seen.has(item)) continue;
+    seen.add(item);
+    items.push(item);
+  }
+  return items;
 };
 
 const buildNormalizedDomainSignature = (domains: string[]): string =>
@@ -1337,6 +1403,8 @@ export class ConfigManager {
   private redis: Redis;
   private configKey = "fn_knock:config";
   private gatewayVisibilityRuntimeKey = "fn_knock:gateway:visibility:runtime";
+  private gatewayProxyHeadersRuntimeKey =
+    "fn_knock:gateway:proxy-headers:runtime";
   private smartConnectRuntimeKey = "fn_knock:smart-connect:runtime";
   private captchaSettingsKey = "fn_knock:captcha:settings";
   private protocolMappingFeatureKey = "fn_knock:protocol-mapping:feature";
@@ -1625,6 +1693,9 @@ export class ConfigManager {
         parsed.gateway_visibility = normalizeGatewayVisibilityConfig(
           parsed.gateway_visibility,
         );
+        parsed.gateway_proxy_headers = normalizeGatewayProxyHeadersConfig(
+          parsed.gateway_proxy_headers,
+        );
         parsed.smart_connect = normalizeSmartConnectConfig(
           parsed.smart_connect,
         );
@@ -1656,6 +1727,10 @@ export class ConfigManager {
         ...DEFAULT_GATEWAY_VISIBILITY_CONFIG,
         selections: [],
         custom_cidrs: [],
+      },
+      gateway_proxy_headers: {
+        ...DEFAULT_GATEWAY_PROXY_HEADERS_CONFIG,
+        disabled_hosts: [],
       },
       smart_connect: {
         ...DEFAULT_SMART_CONNECT_CONFIG,
@@ -3311,6 +3386,11 @@ export class ConfigManager {
     return normalizeGatewayVisibilityConfig(config.gateway_visibility);
   }
 
+  async getGatewayProxyHeadersConfig(): Promise<GatewayProxyHeadersConfig> {
+    const config = await this.getConfig();
+    return normalizeGatewayProxyHeadersConfig(config.gateway_proxy_headers);
+  }
+
   async getGatewayVisibilityRuntimeState(): Promise<GatewayVisibilityRuntimeState> {
     try {
       const raw = await this.redis.get(this.gatewayVisibilityRuntimeKey);
@@ -3324,6 +3404,25 @@ export class ConfigManager {
     return {
       ...DEFAULT_GATEWAY_VISIBILITY_RUNTIME_STATE,
       cidrs: [],
+    };
+  }
+
+  async getGatewayProxyHeadersRuntimeState(): Promise<GatewayProxyHeadersRuntimeState> {
+    try {
+      const raw = await this.redis.get(this.gatewayProxyHeadersRuntimeKey);
+      if (raw) {
+        return normalizeGatewayProxyHeadersRuntimeState(JSON.parse(raw));
+      }
+    } catch (error) {
+      console.error(
+        "Failed to parse gateway proxy headers runtime state",
+        error,
+      );
+    }
+
+    return {
+      ...DEFAULT_GATEWAY_PROXY_HEADERS_RUNTIME_STATE,
+      omit_targets: [],
     };
   }
 
@@ -3418,12 +3517,33 @@ export class ConfigManager {
     return next;
   }
 
+  async updateGatewayProxyHeadersConfig(
+    nextValue: GatewayProxyHeadersConfig,
+  ): Promise<GatewayProxyHeadersConfig> {
+    const config = await this.getConfig();
+    const next = normalizeGatewayProxyHeadersConfig(nextValue);
+    config.gateway_proxy_headers = next;
+    await this.saveConfig(config);
+    return next;
+  }
+
   async saveGatewayVisibilityRuntimeState(
     nextValue: GatewayVisibilityRuntimeState,
   ): Promise<GatewayVisibilityRuntimeState> {
     const next = normalizeGatewayVisibilityRuntimeState(nextValue);
     await this.redis.set(
       this.gatewayVisibilityRuntimeKey,
+      JSON.stringify(next),
+    );
+    return next;
+  }
+
+  async saveGatewayProxyHeadersRuntimeState(
+    nextValue: GatewayProxyHeadersRuntimeState,
+  ): Promise<GatewayProxyHeadersRuntimeState> {
+    const next = normalizeGatewayProxyHeadersRuntimeState(nextValue);
+    await this.redis.set(
+      this.gatewayProxyHeadersRuntimeKey,
       JSON.stringify(next),
     );
     return next;

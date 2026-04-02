@@ -54,11 +54,17 @@
                   <div class="text-sm">
                     <template v-if="authServiceMapping">
                       <div class="break-all font-medium">
-                        {{ authServiceMapping.host }}:{{ displayAccessEntryPort }}
+                        {{ authServiceMapping.host }}:{{
+                          displayAccessEntryPort
+                        }}
                       </div>
                       <div class="mt-1 text-xs text-muted-foreground">
                         在尚未登录时，会自动跳转到
-                        <code>https://{{ authServiceMapping.host }}:{{ displayAccessEntryPort }}</code>
+                        <code
+                          >https://{{ authServiceMapping.host }}:{{
+                            displayAccessEntryPort
+                          }}</code
+                        >
                         完成登录。
                       </div>
                     </template>
@@ -228,7 +234,13 @@
           v-if="visibleMappings.length > 1"
           class="text-xs text-muted-foreground"
         >
-          拖动左侧把手可调整显示顺序
+          拖动左侧把手可调整显示顺序 ，如果发现无法反代，可以尝试
+          <a
+            href="#/system/gateway-proxy-headers"
+            class="underline underline-offset-2 hover:text-foreground"
+          >
+            关闭协议头
+          </a>
         </p>
         <p
           v-if="!savedRootDomain || isRootDomainPendingSave"
