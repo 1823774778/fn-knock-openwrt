@@ -21,7 +21,12 @@ import { randomBytes } from "node:crypto";
 import { authLogManager } from "../lib/auth-log";
 import { authMobilitySessionManager } from "../lib/auth-mobility-session";
 import { ipLocationRefs, ipLocationService } from "../lib/ip-location";
+import { revokeCustomPostLoginIpGrant } from "../lib/post-login-ip-grant";
 import { scanDetector } from "../lib/scan-detector";
+import {
+  scheduleSyncReverseProxyTrustedIPs,
+  syncReverseProxyTrustedIPsNow,
+} from "../lib/reverse-proxy-trusted-ips";
 import { whitelistManager } from "../lib/whitelist-manager";
 import {
   buildGatewayAuthConfig,
@@ -575,7 +580,13 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
         );
         if (body.run_type === 0) {
           try {
-            await whitelistManager.removeRecordsBySource("auto");
+            const removedAutoGrantCount =
+              await whitelistManager.removeRecordsBySource("auto");
+            if (removedAutoGrantCount > 0) {
+              scheduleSyncReverseProxyTrustedIPs({
+                reason: "run-type-direct-cleanup",
+              });
+            }
           } catch (cleanupError) {
             console.error(
               "[admin][run_type] failed to clear login IP grants after switching to direct mode:",
@@ -908,6 +919,18 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
         }
         if (syncErrors.length > 0) {
           throw new Error(syncErrors.join("；"));
+        }
+
+        try {
+          await syncReverseProxyTrustedIPsNow({
+            config: updatedConfig,
+          });
+        } catch (error) {
+          console.error(
+            "[reverse-proxy-trusted-ips] failed to sync after gateway config update:",
+            error,
+          );
+          throw error;
         }
 
         return {
@@ -2026,13 +2049,18 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
     async ({ params }) => {
       const sess = await configManager.getSession(params.id);
       if (sess) {
+        const config = await configManager.getConfig();
         await authMobilitySessionManager.destroySession(params.id);
         await configManager.deleteSession(params.id);
+        await revokeCustomPostLoginIpGrant(sess, config, sess.ip);
         await authLogManager.recordLog({
           type: "logout",
           ip: sess.ip,
           userAgent: sess.userAgent,
           success: true,
+        });
+        scheduleSyncReverseProxyTrustedIPs({
+          reason: "admin-session-delete",
         });
       } else {
         await configManager.deleteSession(params.id);

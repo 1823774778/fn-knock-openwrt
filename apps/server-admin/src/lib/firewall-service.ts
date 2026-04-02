@@ -7,6 +7,7 @@ import { goBackend, type GoResponse } from "./go-backend";
 import { buildGatewayAuthConfig } from "./subdomain-mode";
 import { syncGatewayProxyHeadersRuntimeForConfig } from "./gateway-proxy-headers";
 import { syncGatewayVisibilityToGateway } from "./gateway-visibility";
+import { syncReverseProxyTrustedIPsNow } from "./reverse-proxy-trusted-ips";
 import { whitelistManager } from "./whitelist-manager";
 import { isReverseProxySubdomainMode } from "./reverse-proxy-submode";
 import { shouldAutoManageFirewallForRunType } from "./firewall-automation";
@@ -253,6 +254,12 @@ export class FirewallService {
       ),
       "同步反代节流配置失败",
     );
+    await syncReverseProxyTrustedIPsNow({ config }).catch((error) => {
+      console.error(
+        "[reverse-proxy-trusted-ips] failed to sync runtime state during run type apply:",
+        error,
+      );
+    });
     try {
       await syncGatewayVisibilityToGateway();
     } catch (error) {

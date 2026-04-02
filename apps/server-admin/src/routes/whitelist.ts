@@ -1,4 +1,5 @@
 import { Elysia, t } from "elysia";
+import { scheduleSyncReverseProxyTrustedIPs } from "../lib/reverse-proxy-trusted-ips";
 import { whitelistManager } from "../lib/whitelist-manager";
 
 export const whitelistRoutes = new Elysia({ prefix: "/api/admin/whitelist" })
@@ -15,6 +16,7 @@ export const whitelistRoutes = new Elysia({ prefix: "/api/admin/whitelist" })
         source: body.source,
         comment: body.comment,
       });
+      scheduleSyncReverseProxyTrustedIPs({ reason: "whitelist-add" });
       return { success: true, data: { id } };
     },
     {
@@ -34,6 +36,7 @@ export const whitelistRoutes = new Elysia({ prefix: "/api/admin/whitelist" })
         set.status = 404;
         return { success: false, message: "Record not found" };
       }
+      scheduleSyncReverseProxyTrustedIPs({ reason: "whitelist-remove" });
       return { success: true };
     },
     {

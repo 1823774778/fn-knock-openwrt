@@ -24,6 +24,10 @@ import { recentAuthIPsManager } from "../lib/recent-auth-ips";
 import { scanDetector } from "../lib/scan-detector";
 import { ipLocationService } from "../lib/ip-location";
 import {
+  revokeCustomPostLoginIpGrant,
+} from "../lib/post-login-ip-grant";
+import { scheduleSyncReverseProxyTrustedIPs } from "../lib/reverse-proxy-trusted-ips";
+import {
   buildFnosShareSessionClearCookie,
   buildSessionClearCookie,
 } from "../lib/session-cookie";
@@ -81,8 +85,6 @@ const buildPostLogoutLocation = (request: Request): string => {
   const params = new URLSearchParams({ logged_out: "1" });
   return `${basePrefix}/login?${params.toString()}`;
 };
-
-const AUTO_IP_GRANT_COMMENT = "登录后自动授权";
 
 export const authRoutes = new Elysia({ prefix: "/api/auth" })
   .get("/bootstrap", async ({ request, set }) => {
@@ -326,24 +328,11 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
     const config = await configManager.getConfig();
     const cookieDomain = resolveCookieDomain(config, request);
     const { sessionId } = authMobilitySessionManager.inspectRequest(request);
+    let session = null;
     let loginIpFromSession: string | null = null;
-    let loginIpGrantRecordIdFromSession: string | null = null;
-    let shouldRevokeAutoIpGrant = false;
     if (sessionId) {
-      const session = await configManager.getSession(sessionId);
+      session = await configManager.getSession(sessionId);
       loginIpFromSession = session?.ip || null;
-      loginIpGrantRecordIdFromSession =
-        session?.postLoginIpGrantRecordId || null;
-      shouldRevokeAutoIpGrant =
-        session?.grantType === "login_ip_grant" &&
-        session?.postLoginIpGrantMode === "custom";
-      if (
-        !shouldRevokeAutoIpGrant &&
-        session?.comment === AUTO_IP_GRANT_COMMENT &&
-        config.auth_credential_settings?.post_login_ip_grant_mode === "custom"
-      ) {
-        shouldRevokeAutoIpGrant = true;
-      }
       await authMobilitySessionManager.destroySession(sessionId);
       await configManager.deleteSession(sessionId);
     }
@@ -355,15 +344,12 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
         loginIpFromSession || clientIp,
         "auto",
       );
-    } else if (shouldRevokeAutoIpGrant) {
-      if (loginIpGrantRecordIdFromSession) {
-        await whitelistManager.removeWhiteList(loginIpGrantRecordIdFromSession);
-      } else {
-        await whitelistManager.removeRecordsByIP(
-          loginIpFromSession || clientIp,
-          "auto",
-        );
-      }
+    } else {
+      await revokeCustomPostLoginIpGrant(
+        session,
+        config,
+        loginIpFromSession || clientIp,
+      );
     }
 
     await authLogManager.recordLog({
@@ -372,6 +358,7 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
       userAgent,
       success: true,
     });
+    scheduleSyncReverseProxyTrustedIPs({ reason: "logout" });
 
     const headers = new Headers({
       Location: buildPostLogoutLocation(request),

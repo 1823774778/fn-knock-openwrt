@@ -500,10 +500,10 @@ export class IPTablesWhiteListManager {
     return records;
   }
 
-  async processExpiredRecords(): Promise<void> {
+  async processExpiredRecords(): Promise<boolean> {
     try {
       const expiredRecords = await this.findExpiredRecords();
-      if (expiredRecords.length === 0) return;
+      if (expiredRecords.length === 0) return false;
 
       const touchedIps = new Set<string>();
       const pipeline = this.redis.pipeline();
@@ -527,8 +527,10 @@ export class IPTablesWhiteListManager {
         await this.redis.del(ipKey);
         await this.removeAllowedIP(ip);
       }
+      return true;
     } catch (error) {
       console.error("Error processing expired records:", error);
+      return false;
     }
   }
 

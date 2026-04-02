@@ -126,6 +126,12 @@ export interface ForwardedHeadersConfig {
   updated_at?: string | null;
 }
 
+export interface ReverseProxyThrottleExemptIPsRuntime {
+  enabled: boolean;
+  ips: string[];
+  updated_at?: string | null;
+}
+
 export interface GatewayLoggingDirectory {
   logs_dir: string;
 }
@@ -391,6 +397,30 @@ export class GoBackendService {
       "/api/config/forwarded-headers",
       "POST",
       payload,
+    );
+  }
+
+  async getReverseProxyThrottleExemptIPs(): Promise<
+    GoResponse<ReverseProxyThrottleExemptIPsRuntime>
+  > {
+    return this.request<ReverseProxyThrottleExemptIPsRuntime>(
+      "/api/runtime/reverse-proxy-throttle-exempt-ips",
+      "GET",
+      undefined,
+      this.requestTimeoutMs,
+      { suppressStatusLog: [404] },
+    );
+  }
+
+  async setReverseProxyThrottleExemptIPs(
+    config: ReverseProxyThrottleExemptIPsRuntime,
+  ): Promise<GoResponse<ReverseProxyThrottleExemptIPsRuntime>> {
+    return this.request<ReverseProxyThrottleExemptIPsRuntime>(
+      "/api/runtime/reverse-proxy-throttle-exempt-ips",
+      "POST",
+      config,
+      this.requestTimeoutMs,
+      { suppressStatusLog: [404] },
     );
   }
 

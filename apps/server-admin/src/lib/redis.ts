@@ -34,6 +34,7 @@ import {
   DEFAULT_AUTO_MANAGE_FIREWALL,
   normalizeAutoManageFirewall,
 } from "./firewall-automation";
+import { normalizeIp } from "./ip-normalize";
 import { normalizeCidrLines } from "../../../../packages/admin-shared/src/utils/cidr";
 
 const REDIS_CONFIG = {
@@ -211,6 +212,17 @@ export interface GatewayProxyHeadersConfig {
 export interface GatewayProxyHeadersRuntimeState {
   enabled: boolean;
   omit_targets: string[];
+  updated_at: string | null;
+}
+
+export interface ReverseProxyTrustedIPRuntimeItem {
+  ip: string;
+  sources: string[];
+}
+
+export interface ReverseProxyTrustedIPRuntimeState {
+  enabled: boolean;
+  items: ReverseProxyTrustedIPRuntimeItem[];
   updated_at: string | null;
 }
 
@@ -422,6 +434,13 @@ const DEFAULT_GATEWAY_PROXY_HEADERS_RUNTIME_STATE: GatewayProxyHeadersRuntimeSta
   {
     enabled: false,
     omit_targets: [],
+    updated_at: null,
+  };
+
+const DEFAULT_REVERSE_PROXY_TRUSTED_IP_RUNTIME_STATE: ReverseProxyTrustedIPRuntimeState =
+  {
+    enabled: false,
+    items: [],
     updated_at: null,
   };
 
@@ -686,6 +705,43 @@ const normalizeGatewayProxyHeadersRuntimeState = (
   return {
     enabled: raw.enabled === true,
     omit_targets: normalizeStringList(raw.omit_targets),
+    updated_at: updatedAt || null,
+  };
+};
+
+const normalizeReverseProxyTrustedIPRuntimeState = (
+  value?: Partial<ReverseProxyTrustedIPRuntimeState> | null,
+): ReverseProxyTrustedIPRuntimeState => {
+  const raw = value ?? {};
+  const updatedAt = normalizeOptionalString(raw.updated_at);
+  const sourceMap = new Map<string, Set<string>>();
+
+  for (const item of Array.isArray(raw.items) ? raw.items : []) {
+    const normalizedIp = normalizeIp(
+      item && typeof item === "object" && "ip" in item ? item.ip : "",
+    );
+    if (!normalizedIp) continue;
+
+    const sources = normalizeStringList(
+      item && typeof item === "object" && "sources" in item ? item.sources : [],
+    );
+    const existing = sourceMap.get(normalizedIp) ?? new Set<string>();
+    for (const source of sources) {
+      existing.add(source);
+    }
+    sourceMap.set(normalizedIp, existing);
+  }
+
+  const items = [...sourceMap.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([ip, sources]) => ({
+      ip,
+      sources: [...sources].sort((left, right) => left.localeCompare(right)),
+    }));
+
+  return {
+    enabled: raw.enabled === true,
+    items,
     updated_at: updatedAt || null,
   };
 };
@@ -1405,6 +1461,8 @@ export class ConfigManager {
   private gatewayVisibilityRuntimeKey = "fn_knock:gateway:visibility:runtime";
   private gatewayProxyHeadersRuntimeKey =
     "fn_knock:gateway:proxy-headers:runtime";
+  private reverseProxyTrustedIPsRuntimeKey =
+    "fn_knock:reverse-proxy:trusted-ips:runtime";
   private smartConnectRuntimeKey = "fn_knock:smart-connect:runtime";
   private captchaSettingsKey = "fn_knock:captcha:settings";
   private protocolMappingFeatureKey = "fn_knock:protocol-mapping:feature";
@@ -3426,6 +3484,25 @@ export class ConfigManager {
     };
   }
 
+  async getReverseProxyTrustedIPsRuntimeState(): Promise<ReverseProxyTrustedIPRuntimeState> {
+    try {
+      const raw = await this.redis.get(this.reverseProxyTrustedIPsRuntimeKey);
+      if (raw) {
+        return normalizeReverseProxyTrustedIPRuntimeState(JSON.parse(raw));
+      }
+    } catch (error) {
+      console.error(
+        "Failed to parse reverse proxy trusted IP runtime state",
+        error,
+      );
+    }
+
+    return {
+      ...DEFAULT_REVERSE_PROXY_TRUSTED_IP_RUNTIME_STATE,
+      items: [],
+    };
+  }
+
   async getSmartConnectConfig(): Promise<SmartConnectConfig> {
     const config = await this.getConfig();
     return normalizeSmartConnectConfig(config.smart_connect);
@@ -3544,6 +3621,17 @@ export class ConfigManager {
     const next = normalizeGatewayProxyHeadersRuntimeState(nextValue);
     await this.redis.set(
       this.gatewayProxyHeadersRuntimeKey,
+      JSON.stringify(next),
+    );
+    return next;
+  }
+
+  async saveReverseProxyTrustedIPsRuntimeState(
+    nextValue: ReverseProxyTrustedIPRuntimeState,
+  ): Promise<ReverseProxyTrustedIPRuntimeState> {
+    const next = normalizeReverseProxyTrustedIPRuntimeState(nextValue);
+    await this.redis.set(
+      this.reverseProxyTrustedIPsRuntimeKey,
       JSON.stringify(next),
     );
     return next;

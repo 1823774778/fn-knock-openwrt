@@ -48,6 +48,10 @@ import { updateRoutes } from "./routes/update";
 import { updateManager } from "./lib/update-manager";
 import { createStaticFilesPlugin } from "./plugins/static-files";
 import { firewallService } from "./lib/firewall-service";
+import {
+  scheduleSyncReverseProxyTrustedIPs,
+  syncReverseProxyTrustedIPsNow,
+} from "./lib/reverse-proxy-trusted-ips";
 import { syncGatewayLoggingToGateway } from "./lib/gateway-logging";
 import { syncSSLDeploymentToGateway } from "./lib/ssl-gateway";
 import { syncSmartConnectOnBoot } from "./lib/smart-connect";
@@ -298,7 +302,36 @@ app.use(
     name: "whitelist-expiry-check",
     pattern: "* * * * *",
     run() {
-      whitelistManager.processExpiredRecords();
+      void whitelistManager
+        .processExpiredRecords()
+        .then((changed) => {
+          if (!changed) return;
+          scheduleSyncReverseProxyTrustedIPs({
+            reason: "whitelist-expiry",
+            delayMs: 50,
+          });
+        })
+        .catch((error) => {
+          console.error(
+            "[reverse-proxy-trusted-ips] failed to process whitelist expiry:",
+            error,
+          );
+        });
+    },
+  }),
+);
+
+app.use(
+  cron({
+    name: "reverse-proxy-trusted-ips-reconcile",
+    pattern: "*/2 * * * *",
+    run() {
+      void syncReverseProxyTrustedIPsNow().catch((error) => {
+        console.error(
+          "[reverse-proxy-trusted-ips] periodic reconcile failed:",
+          error,
+        );
+      });
     },
   }),
 );

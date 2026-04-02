@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type Redis from "ioredis";
 import { ipLocationRefs, ipLocationService } from "./ip-location";
+import { scheduleSyncReverseProxyTrustedIPs } from "./reverse-proxy-trusted-ips";
 import { configManager, redis, type LoginSession } from "./redis";
 import { whitelistManager } from "./whitelist-manager";
 
@@ -372,6 +373,9 @@ export class AuthMobilitySessionManager {
     );
     if (session.ip !== clientIp) {
       await configManager.updateSession(sessionId, { ip: clientIp });
+      scheduleSyncReverseProxyTrustedIPs({
+        reason: "mobility-session-refresh",
+      });
       await ipLocationService.registerUsage(clientIp, [
         ipLocationRefs.session(sessionId),
         ipLocationRefs.sessionTimeline(sessionId),
@@ -757,6 +761,9 @@ export class AuthMobilitySessionManager {
           happenedAt: ownerSession.loginTime,
         }),
       );
+      scheduleSyncReverseProxyTrustedIPs({
+        reason: "fnos-token-restore",
+      });
     }
     await ipLocationService.registerUsage(clientIp, [
       ipLocationRefs.session(ownerSessionId),
@@ -833,6 +840,9 @@ export class AuthMobilitySessionManager {
           happenedAt: session.loginTime,
         }),
       );
+      scheduleSyncReverseProxyTrustedIPs({
+        reason: "proxy-session-restore",
+      });
     }
     await ipLocationService.registerUsage(clientIp, [
       ipLocationRefs.session(sessionId),

@@ -3,6 +3,7 @@ import { fnosShareBypassService } from "./fnos-share-bypass";
 import { ipLocationRefs, ipLocationService } from "./ip-location";
 import { recentAuthIPsManager } from "./recent-auth-ips";
 import { configManager } from "./redis";
+import { scheduleSyncReverseProxyTrustedIPs } from "./reverse-proxy-trusted-ips";
 import { whitelistManager } from "./whitelist-manager";
 import { getClientIp } from "./auth-request";
 import { isWhitelistExemptIp } from "./ip-normalize";
@@ -20,8 +21,7 @@ export type AuthGrantType =
 export const reliesOnBrowserSessionCookie = (
   grantType?: AuthGrantType,
 ): boolean =>
-  grantType === "browser_session" ||
-  grantType === "session_migration";
+  grantType === "browser_session" || grantType === "session_migration";
 
 export type AuthAccessDecision = {
   authorized: boolean;
@@ -187,7 +187,10 @@ const resolveCustomGrantRecordId = async (
     return null;
   }
 
-  const records = await whitelistManager.getActiveRecordsByIP(session.ip, "auto");
+  const records = await whitelistManager.getActiveRecordsByIP(
+    session.ip,
+    "auto",
+  );
   return records.length === 1 ? records[0]?.id || null : null;
 };
 
@@ -247,6 +250,9 @@ const authorizeBrowserSession = async (
     ...(customGrantRecordId && !session.postLoginIpGrantRecordId
       ? { postLoginIpGrantRecordId: customGrantRecordId }
       : {}),
+  });
+  scheduleSyncReverseProxyTrustedIPs({
+    reason: "browser-session-ip-update",
   });
   if (clientIp) {
     await ipLocationService.registerUsage(clientIp, [

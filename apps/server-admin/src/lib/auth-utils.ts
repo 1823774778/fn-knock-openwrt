@@ -4,6 +4,7 @@ import { ipLocationRefs, ipLocationService } from "./ip-location";
 import { configManager, DEFAULT_AUTH_CREDENTIAL_SETTINGS } from "./redis";
 import { whitelistManager } from "./whitelist-manager";
 import { authLogManager } from "./auth-log";
+import { scheduleSyncReverseProxyTrustedIPs } from "./reverse-proxy-trusted-ips";
 import { buildSessionCookie } from "./session-cookie";
 import { normalizeIp } from "./ip-normalize";
 import {
@@ -361,7 +362,8 @@ export const handleLoginSuccess = async ({
       redirectUri: redirectTo,
     })
       ? undefined
-      : (redirectTo || undefined);
+      : redirectTo || undefined;
+  scheduleSyncReverseProxyTrustedIPs({ reason: "login-success" });
   return {
     success: true,
     message: "Login successful",
