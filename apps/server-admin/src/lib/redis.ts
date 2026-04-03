@@ -798,12 +798,11 @@ const normalizeEventSystemConfig = (
   const raw = value ?? {};
   const rawRules =
     (raw.rules as
-      | Partial<EventSystemConfig["rules"]>
-      | {
+      | (Partial<EventSystemConfig["rules"]> & {
           login_failure_threshold?: Partial<EventSystemSimpleRuleConfig> & {
             count?: unknown;
           };
-        }
+        })
       | undefined) ?? {};
 
   return {

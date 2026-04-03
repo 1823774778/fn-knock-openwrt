@@ -1,6 +1,9 @@
-import { isIP } from "node:net";
 import { redis } from "./redis";
-import { applySystemEventIpLocations } from "./system-events/ip-fields";
+import { isWhitelistExemptIp, normalizeIp } from "./ip-normalize";
+import {
+  applySystemEventIpLocations,
+  resolveSystemEventIpFields,
+} from "./system-events/ip-fields";
 import type { SystemEventEnvelope } from "./system-events/types";
 
 const LOOKUP_ENDPOINT =
@@ -12,6 +15,7 @@ const LOOKUP_TIMEOUT_MS = Math.max(
 );
 const SUCCESS_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60;
 const FAILED_STATE_TTL_SECONDS = 300;
+const REFERENCE_SET_TTL_SECONDS = SUCCESS_CACHE_TTL_SECONDS;
 const MAX_ATTEMPTS = 5;
 const QUEUE_POLL_INTERVAL_MS = 1000;
 const QUEUE_BATCH_SIZE = 3;
@@ -128,35 +132,7 @@ class IpLocationService {
   }
 
   normalizeIp(ip: string): string {
-    let candidate = String(ip || "").trim();
-    if (!candidate) return "";
-
-    const bracketedMatch = candidate.match(/^\[(.+)\](?::\d+)?$/);
-    if (bracketedMatch?.[1]) {
-      candidate = bracketedMatch[1];
-    }
-
-    const ipv4WithPortMatch = candidate.match(/^(\d+\.\d+\.\d+\.\d+):\d+$/);
-    if (ipv4WithPortMatch?.[1]) {
-      candidate = ipv4WithPortMatch[1];
-    }
-
-    if (candidate.includes("%")) {
-      candidate = candidate.split("%")[0] || candidate;
-    }
-
-    if (candidate.startsWith("::ffff:")) {
-      const mapped = candidate.slice("::ffff:".length);
-      if (isIP(mapped) === 4) {
-        candidate = mapped;
-      }
-    }
-
-    if (candidate === "::1") {
-      candidate = "127.0.0.1";
-    }
-
-    return isIP(candidate) > 0 ? candidate : "";
+    return normalizeIp(ip);
   }
 
   async getCachedLocation(ip: string): Promise<string> {
@@ -192,7 +168,11 @@ class IpLocationService {
 
     const cached = await this.getCachedResult(normalizedIp);
     if (cached) {
-      const state = this.buildSuccessState(cached, MAX_ATTEMPTS);
+      const currentState = await this.getState(normalizedIp);
+      const state =
+        currentState?.status === "success"
+          ? currentState
+          : this.buildSuccessState(cached, currentState?.attempts ?? 0);
       await this.persistState(normalizedIp, state, SUCCESS_CACHE_TTL_SECONDS);
       return this.buildSnapshot(ip, normalizedIp, state);
     }
@@ -272,16 +252,16 @@ class IpLocationService {
 
     const uniqueReferences = [...new Set(references.filter(Boolean))];
     if (uniqueReferences.length > 0) {
-      await redis.sadd(KEYS.refs(normalizedIp), ...uniqueReferences);
+      await this.rememberReferences(normalizedIp, uniqueReferences);
     }
 
     const cached = await this.getCachedResult(normalizedIp);
     if (cached) {
       if (uniqueReferences.length > 0) {
-        await Promise.all(
-          uniqueReferences.map((reference) =>
-            this.syncReference(reference, cached),
-          ),
+        await this.syncTrackedReferences(
+          normalizedIp,
+          cached,
+          uniqueReferences,
         );
       }
       return cached.raw;
@@ -677,20 +657,7 @@ class IpLocationService {
   }
 
   private isSkippableIp(ip: string): boolean {
-    if (isIP(ip) === 4) {
-      if (ip === "0.0.0.0") return true;
-      if (ip.startsWith("127.")) return true;
-      if (ip.startsWith("10.")) return true;
-      if (ip.startsWith("192.168.")) return true;
-      if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(ip)) return true;
-      return false;
-    }
-
-    const lower = ip.toLowerCase();
-    if (lower === "::" || lower === "::1") return true;
-    if (lower.startsWith("fc") || lower.startsWith("fd")) return true;
-    if (lower.startsWith("fe80:")) return true;
-    return false;
+    return isWhitelistExemptIp(ip);
   }
 
   private retryDelayMs(attempt: number): number {
@@ -751,6 +718,24 @@ class IpLocationService {
     await redis.set(KEYS.state(ip), JSON.stringify(state), "EX", ttlSeconds);
   }
 
+  private async rememberReferences(
+    ip: string,
+    references: string[],
+  ): Promise<void> {
+    if (references.length === 0) return;
+
+    const key = KEYS.refs(ip);
+    await redis.sadd(key, ...references);
+    await this.ensureBoundedReferenceTtl(key);
+  }
+
+  private async ensureBoundedReferenceTtl(key: string): Promise<void> {
+    const ttl = await redis.ttl(key);
+    if (ttl === -1 || ttl > REFERENCE_SET_TTL_SECONDS) {
+      await redis.expire(key, REFERENCE_SET_TTL_SECONDS);
+    }
+  }
+
   private async syncReferences(
     ip: string,
     result: IpLocationResult,
@@ -758,43 +743,52 @@ class IpLocationService {
     const refs = await redis.smembers(KEYS.refs(ip));
     if (refs.length === 0) return;
 
-    await Promise.all(
+    await this.syncTrackedReferences(ip, result, refs);
+  }
+
+  private async syncTrackedReferences(
+    ip: string,
+    result: IpLocationResult,
+    refs: string[],
+  ): Promise<void> {
+    if (refs.length === 0) return;
+
+    const keepResults = await Promise.all(
       refs.map((reference) => this.syncReference(reference, result)),
     );
+    const staleRefs = refs.filter((_, index) => !keepResults[index]);
+    if (staleRefs.length > 0) {
+      await redis.srem(KEYS.refs(ip), ...staleRefs);
+    }
   }
 
   private async syncReference(
     reference: string,
     result: IpLocationResult,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const [type, id] = reference.split("|", 2);
-    if (!type || !id) return;
+    if (!type || !id) return false;
 
     switch (type) {
       case "session":
-        await this.syncRedisJsonKey(`fn_knock:session:${id}`, result);
-        return;
+        return this.syncRedisJsonKey(`fn_knock:session:${id}`, result);
       case "whitelist":
-        await this.syncRedisHashRecord(
+        return this.syncRedisHashRecord(
           "fn_knock:whitelist:records",
           id,
           result,
         );
-        return;
       case "scanner-blacklist":
-        await this.syncRedisJsonKey(
+        return this.syncRedisJsonKey(
           `fn_knock:scanner:blacklist:data:${id}`,
           result,
         );
-        return;
       case "session-timeline":
-        await this.syncSessionTimeline(id, result);
-        return;
+        return this.syncSessionTimeline(id, result);
       case "system-event":
-        await this.syncSystemEventRecord(id, result);
-        return;
+        return this.syncSystemEventRecord(id, result);
       default:
-        return;
+        return false;
     }
   }
 
@@ -802,30 +796,41 @@ class IpLocationService {
     key: string,
     field: string,
     result: IpLocationResult,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const raw = await redis.hget(key, field);
-    if (!raw) return;
+    if (!raw) return false;
 
     try {
       const parsed = JSON.parse(raw) as Record<string, unknown>;
-      if (!this.recordMatchesIp(parsed, result.normalizedIp, "ip")) return;
+      if (!this.recordMatchesIp(parsed, result.normalizedIp, "ip")) {
+        return false;
+      }
+      if (parsed.ipLocation === result.raw) {
+        return true;
+      }
       parsed.ipLocation = result.raw;
       await redis.hset(key, field, JSON.stringify(parsed));
+      return true;
     } catch {
-      // ignore invalid payload
+      return false;
     }
   }
 
   private async syncRedisJsonKey(
     key: string,
     result: IpLocationResult,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const [raw, ttl] = await Promise.all([redis.get(key), redis.ttl(key)]);
-    if (!raw) return;
+    if (!raw) return false;
 
     try {
       const parsed = JSON.parse(raw) as Record<string, unknown>;
-      if (!this.recordMatchesIp(parsed, result.normalizedIp, "ip")) return;
+      if (!this.recordMatchesIp(parsed, result.normalizedIp, "ip")) {
+        return false;
+      }
+      if (parsed.ipLocation === result.raw) {
+        return true;
+      }
       parsed.ipLocation = result.raw;
 
       if (ttl > 0) {
@@ -833,23 +838,25 @@ class IpLocationService {
       } else {
         await redis.set(key, JSON.stringify(parsed));
       }
+      return true;
     } catch {
-      // ignore invalid payload
+      return false;
     }
   }
 
   private async syncSessionTimeline(
     sessionId: string,
     result: IpLocationResult,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const key = `fn_knock:auth_mobility:timeline:${sessionId}`;
     const [raw, ttl] = await Promise.all([redis.get(key), redis.ttl(key)]);
-    if (!raw) return;
+    if (!raw) return false;
 
     try {
       const parsed = JSON.parse(raw) as Array<Record<string, unknown>>;
-      if (!Array.isArray(parsed)) return;
+      if (!Array.isArray(parsed)) return false;
 
+      let matched = false;
       let updated = false;
       const nextEvents = parsed.map((event) => {
         if (!event || typeof event !== "object") return event;
@@ -862,8 +869,11 @@ class IpLocationService {
           toIp === result.normalizedIp &&
           next.toIpLocation !== result.raw
         ) {
+          matched = true;
           next.toIpLocation = result.raw;
           updated = true;
+        } else if (toIp && toIp === result.normalizedIp) {
+          matched = true;
         }
 
         const fromIp =
@@ -873,32 +883,37 @@ class IpLocationService {
           fromIp === result.normalizedIp &&
           next.fromIpLocation !== result.raw
         ) {
+          matched = true;
           next.fromIpLocation = result.raw;
           updated = true;
+        } else if (fromIp && fromIp === result.normalizedIp) {
+          matched = true;
         }
 
         return next;
       });
 
-      if (!updated) return;
+      if (!matched) return false;
+      if (!updated) return true;
 
       if (ttl > 0) {
         await redis.set(key, JSON.stringify(nextEvents), "EX", ttl);
       } else {
         await redis.set(key, JSON.stringify(nextEvents));
       }
+      return true;
     } catch {
-      // ignore invalid payload
+      return false;
     }
   }
 
   private async syncSystemEventRecord(
     eventId: string,
     result: IpLocationResult,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const key = `fn_knock:events:data:${eventId}`;
     const [raw, ttl] = await Promise.all([redis.get(key), redis.ttl(key)]);
-    if (!raw) return;
+    if (!raw) return false;
 
     try {
       const parsed = JSON.parse(raw) as SystemEventEnvelope;
@@ -908,32 +923,40 @@ class IpLocationService {
         !parsed.payload ||
         typeof parsed.payload !== "object"
       ) {
-        return;
+        return false;
       }
 
       const nextPayload = {
         ...(parsed.payload as Record<string, unknown>),
       };
+      const hasMatchingIp = resolveSystemEventIpFields(
+        parsed.type,
+        nextPayload,
+      ).some((field) => field.normalizedIp === result.normalizedIp);
+      if (!hasMatchingIp) {
+        return false;
+      }
       const updated = applySystemEventIpLocations(
         parsed.type,
         nextPayload,
         (normalizedIp) =>
           normalizedIp === result.normalizedIp ? result.raw : undefined,
       );
-      if (!updated) return;
+      if (!updated) return true;
 
-      const nextEvent = {
+      const nextEvent: SystemEventEnvelope = {
         ...parsed,
-        payload: nextPayload,
-      } satisfies SystemEventEnvelope;
+        payload: nextPayload as typeof parsed.payload,
+      };
 
       if (ttl > 0) {
         await redis.set(key, JSON.stringify(nextEvent), "EX", ttl);
       } else {
         await redis.set(key, JSON.stringify(nextEvent));
       }
+      return true;
     } catch {
-      // ignore invalid payload
+      return false;
     }
   }
 
