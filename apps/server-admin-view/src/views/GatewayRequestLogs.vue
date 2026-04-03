@@ -987,7 +987,7 @@ onBeforeUnmount(() => {
       max-width-class="sm:max-w-[640px]"
       close-variant="default"
     >
-      <div v-if="activeEntry" class="max-h-[65vh] overflow-y-auto py-4">
+      <div v-if="activeEntry">
         <DetailFieldsGrid :items="detailItems" />
       </div>
     </DetailDialog>

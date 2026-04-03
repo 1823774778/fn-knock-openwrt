@@ -20,6 +20,10 @@ import type {
   TrafficStats,
   DashboardStats,
   ThreatOverview,
+  SystemEventLevel,
+  SystemEventListPayload,
+  SystemEventSource,
+  SystemEventType,
   FnosShareBypassConfig,
   GatewayProxyHeadersDetails,
   GatewaySettings,
@@ -453,15 +457,35 @@ export const WhitelistAPI = {
   },
 };
 
-export const AuthLogsAPI = {
-  async getLogs(page: number, limit: string, search: string) {
-    const res = await apiClient.get("/logs", {
-      params: { page, limit, search },
+export const EventCenterAPI = {
+  async getEvents(params: {
+    page: number;
+    limit: string;
+    search: string;
+    type?: SystemEventType | "all";
+    level?: SystemEventLevel | "all";
+    source?: SystemEventSource | "all";
+  }): Promise<{
+    success: boolean;
+    data: SystemEventListPayload;
+    message?: string;
+  }> {
+    const res = await apiClient.get("/events", {
+      params: {
+        page: params.page,
+        limit: params.limit,
+        search: params.search,
+        type: params.type && params.type !== "all" ? params.type : undefined,
+        level:
+          params.level && params.level !== "all" ? params.level : undefined,
+        source:
+          params.source && params.source !== "all" ? params.source : undefined,
+      },
     });
     return res.data;
   },
-  async deleteLogs(ids: string[]) {
-    const res = await apiClient.delete("/logs", { data: { ids } });
+  async deleteEvents(ids: string[]) {
+    const res = await apiClient.delete("/events", { data: { ids } });
     return res.data;
   },
 };
@@ -522,7 +546,8 @@ export const IpLocationAPI = {
           .post("/ip-location/batch", { ips: batch })
           .then(
             (res) =>
-              ((res.data.data as IpLocationBatchPayload).items || []) as IpLocationSnapshot[],
+              ((res.data.data as IpLocationBatchPayload).items ||
+                []) as IpLocationSnapshot[],
           ),
       );
     }

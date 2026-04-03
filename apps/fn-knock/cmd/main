@@ -513,8 +513,8 @@ start_gateway() {
         log_msg "Gateway binary is missing or not executable: ${GATEWAY_BIN}"
         return 1
     fi
-
     log_msg "Starting Go Reauth Proxy (admin-port=${GO_BACKEND_PORT}, proxy-port=${GO_REPROXY_PORT})..."
+    BACKEND_PORT="${BACKEND_PORT}" \
     "${GATEWAY_BIN}" \
         -c "${GATEWAY_CONFIG_DIR}" \
         -admin-port "${GO_BACKEND_PORT}" \

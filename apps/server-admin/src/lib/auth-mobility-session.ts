@@ -3,9 +3,14 @@ import type Redis from "ioredis";
 import { ipLocationRefs, ipLocationService } from "./ip-location";
 import { scheduleSyncReverseProxyTrustedIPs } from "./reverse-proxy-trusted-ips";
 import { configManager, redis, type LoginSession } from "./redis";
+import { emitSessionIpDriftEvent } from "./system-events/helpers";
 import { whitelistManager } from "./whitelist-manager";
 
 type MobilitySubjectType = "proxy-session" | "fnos-token";
+type MobilityDriftSource =
+  | MobilitySubjectType
+  | "session-refresh"
+  | "browser-session";
 
 type MobilityBinding = {
   version: 1;
@@ -32,7 +37,7 @@ type MobilityTimelineEvent =
       version: 1;
       kind: "drift";
       happenedAt: string;
-      source: MobilitySubjectType;
+      source: MobilityDriftSource;
       fromIp: string;
       fromIpLocation?: string;
       toIp: string;
@@ -43,7 +48,7 @@ export type SessionMobilitySummary = {
   hasHistory: boolean;
   driftCount: number;
   lastDriftAt: string | null;
-  lastDriftSource: MobilitySubjectType | null;
+  lastDriftSource: MobilityDriftSource | null;
 };
 
 export type SessionMobilityDetails = {
@@ -351,6 +356,79 @@ export class AuthMobilitySessionManager {
     return binding?.whitelistRecordId ?? null;
   }
 
+  async syncSessionIp(args: {
+    sessionId: string;
+    clientIp: string;
+    source: MobilityDriftSource;
+    ipLocation?: string;
+    sessionPatch?: Partial<LoginSession>;
+    syncReason: string;
+  }): Promise<LoginSession | null> {
+    const session = await configManager.getSession(args.sessionId);
+    if (!session) return null;
+
+    const previousIp = session.ip;
+    const previousIpLocation = session.ipLocation;
+    const nextSessionPatch: Partial<LoginSession> = {
+      ...args.sessionPatch,
+      ip: args.clientIp,
+    };
+
+    if (previousIp !== args.clientIp) {
+      nextSessionPatch.ipLocation =
+        args.ipLocation && args.ipLocation.trim().length > 0
+          ? args.ipLocation
+          : undefined;
+    } else if (typeof args.ipLocation === "string") {
+      nextSessionPatch.ipLocation =
+        args.ipLocation.trim().length > 0 ? args.ipLocation : undefined;
+    }
+
+    const nextSession = await configManager.updateSession(
+      args.sessionId,
+      nextSessionPatch,
+    );
+    if (!nextSession) return null;
+
+    if (previousIp !== args.clientIp) {
+      await this.appendTimelineEvent(
+        args.sessionId,
+        this.buildTimelineDriftEvent({
+          source: args.source,
+          fromIp: previousIp,
+          fromIpLocation: previousIpLocation,
+          toIp: args.clientIp,
+          toIpLocation: args.ipLocation,
+        }),
+        this.resolveProxySessionTTL(toUnixSeconds(nextSession.expiresAt)),
+        this.buildTimelineLoginEvent({
+          ip: previousIp,
+          ipLocation: previousIpLocation,
+          happenedAt: session.loginTime,
+        }),
+      );
+      await emitSessionIpDriftEvent({
+        sessionId: args.sessionId,
+        driftSource: args.source,
+        fromIp: previousIp,
+        ...(previousIpLocation ? { fromIpLocation: previousIpLocation } : {}),
+        toIp: args.clientIp,
+        ...(args.ipLocation ? { toIpLocation: args.ipLocation } : {}),
+        loginTime: session.loginTime,
+      });
+      scheduleSyncReverseProxyTrustedIPs({
+        reason: args.syncReason,
+      });
+    }
+
+    await ipLocationService.registerUsage(args.clientIp, [
+      ipLocationRefs.session(args.sessionId),
+      ipLocationRefs.sessionTimeline(args.sessionId),
+    ]);
+
+    return nextSession;
+  }
+
   private async refreshProxySessionBinding(
     sessionId: string,
     clientIp: string,
@@ -372,14 +450,16 @@ export class AuthMobilitySessionManager {
       "KEEPTTL",
     );
     if (session.ip !== clientIp) {
-      await configManager.updateSession(sessionId, { ip: clientIp });
-      scheduleSyncReverseProxyTrustedIPs({
-        reason: "mobility-session-refresh",
+      const nextIpLocation = clientIp
+        ? await ipLocationService.getCachedLocation(clientIp)
+        : "";
+      await this.syncSessionIp({
+        sessionId,
+        clientIp,
+        source: "session-refresh",
+        ...(nextIpLocation ? { ipLocation: nextIpLocation } : {}),
+        syncReason: "mobility-session-refresh",
       });
-      await ipLocationService.registerUsage(clientIp, [
-        ipLocationRefs.session(sessionId),
-        ipLocationRefs.sessionTimeline(sessionId),
-      ]);
     }
   }
 
@@ -714,8 +794,6 @@ export class AuthMobilitySessionManager {
     const ttlSeconds = this.resolveFnosSessionTTL(ownerSession.expiresAt);
     if (!ttlSeconds) return false;
 
-    const previousIp = ownerSession.ip;
-    const previousIpLocation = ownerSession.ipLocation;
     const nextIpLocation = clientIp
       ? await ipLocationService.getCachedLocation(clientIp)
       : "";
@@ -729,9 +807,12 @@ export class AuthMobilitySessionManager {
       ttlSeconds,
     );
 
-    const updatedSession = await configManager.updateSession(ownerSessionId, {
-      ip: clientIp,
+    const updatedSession = await this.syncSessionIp({
+      sessionId: ownerSessionId,
+      clientIp,
+      source: "fnos-token",
       ...(nextIpLocation ? { ipLocation: nextIpLocation } : {}),
+      syncReason: "fnos-token-restore",
     });
     const sessionTtl = this.resolveProxySessionTTL(
       toUnixSeconds(updatedSession?.expiresAt),
@@ -743,32 +824,6 @@ export class AuthMobilitySessionManager {
         this.bindingKey("fnos-token", fnosToken),
       );
     }
-
-    if (previousIp !== clientIp) {
-      await this.appendTimelineEvent(
-        ownerSessionId,
-        this.buildTimelineDriftEvent({
-          source: "fnos-token",
-          fromIp: previousIp,
-          fromIpLocation: previousIpLocation,
-          toIp: clientIp,
-          toIpLocation: nextIpLocation,
-        }),
-        sessionTtl ?? ttlSeconds,
-        this.buildTimelineLoginEvent({
-          ip: previousIp,
-          ipLocation: previousIpLocation,
-          happenedAt: ownerSession.loginTime,
-        }),
-      );
-      scheduleSyncReverseProxyTrustedIPs({
-        reason: "fnos-token-restore",
-      });
-    }
-    await ipLocationService.registerUsage(clientIp, [
-      ipLocationRefs.session(ownerSessionId),
-      ipLocationRefs.sessionTimeline(ownerSessionId),
-    ]);
 
     return true;
   }
@@ -807,8 +862,6 @@ export class AuthMobilitySessionManager {
     );
     if (!movedRecord) return false;
 
-    const previousIp = session.ip;
-    const previousIpLocation = session.ipLocation;
     binding.currentIp = clientIp;
     binding.expireAt = movedRecord.expireAt ?? toUnixSeconds(session.expiresAt);
     binding.lastSeenAt = new Date().toISOString();
@@ -818,36 +871,13 @@ export class AuthMobilitySessionManager {
       "KEEPTTL",
     );
 
-    await configManager.updateSession(sessionId, {
-      ip: clientIp,
+    await this.syncSessionIp({
+      sessionId,
+      clientIp,
+      source: "proxy-session",
       ...(movedRecord.ipLocation ? { ipLocation: movedRecord.ipLocation } : {}),
+      syncReason: "proxy-session-restore",
     });
-
-    if (previousIp !== clientIp) {
-      await this.appendTimelineEvent(
-        sessionId,
-        this.buildTimelineDriftEvent({
-          source: "proxy-session",
-          fromIp: previousIp,
-          fromIpLocation: previousIpLocation,
-          toIp: clientIp,
-          toIpLocation: movedRecord.ipLocation,
-        }),
-        this.resolveProxySessionTTL(toUnixSeconds(session.expiresAt)),
-        this.buildTimelineLoginEvent({
-          ip: previousIp,
-          ipLocation: previousIpLocation,
-          happenedAt: session.loginTime,
-        }),
-      );
-      scheduleSyncReverseProxyTrustedIPs({
-        reason: "proxy-session-restore",
-      });
-    }
-    await ipLocationService.registerUsage(clientIp, [
-      ipLocationRefs.session(sessionId),
-      ipLocationRefs.sessionTimeline(sessionId),
-    ]);
 
     return true;
   }
@@ -890,7 +920,7 @@ export class AuthMobilitySessionManager {
   }
 
   private buildTimelineDriftEvent(args: {
-    source: MobilitySubjectType;
+    source: MobilityDriftSource;
     fromIp: string;
     fromIpLocation?: string;
     toIp: string;

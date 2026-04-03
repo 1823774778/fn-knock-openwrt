@@ -333,7 +333,7 @@ const navItems = computed(() => {
     });
   }
   items.push({ name: "认证配置", path: "/auth", icon: Key });
-  items.push({ name: "登录日志", path: "/logs", icon: FileText });
+  items.push({ name: "事件中心", path: "/events", icon: FileText });
   if (configStore.config?.gateway_logging?.enabled) {
     items.push({ name: "请求日志", path: "/request-logs", icon: ScrollText });
   }

@@ -1,9 +1,8 @@
 import { authMobilitySessionManager } from "./auth-mobility-session";
 import { fnosShareBypassService } from "./fnos-share-bypass";
-import { ipLocationRefs, ipLocationService } from "./ip-location";
+import { ipLocationService } from "./ip-location";
 import { recentAuthIPsManager } from "./recent-auth-ips";
 import { configManager } from "./redis";
-import { scheduleSyncReverseProxyTrustedIPs } from "./reverse-proxy-trusted-ips";
 import { whitelistManager } from "./whitelist-manager";
 import { getClientIp } from "./auth-request";
 import { isWhitelistExemptIp } from "./ip-normalize";
@@ -244,22 +243,17 @@ const authorizeBrowserSession = async (
     ? await ipLocationService.getCachedLocation(clientIp)
     : "";
   const customGrantRecordId = await resolveCustomGrantRecordId(session);
-  await configManager.updateSession(identity.sessionId, {
-    ip: clientIp,
+  await authMobilitySessionManager.syncSessionIp({
+    sessionId: identity.sessionId,
+    clientIp,
+    source: "browser-session",
     ...(ipLocation ? { ipLocation } : {}),
-    ...(customGrantRecordId && !session.postLoginIpGrantRecordId
-      ? { postLoginIpGrantRecordId: customGrantRecordId }
-      : {}),
+    sessionPatch:
+      customGrantRecordId && !session.postLoginIpGrantRecordId
+        ? { postLoginIpGrantRecordId: customGrantRecordId }
+        : undefined,
+    syncReason: "browser-session-ip-update",
   });
-  scheduleSyncReverseProxyTrustedIPs({
-    reason: "browser-session-ip-update",
-  });
-  if (clientIp) {
-    await ipLocationService.registerUsage(clientIp, [
-      ipLocationRefs.session(identity.sessionId),
-      ipLocationRefs.sessionTimeline(identity.sessionId),
-    ]);
-  }
   return {
     authorized: true,
     message: "Authorized by browser session",

@@ -18,11 +18,15 @@ import { generateSecret, generateURI, verifySync } from "otplib";
 import { goBackend, type GoResponse } from "../lib/go-backend";
 import { firewallService } from "../lib/firewall-service";
 import { randomBytes } from "node:crypto";
-import { authLogManager } from "../lib/auth-log";
 import { authMobilitySessionManager } from "../lib/auth-mobility-session";
 import { ipLocationRefs, ipLocationService } from "../lib/ip-location";
 import { revokeCustomPostLoginIpGrant } from "../lib/post-login-ip-grant";
-import { scanDetector } from "../lib/scan-detector";
+import { systemEventManager } from "../lib/system-events/manager";
+import {
+  FN_EVENT_AUTH_LOGIN_FAILURE,
+  FN_EVENT_SECURITY_SCANNER_BLOCKED,
+} from "../lib/system-events/constants";
+import { emitLogoutEvent } from "../lib/system-events/helpers";
 import {
   scheduleSyncReverseProxyTrustedIPs,
   syncReverseProxyTrustedIPsNow,
@@ -1847,35 +1851,6 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
     },
   )
   .get(
-    "/logs",
-    async ({ query }) => {
-      const page = parseInt(query.page || "1", 10);
-      const limit = parseInt(query.limit || "50", 10);
-      const search = query.search || "";
-      const result = await authLogManager.getLogs(page, limit, search);
-      return { success: true, data: result };
-    },
-    {
-      query: t.Object({
-        page: t.Optional(t.String()),
-        limit: t.Optional(t.String()),
-        search: t.Optional(t.String()),
-      }),
-    },
-  )
-  .delete(
-    "/logs",
-    async ({ body }) => {
-      await authLogManager.deleteLogs(body.ids);
-      return { success: true };
-    },
-    {
-      body: t.Object({
-        ids: t.Array(t.String()),
-      }),
-    },
-  )
-  .get(
     "/security/overview",
     async ({ query }) => {
       const rangeSec = clamp(
@@ -1889,15 +1864,22 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
         48,
         Math.max(12, Math.round(rangeSec / 900)),
       );
-      const logs = await authLogManager.listLogsByRange(fromMs, nowMs);
-      const failedTimestamps = logs
-        .filter((item) => item.log.type === "login" && !item.log.success)
-        .map((item) => item.timestamp);
-      const blockedRecords = await scanDetector.listBlacklistByRange(
+      const events = await systemEventManager.listByRange({
         fromMs,
-        nowMs,
-      );
-      const blockedTimestamps = blockedRecords.map((item) => item.blockedAt);
+        toMs: nowMs,
+        types: [
+          FN_EVENT_AUTH_LOGIN_FAILURE,
+          FN_EVENT_SECURITY_SCANNER_BLOCKED,
+        ],
+      });
+      const failedTimestamps = events
+        .filter(
+          (item) => item.event.type === FN_EVENT_AUTH_LOGIN_FAILURE,
+        )
+        .map((item) => item.timestamp);
+      const blockedTimestamps = events
+        .filter((item) => item.event.type === FN_EVENT_SECURITY_SCANNER_BLOCKED)
+        .map((item) => item.timestamp);
 
       return {
         success: true,
@@ -2053,14 +2035,19 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
         await authMobilitySessionManager.destroySession(params.id);
         await configManager.deleteSession(params.id);
         await revokeCustomPostLoginIpGrant(sess, config, sess.ip);
-        await authLogManager.recordLog({
-          type: "logout",
-          ip: sess.ip,
-          userAgent: sess.userAgent,
-          success: true,
-        });
         scheduleSyncReverseProxyTrustedIPs({
           reason: "admin-session-delete",
+        });
+        await emitLogoutEvent({
+          sessionId: params.id,
+          authMethod: sess.method,
+          credentialId: sess.credentialId,
+          credentialName: sess.credentialName,
+          ip: sess.ip,
+          ...(sess.ipLocation ? { ipLocation: sess.ipLocation } : {}),
+          userAgent: sess.userAgent,
+          ...(sess.loginTime ? { loginTime: sess.loginTime } : {}),
+          logoutSource: "admin_session_delete",
         });
       } else {
         await configManager.deleteSession(params.id);

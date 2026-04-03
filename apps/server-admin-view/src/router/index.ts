@@ -76,9 +76,13 @@ const router = createRouter({
           component: () => import("../views/PasskeySettings.vue"),
         },
         {
+          path: "events",
+          name: "EventCenter",
+          component: () => import("../views/EventCenter.vue"),
+        },
+        {
           path: "logs",
-          name: "AuthLogs",
-          component: () => import("../views/AuthLogs.vue"),
+          redirect: "/events",
         },
         {
           path: "request-logs",

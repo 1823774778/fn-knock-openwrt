@@ -21,7 +21,7 @@ class LoginBackoffService {
   private maxDelay = 3600000;
   private maxAttempts = 8;
   private jitterFactor = 0.4;
-  private ttlSeconds = 86400;
+  private ttlSeconds = 3600;
   private registerFailureScript = `
 local key = KEYS[1]
 local ip = ARGV[1]
@@ -92,20 +92,37 @@ return {attempts, math.ceil(backoffMs / 1000), blockedUntil}
     const s = await this.get(ip);
     if (!s) return { ip, attempts: 0, blocked: false };
     const now = Date.now();
-    const blocked = s.blockedUntil ? now < s.blockedUntil : false;
-    const retryAfter = blocked && s.blockedUntil ? Math.ceil((s.blockedUntil - now) / 1000) : undefined;
-    return { ip, attempts: s.attempts, blocked, retryAfter, blockedUntil: s.blockedUntil };
+    const blocked = s.blockedUntil ? now <= s.blockedUntil : false;
+    const retryAfter =
+      blocked && s.blockedUntil
+        ? Math.max(1, Math.ceil((s.blockedUntil - now) / 1000))
+        : undefined;
+    return {
+      ip,
+      attempts: s.attempts,
+      blocked,
+      retryAfter,
+      blockedUntil: s.blockedUntil,
+    };
   }
 
-  async ensureNotBlocked(ip: string): Promise<{ allowed: boolean; retryAfter?: number }> {
+  async ensureNotBlocked(
+    ip: string,
+  ): Promise<{ allowed: boolean; retryAfter?: number; blockedUntil?: number }> {
     const st = await this.getStatus(ip);
-    if (st.blocked && st.retryAfter && st.retryAfter > 0) {
-      return { allowed: false, retryAfter: st.retryAfter };
+    if (st.blocked) {
+      return {
+        allowed: false,
+        retryAfter: Math.max(1, st.retryAfter ?? 1),
+        blockedUntil: st.blockedUntil,
+      };
     }
     return { allowed: true };
   }
 
-  async registerFailure(ip: string): Promise<{ retryAfter: number }> {
+  async registerFailure(
+    ip: string,
+  ): Promise<{ attempts: number; retryAfter: number; blockedUntil?: number }> {
     const now = Date.now();
     const result = await redis.eval(
       this.registerFailureScript,
@@ -118,9 +135,17 @@ return {attempts, math.ceil(backoffMs / 1000), blockedUntil}
       String(this.maxDelay),
       String(this.jitterFactor),
     );
-    const [, retryAfterRaw] = Array.isArray(result) ? result : [0, 0];
+    const [attemptsRaw, retryAfterRaw, blockedUntilRaw] = Array.isArray(result)
+      ? result
+      : [0, 0, undefined];
+    const attempts = Number(attemptsRaw);
     const retryAfter = Number(retryAfterRaw);
-    return { retryAfter: Number.isFinite(retryAfter) ? retryAfter : 0 };
+    const blockedUntil = Number(blockedUntilRaw);
+    return {
+      attempts: Number.isFinite(attempts) ? attempts : 0,
+      retryAfter: Number.isFinite(retryAfter) ? retryAfter : 0,
+      ...(Number.isFinite(blockedUntil) ? { blockedUntil } : {}),
+    };
   }
 
   async reset(ip: string): Promise<void> {
@@ -146,12 +171,21 @@ return {attempts, math.ceil(backoffMs / 1000), blockedUntil}
       if (!raw) continue;
       try {
         const s = JSON.parse(raw) as AttemptState;
-        const blocked = s.blockedUntil ? now < s.blockedUntil : false;
-        const retryAfter = blocked && s.blockedUntil ? Math.ceil((s.blockedUntil - now) / 1000) : undefined;
+        const blocked = s.blockedUntil ? now <= s.blockedUntil : false;
+        const retryAfter =
+          blocked && s.blockedUntil
+            ? Math.max(1, Math.ceil((s.blockedUntil - now) / 1000))
+            : undefined;
         if (blocked) {
           const keyStr = keys[i] ?? "";
           const ip = keyStr.slice(this.keyPrefix.length);
-          items.push({ ip, attempts: s.attempts, blocked, retryAfter, blockedUntil: s.blockedUntil });
+          items.push({
+            ip,
+            attempts: s.attempts,
+            blocked,
+            retryAfter,
+            blockedUntil: s.blockedUntil,
+          });
         }
       } catch {
         continue;

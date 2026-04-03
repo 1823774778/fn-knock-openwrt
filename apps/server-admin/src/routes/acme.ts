@@ -1389,7 +1389,7 @@ export const acmeRoutes = new Elysia({ prefix: "/api/admin/acme" })
         } catch (error: any) {
           if (reservation && !reservationHandedOff) {
             await failReservedAcmeApplicationJob({
-              applicationId: targetApplication.id,
+              applicationId: targetApplication?.id ?? "",
               job: reservation.job,
               lock: reservation.lock,
               message: error?.message || String(error),

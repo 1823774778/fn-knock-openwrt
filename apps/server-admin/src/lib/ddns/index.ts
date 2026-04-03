@@ -115,7 +115,7 @@ export class DDNSManager {
   ): Promise<void> {
     const key = KEYS.configPrefix + providerName;
     const ipSource = normalizeIpSource(config[DDNS_IP_SOURCE_FIELD]);
-    const normalizedConfig = {
+    const normalizedConfig: Partial<Record<string, string>> = {
       ...config,
       [DDNS_UPDATE_SCOPE_FIELD]: normalizeUpdateScope(
         config[DDNS_UPDATE_SCOPE_FIELD],
@@ -147,7 +147,7 @@ export class DDNSManager {
     }
     await redis.del(key);
     if (Object.keys(normalizedConfig).length > 0) {
-      await redis.hmset(key, normalizedConfig);
+      await redis.hmset(key, normalizedConfig as Record<string, string>);
     }
   }
 

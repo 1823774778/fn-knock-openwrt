@@ -50,7 +50,9 @@ onMounted(load);
 <template>
   <div class="space-y-3">
     <div class="flex items-center justify-between">
-      <div class="text-sm text-muted-foreground">当前受限 IP {{ items.length }} 个</div>
+      <div class="text-sm text-muted-foreground">
+        当前受限 IP {{ items.length }} 个，失败次数按最近 1 小时滚动累计
+      </div>
       <RefreshButton :loading="isLoading" :disabled="isLoading" @click="load" />
     </div>
 
@@ -59,7 +61,7 @@ onMounted(load);
         <TableHeader>
           <TableRow>
             <TableHead class="w-[220px]">IP</TableHead>
-            <TableHead class="w-[140px]">失败次数</TableHead>
+            <TableHead class="w-[140px]">1 小时内失败次数</TableHead>
             <TableHead>状态</TableHead>
             <TableHead>剩余时间</TableHead>
             <TableHead class="text-right w-[160px]">操作</TableHead>
@@ -82,7 +84,7 @@ onMounted(load);
               <div class="flex justify-end">
                 <ConfirmDangerPopover
                   title="确认解除限制？"
-                  :description="`解除后 IP ${item.ip} 将恢复访问。`"
+                  :description="`解除后 IP ${item.ip} 将恢复访问，并清空最近 1 小时失败计数。`"
                   confirm-text="确认解除"
                   :loading="isResetting"
                   :disabled="isResetting"

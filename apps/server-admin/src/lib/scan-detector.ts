@@ -7,6 +7,7 @@ import {
   type ProxyMapping,
 } from "./redis";
 import { ipLocationRefs, ipLocationService } from "./ip-location";
+import { emitScannerBlockedEvent } from "./system-events/helpers";
 
 type ScanHit = {
   path: string;
@@ -473,6 +474,15 @@ class ScanDetector {
         await ipLocationService.registerUsage(cleanIp, [
           ipLocationRefs.scannerBlacklist(cleanIp),
         ]);
+        await emitScannerBlockedEvent({
+          ip: cleanIp,
+          blockedAt: now,
+          windowMinutes: settings.windowMinutes,
+          threshold: settings.threshold,
+          hitCount,
+          hits,
+          ...(ipLocation ? { ipLocation } : {}),
+        });
         return { hitCount, blocked: true };
       }
     }

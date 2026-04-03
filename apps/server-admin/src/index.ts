@@ -37,6 +37,7 @@ import {
   registerTrafficCollectCron,
 } from "./cron/traffic";
 import { registerDDNSCron } from "./cron/ddns";
+import { registerSystemMonitorCron } from "./cron/system-monitor";
 import { registerUpdateCron } from "./cron/update";
 import { dashboardRoutes } from "./routes/dashboard";
 import { dataPath } from "./lib/AppDirManager";
@@ -59,6 +60,9 @@ import { terminalRoutes } from "./routes/terminal";
 import { terminalManager } from "./lib/terminal-manager";
 import { cidrRoutes } from "./routes/cidr";
 import { ipLocationRoutes } from "./routes/ip-location";
+import { internalSystemEventRoutes } from "./routes/internal-system-events";
+import { cleanupLegacyAuthLogStorage } from "./lib/cleanup-legacy-auth-logs";
+import { eventRoutes } from "./routes/events";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -272,9 +276,11 @@ app.use(updatePlugin);
 app.use(cors());
 app.use(hmacMiddleware);
 
+app.use(internalSystemEventRoutes);
 app.use(portScannerPlugin);
 app.use(assetsRoutes);
 app.use(adminRoutes);
+app.use(eventRoutes);
 app.use(sslRoutes);
 app.use(acmeRoutes);
 app.use(systemRoutes);
@@ -357,6 +363,7 @@ registerAcmeRenewCron(app);
 registerTrafficCollectCron(app);
 registerTrafficCleanupCron(app);
 registerDDNSCron(app);
+registerSystemMonitorCron(app);
 registerUpdateCron(app);
 void updateManager.prepareOnBoot();
 void updateManager.checkNow("startup");
@@ -417,13 +424,27 @@ authApp.get("*", ({ path }) => {
   return serveInjectedIndex(AUTH_STATIC_PATH);
 });
 
-const { applied: reverseProxyThrottlePatchApplied, config } =
+let { applied: reverseProxyThrottlePatchApplied, config } =
   await configManager.applyLegacyReverseProxyThrottlePatchIfNeeded();
 if (reverseProxyThrottlePatchApplied) {
   console.log(
     "[gateway-throttle] applied legacy reverse proxy throttle patch (20/50/30 -> 100/200/30)",
   );
 }
+const { applied: eventSystemResourceAlertsPatchApplied, config: nextConfig } =
+  await configManager.applyLegacyEventSystemResourceAlertsPatchIfNeeded();
+config = nextConfig;
+if (eventSystemResourceAlertsPatchApplied) {
+  console.log(
+    "[system-monitor] enabled legacy default CPU/RAM resource alerts on upgrade",
+  );
+}
+await cleanupLegacyAuthLogStorage().catch((error) => {
+  console.error(
+    "[auth-log] failed to cleanup legacy auth logs on boot:",
+    error,
+  );
+});
 await syncSmartConnectOnBoot().catch((error) => {
   console.error("[smart-connect] failed to sync dnsmasq state on boot:", error);
 });

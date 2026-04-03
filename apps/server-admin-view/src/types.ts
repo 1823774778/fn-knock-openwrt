@@ -498,7 +498,12 @@ export type SessionMobilitySummary = {
   hasHistory: boolean;
   driftCount: number;
   lastDriftAt: string | null;
-  lastDriftSource: "proxy-session" | "fnos-token" | null;
+  lastDriftSource:
+    | "proxy-session"
+    | "fnos-token"
+    | "session-refresh"
+    | "browser-session"
+    | null;
 };
 
 export type SessionMobilityEvent =
@@ -514,7 +519,11 @@ export type SessionMobilityEvent =
       version: 1;
       kind: "drift";
       happenedAt: string;
-      source: "proxy-session" | "fnos-token";
+      source:
+        | "proxy-session"
+        | "fnos-token"
+        | "session-refresh"
+        | "browser-session";
       fromIp: string;
       fromIpLocation?: string;
       toIp: string;
@@ -656,6 +665,50 @@ export type ThreatOverview = {
     blockedScanners: Array<[number, number]>;
   };
 };
+
+export type SystemEventType =
+  | "FN_EVENT_AUTH_LOGIN_SUCCESS"
+  | "FN_EVENT_AUTH_LOGOUT"
+  | "FN_EVENT_AUTH_LOGIN_FAILURE"
+  | "FN_EVENT_AUTH_SESSION_IP_DRIFT"
+  | "FN_EVENT_SECURITY_SCANNER_BLOCKED"
+  | "FN_EVENT_DDNS_UPDATE_COMPLETED"
+  | "FN_EVENT_GATEWAY_THROTTLE_BLOCKED"
+  | "FN_EVENT_SYSTEM_CPU_ALERT"
+  | "FN_EVENT_SYSTEM_CPU_RECOVERED"
+  | "FN_EVENT_SYSTEM_MEMORY_ALERT"
+  | "FN_EVENT_SYSTEM_MEMORY_RECOVERED";
+
+export type SystemEventLevel = "INFO" | "WARN" | "ERROR" | "CRITICAL";
+
+export type SystemEventSource =
+  | "SERVER_ADMIN"
+  | "GO_REAUTH_PROXY"
+  | "SYSTEM_MONITOR";
+
+export type SystemEventSubjectKind = "IP" | "SESSION" | "DDNS" | "RESOURCE";
+
+export interface SystemEventSubject {
+  kind: SystemEventSubjectKind;
+  id: string;
+}
+
+export interface SystemEventRecord {
+  id: string;
+  type: SystemEventType;
+  source: SystemEventSource;
+  level: SystemEventLevel;
+  happened_at: string;
+  dedupe_key?: string;
+  subject?: SystemEventSubject;
+  tags?: string[];
+  payload: Record<string, unknown>;
+}
+
+export interface SystemEventListPayload {
+  events: SystemEventRecord[];
+  total: number;
+}
 
 export const CIDR_PROVINCE_WIDE_VALUE = "__province_all__";
 

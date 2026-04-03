@@ -1,0 +1,73 @@
+import type { EventSystemConfig } from "../redis";
+import {
+  FN_EVENT_AUTH_LOGIN_FAILURE,
+  FN_EVENT_AUTH_LOGIN_SUCCESS,
+  FN_EVENT_AUTH_LOGOUT,
+  FN_EVENT_AUTH_SESSION_IP_DRIFT,
+  FN_EVENT_DDNS_UPDATE_COMPLETED,
+  FN_EVENT_GATEWAY_THROTTLE_BLOCKED,
+  FN_EVENT_LEVEL_ERROR,
+  FN_EVENT_LEVEL_INFO,
+  FN_EVENT_LEVEL_WARN,
+  FN_EVENT_SECURITY_SCANNER_BLOCKED,
+  FN_EVENT_SYSTEM_CPU_ALERT,
+  FN_EVENT_SYSTEM_CPU_RECOVERED,
+  FN_EVENT_SYSTEM_MEMORY_ALERT,
+  FN_EVENT_SYSTEM_MEMORY_RECOVERED,
+  type SystemEventLevel,
+  type SystemEventType,
+} from "./constants";
+
+export const isSystemEventTypeEnabled = (
+  config: EventSystemConfig,
+  type: SystemEventType,
+): boolean => {
+  if (!config.enabled) return false;
+
+  switch (type) {
+    case FN_EVENT_AUTH_LOGIN_SUCCESS:
+    case FN_EVENT_AUTH_LOGOUT:
+      return true;
+    case FN_EVENT_AUTH_LOGIN_FAILURE:
+      return config.rules.login_failure.enabled;
+    case FN_EVENT_AUTH_SESSION_IP_DRIFT:
+      return config.rules.ip_drift.enabled;
+    case FN_EVENT_SECURITY_SCANNER_BLOCKED:
+      return config.rules.scanner_blocked.enabled;
+    case FN_EVENT_DDNS_UPDATE_COMPLETED:
+      return config.rules.ddns_update.enabled;
+    case FN_EVENT_GATEWAY_THROTTLE_BLOCKED:
+      return config.rules.gateway_throttle_block.enabled;
+    case FN_EVENT_SYSTEM_CPU_ALERT:
+    case FN_EVENT_SYSTEM_CPU_RECOVERED:
+      return config.rules.cpu_alert.enabled;
+    case FN_EVENT_SYSTEM_MEMORY_ALERT:
+    case FN_EVENT_SYSTEM_MEMORY_RECOVERED:
+      return config.rules.memory_alert.enabled;
+    default:
+      return false;
+  }
+};
+
+export const getDefaultSystemEventLevel = (
+  type: SystemEventType,
+): SystemEventLevel => {
+  switch (type) {
+    case FN_EVENT_AUTH_LOGIN_SUCCESS:
+    case FN_EVENT_AUTH_LOGOUT:
+    case FN_EVENT_DDNS_UPDATE_COMPLETED:
+    case FN_EVENT_SYSTEM_CPU_RECOVERED:
+    case FN_EVENT_SYSTEM_MEMORY_RECOVERED:
+      return FN_EVENT_LEVEL_INFO;
+    case FN_EVENT_SYSTEM_CPU_ALERT:
+    case FN_EVENT_SYSTEM_MEMORY_ALERT:
+      return FN_EVENT_LEVEL_WARN;
+    case FN_EVENT_AUTH_LOGIN_FAILURE:
+    case FN_EVENT_AUTH_SESSION_IP_DRIFT:
+    case FN_EVENT_SECURITY_SCANNER_BLOCKED:
+    case FN_EVENT_GATEWAY_THROTTLE_BLOCKED:
+      return FN_EVENT_LEVEL_WARN;
+    default:
+      return FN_EVENT_LEVEL_ERROR;
+  }
+};

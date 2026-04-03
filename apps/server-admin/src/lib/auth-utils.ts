@@ -3,10 +3,11 @@ import { authMobilitySessionManager } from "./auth-mobility-session";
 import { ipLocationRefs, ipLocationService } from "./ip-location";
 import { configManager, DEFAULT_AUTH_CREDENTIAL_SETTINGS } from "./redis";
 import { whitelistManager } from "./whitelist-manager";
-import { authLogManager } from "./auth-log";
+import { resetAuthFailureTracking } from "./auth-failure";
 import { scheduleSyncReverseProxyTrustedIPs } from "./reverse-proxy-trusted-ips";
 import { buildSessionCookie } from "./session-cookie";
 import { normalizeIp } from "./ip-normalize";
+import { emitLoginSuccessEvent } from "./system-events/helpers";
 import {
   canBrowserSessionReachRedirectUri,
   resolveCookieDomain,
@@ -304,14 +305,7 @@ export const handleLoginSuccess = async ({
     grantType = "login_ip_grant";
   }
 
-  await authLogManager.recordLog({
-    type: "login",
-    method: authMethod,
-    credentialName,
-    ip: clientIpStr,
-    userAgent,
-    success: true,
-  });
+  await resetAuthFailureTracking(normalizedClientIp);
 
   await configManager.addSession(
     sessionId,
@@ -364,6 +358,22 @@ export const handleLoginSuccess = async ({
       ? undefined
       : redirectTo || undefined;
   scheduleSyncReverseProxyTrustedIPs({ reason: "login-success" });
+  await emitLoginSuccessEvent({
+    sessionId,
+    authMethod,
+    credentialId,
+    credentialName,
+    grantType,
+    postLoginIpGrantMode:
+      grantType === "login_ip_grant" ? postLoginIpGrantMode : null,
+    whitelistRecordId:
+      grantType === "login_ip_grant" ? whitelistRecordId : null,
+    ip: clientIpStr,
+    ...(ipLocationStr ? { ipLocation: ipLocationStr } : {}),
+    userAgent,
+    rememberMe,
+    expiresAt: expiresAtISO,
+  });
   return {
     success: true,
     message: "Login successful",

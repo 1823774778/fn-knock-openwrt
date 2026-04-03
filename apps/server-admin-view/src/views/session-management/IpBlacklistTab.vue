@@ -342,7 +342,7 @@ const goToFirewallSettings = () => {
       :loading="isDetailLoading"
       close-variant="outline"
     >
-      <div v-if="detailRecord" class="space-y-4 max-h-[70vh] overflow-y-auto overflow-x-auto pr-1">
+      <div v-if="detailRecord" class="space-y-4 overflow-x-auto">
         <div class="grid gap-3 md:grid-cols-2">
           <div class="border rounded-lg p-4 space-y-1" :class="detailRecord.ipLocation ? 'md:col-span-2' : ''">
             <div class="text-sm text-muted-foreground">IP</div>

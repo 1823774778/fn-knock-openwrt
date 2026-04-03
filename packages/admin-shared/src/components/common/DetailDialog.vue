@@ -41,18 +41,27 @@ const close = () => {
 
 <template>
   <Dialog v-model:open="modelOpen">
-    <DialogContent :class="props.maxWidthClass">
-      <DialogHeader>
+    <DialogContent
+      :class="[
+        'flex max-h-[85vh] flex-col overflow-hidden',
+        props.maxWidthClass,
+      ]"
+    >
+      <DialogHeader class="shrink-0">
         <DialogTitle>{{ props.title }}</DialogTitle>
-        <DialogDescription v-if="props.description">{{ props.description }}</DialogDescription>
+        <DialogDescription v-if="props.description">{{
+          props.description
+        }}</DialogDescription>
       </DialogHeader>
 
-      <div v-if="props.loading" class="py-10 text-center text-muted-foreground">
-        <Loader2 class="h-6 w-6 animate-spin mx-auto" />
+      <div class="min-h-0 flex-1 overflow-y-auto overflow-x-hidden pr-1">
+        <div v-if="props.loading" class="py-10 text-center text-muted-foreground">
+          <Loader2 class="h-6 w-6 animate-spin mx-auto" />
+        </div>
+        <slot v-else />
       </div>
-      <slot v-else />
 
-      <DialogFooter v-if="props.showFooter">
+      <DialogFooter v-if="props.showFooter" class="shrink-0">
         <Button :variant="props.closeVariant" @click="close">{{ props.closeText }}</Button>
       </DialogFooter>
     </DialogContent>

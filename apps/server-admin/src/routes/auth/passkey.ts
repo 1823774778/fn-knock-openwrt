@@ -8,7 +8,11 @@ import {
   handleLoginSuccess,
 } from "../../lib/auth-utils";
 import { getClientIp } from "../../lib/auth-request";
-import { authLogManager } from "../../lib/auth-log";
+import {
+  normalizeAuthFailureTrackingIp,
+  registerAuthFailure,
+} from "../../lib/auth-failure";
+import { loginBackoffService } from "../../lib/login-backoff";
 import { resolveSafeRedirectUri } from "../../lib/subdomain-mode";
 
 const RP_NAME = "fn-knock";
@@ -84,6 +88,24 @@ export const passkeyRoutes = new Elysia({ prefix: "/passkey" })
       const { origin, rpID } = await getRpInfo(request);
       const clientIp = getClientIp(request);
       const userAgent = request.headers.get("user-agent") || "Unknown";
+      const gate = await loginBackoffService.ensureNotBlocked(
+        normalizeAuthFailureTrackingIp(clientIp),
+      );
+
+      if (!gate.allowed) {
+        set.status = 429;
+        if (gate.retryAfter) {
+          set.headers["Retry-After"] = String(gate.retryAfter);
+        }
+        return {
+          success: false,
+          message: gate.retryAfter
+            ? `尝试过于频繁，请在 ${gate.retryAfter} 秒后重试`
+            : "尝试过于频繁，请稍后重试",
+          retryAfter: gate.retryAfter,
+          blockedUntil: gate.blockedUntil,
+        };
+      }
 
       const credential = body.credential;
       const challenge = extractChallenge(credential?.response?.clientDataJSON);
@@ -103,16 +125,19 @@ export const passkeyRoutes = new Elysia({ prefix: "/passkey" })
       const matched = passkeys.find((passkey) => passkey.id === credential.id);
 
       if (!matched) {
-        await authLogManager.recordLog({
-          type: "login",
-          method: "PASSKEY",
-          ip: clientIp,
+        const failure = await registerAuthFailure({
+          clientIp,
           userAgent,
-          success: false,
+          method: "PASSKEY",
           credentialName: "Unknown Passkey",
         });
-        set.status = 404;
-        return { success: false, message: "Passkey not found" };
+        set.status = 429;
+        set.headers["Retry-After"] = String(failure.retryAfter);
+        return {
+          success: false,
+          message: `Passkey not found，请在 ${failure.retryAfter} 秒后重试`,
+          retryAfter: failure.retryAfter,
+        };
       }
 
       let verification;
@@ -135,17 +160,37 @@ export const passkeyRoutes = new Elysia({ prefix: "/passkey" })
         });
       } catch (error: any) {
         console.error("WebAuthn Verification Error:", error.message);
-        await authLogManager.recordLog({
-          type: "login",
-          method: "PASSKEY",
-          ip: clientIp,
+        const failure = await registerAuthFailure({
+          clientIp,
           userAgent,
-          success: false,
+          method: "PASSKEY",
           credentialName: matched.deviceName,
         });
-        set.status = 400;
-        return { success: false, message: `验证失败: ${error.message}` };
+        set.status = 429;
+        set.headers["Retry-After"] = String(failure.retryAfter);
+        return {
+          success: false,
+          message: `验证失败，请在 ${failure.retryAfter} 秒后重试`,
+          retryAfter: failure.retryAfter,
+        };
       }
+
+      if (!verification?.verified) {
+        const failure = await registerAuthFailure({
+          clientIp,
+          userAgent,
+          method: "PASSKEY",
+          credentialName: matched.deviceName,
+        });
+        set.status = 429;
+        set.headers["Retry-After"] = String(failure.retryAfter);
+        return {
+          success: false,
+          message: `验证失败，请在 ${failure.retryAfter} 秒后重试`,
+          retryAfter: failure.retryAfter,
+        };
+      }
+
       await configManager.updatePasskeyCounter(
         matched.id,
         verification.authenticationInfo.newCounter,

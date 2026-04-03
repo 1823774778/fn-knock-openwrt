@@ -13,6 +13,7 @@ import {
   normalizeUpdateScope,
 } from "./providers/helpers";
 import { DDNS_NETWORK_INTERFACE_FIELD } from "./network";
+import { emitDDNSUpdateCompletedEvent } from "../system-events/helpers";
 
 const DDNS_UPDATE_LOCK_NAME = "ddns-update";
 const DDNS_UPDATE_LOCK_TTL_SECONDS = 120;
@@ -126,6 +127,18 @@ export const runAutomaticDDNSCheck = async (
     );
 
     const result = await ddnsManager.executeUpdate(ips.ipv4, ips.ipv6);
+    await emitDDNSUpdateCompletedEvent({
+      trigger,
+      provider,
+      success: result.success,
+      message: result.message,
+      updateScope,
+      ipSource: ips.source,
+      previousIpv4: lastIP.ipv4,
+      previousIpv6: lastIP.ipv6,
+      nextIpv4: scopedIPs.ipv4,
+      nextIpv6: scopedIPs.ipv6,
+    });
     if (result.success) {
       const message = `${triggerLabel}: DNS 更新成功 [${provider}]: ${result.message}`;
       await ddnsManager.setLastIP(scopedIPs.ipv4, scopedIPs.ipv6, {

@@ -322,7 +322,7 @@ watch(
       max-width-class="sm:max-w-[500px]"
       @update:open="showDetail = $event"
     >
-      <div v-if="detailSession" class="max-h-[60vh] overflow-y-auto py-4">
+      <div v-if="detailSession">
         <DetailFieldsGrid :items="detailItems" layout="compact" />
       </div>
     </DetailDialog>

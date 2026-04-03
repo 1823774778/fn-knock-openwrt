@@ -20,10 +20,12 @@ import {
 import { getConfiguredShareDirectory } from "./fnos-data-share";
 import { goBackend } from "./go-backend";
 import { firewallService } from "./firewall-service";
+import { cleanupLegacyAuthLogStorage } from "./cleanup-legacy-auth-logs";
 import { configManager, redis } from "./redis";
 import { syncGatewayLoggingToGateway } from "./gateway-logging";
 import { collectStreamOutput, waitForProcessExit } from "./runtime";
 import { syncSSLDeploymentToGateway } from "./ssl-gateway";
+import { systemResourceMonitor } from "./system-resource-monitor";
 import { whitelistManager } from "./whitelist-manager";
 import {
   buildKnockBackupFilename,
@@ -1036,6 +1038,14 @@ class MaintenanceBackupService {
 
     await attempt("SSL 证书部署", async () => {
       await syncSSLDeploymentToGateway(config);
+    });
+
+    await attempt("废弃登录日志清理", async () => {
+      await cleanupLegacyAuthLogStorage();
+    });
+
+    await attempt("系统资源监控状态重置", async () => {
+      await systemResourceMonitor.resetStates();
     });
 
     return { warnings, syncedSteps };

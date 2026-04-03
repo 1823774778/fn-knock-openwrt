@@ -313,7 +313,7 @@ const threatOption = computed<EChartsOption>(() => {
     },
     series: [
       {
-        name: "异常登录",
+        name: "登录失败事件",
         type: "line",
         smooth: true,
         symbol: "none",
@@ -533,9 +533,9 @@ const liveMetricCards = computed(() => [
 
 const securityCards = computed(() => [
   {
-    label: "异常登录",
+    label: "登录失败事件",
     value: formatNumber(threatOverview.value?.totals?.failedLogins),
-    hint: "需复核的登录请求",
+    hint: "每次登录失败都会记录",
     icon: ShieldAlert,
   },
   {

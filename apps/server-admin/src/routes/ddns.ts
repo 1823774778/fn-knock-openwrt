@@ -14,6 +14,7 @@ import {
   normalizeUpdateScope,
 } from "../lib/ddns/providers/helpers";
 import { DDNS_NETWORK_INTERFACE_FIELD } from "../lib/ddns/network";
+import { emitDDNSUpdateCompletedEvent } from "../lib/system-events/helpers";
 
 const parseDDNSLogEntries = (raw: string[]) =>
   raw.map((s) => {
@@ -152,7 +153,20 @@ export const ddnsRoutes = new Elysia({ prefix: "/api/admin/ddns" })
         return { success: false, message };
       }
 
+      const previousIp = await ddnsManager.getLastIP();
       const result = await ddnsManager.executeUpdate(ips.ipv4, ips.ipv6);
+      await emitDDNSUpdateCompletedEvent({
+        trigger: "manual_test",
+        provider,
+        success: result.success,
+        message: result.message,
+        updateScope,
+        ipSource: ips.source,
+        previousIpv4: previousIp.ipv4,
+        previousIpv6: previousIp.ipv6,
+        nextIpv4: scopedIPs.ipv4,
+        nextIpv6: scopedIPs.ipv6,
+      });
 
       if (result.success) {
         await ddnsManager.setLastIP(scopedIPs.ipv4, scopedIPs.ipv6, {

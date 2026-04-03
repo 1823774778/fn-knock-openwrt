@@ -183,6 +183,32 @@ export interface ReverseProxyThrottleConfig {
   block_seconds: number;
 }
 
+export interface EventSystemSimpleRuleConfig {
+  enabled: boolean;
+}
+
+export interface EventSystemResourceAlertRuleConfig {
+  enabled: boolean;
+  threshold_percent: number;
+  recover_percent: number;
+  sample_interval_seconds: number;
+  sustain_seconds: number;
+}
+
+export interface EventSystemConfig {
+  enabled: boolean;
+  retention_days: number;
+  rules: {
+    login_failure: EventSystemSimpleRuleConfig;
+    ip_drift: EventSystemSimpleRuleConfig;
+    scanner_blocked: EventSystemSimpleRuleConfig;
+    ddns_update: EventSystemSimpleRuleConfig;
+    gateway_throttle_block: EventSystemSimpleRuleConfig;
+    cpu_alert: EventSystemResourceAlertRuleConfig;
+    memory_alert: EventSystemResourceAlertRuleConfig;
+  };
+}
+
 export interface GatewayVisibilitySelection {
   province: string;
   city: string | null;
@@ -382,6 +408,7 @@ export interface AppConfig {
   gateway_proxy_headers?: GatewayProxyHeadersConfig;
   smart_connect?: SmartConnectConfig;
   auth_credential_settings?: AuthCredentialSettings;
+  event_system?: EventSystemConfig;
   terminal_feature?: TerminalFeatureConfig;
 }
 
@@ -452,8 +479,70 @@ export const DEFAULT_REVERSE_PROXY_THROTTLE_CONFIG: ReverseProxyThrottleConfig =
     block_seconds: 30,
   };
 
+export const DEFAULT_EVENT_SYSTEM_CONFIG: EventSystemConfig = {
+  enabled: true,
+  retention_days: 30,
+  rules: {
+    login_failure: {
+      enabled: true,
+    },
+    ip_drift: {
+      enabled: true,
+    },
+    scanner_blocked: {
+      enabled: true,
+    },
+    ddns_update: {
+      enabled: true,
+    },
+    gateway_throttle_block: {
+      enabled: true,
+    },
+    cpu_alert: {
+      enabled: true,
+      threshold_percent: 80,
+      recover_percent: 60,
+      sample_interval_seconds: 5,
+      sustain_seconds: 30,
+    },
+    memory_alert: {
+      enabled: true,
+      threshold_percent: 80,
+      recover_percent: 60,
+      sample_interval_seconds: 5,
+      sustain_seconds: 30,
+    },
+  },
+};
+
 const LEGACY_REVERSE_PROXY_THROTTLE_PATCH_FLAG_KEY =
   "fn_knock:patch:reverse-proxy-throttle:v1";
+const LEGACY_EVENT_SYSTEM_RESOURCE_ALERTS_PATCH_FLAG_KEY =
+  "fn_knock:patch:event-system-resource-alerts:v1";
+const LEGACY_DISABLED_CPU_ALERT_RULE: EventSystemResourceAlertRuleConfig = {
+  enabled: false,
+  threshold_percent: 85,
+  recover_percent: 70,
+  sample_interval_seconds: 15,
+  sustain_seconds: 120,
+};
+const LEGACY_DISABLED_MEMORY_ALERT_RULE: EventSystemResourceAlertRuleConfig = {
+  enabled: false,
+  threshold_percent: 90,
+  recover_percent: 75,
+  sample_interval_seconds: 15,
+  sustain_seconds: 120,
+};
+
+const isSameResourceAlertRule = (
+  currentRule: EventSystemResourceAlertRuleConfig,
+  targetRule: EventSystemResourceAlertRuleConfig,
+) =>
+  currentRule.enabled === targetRule.enabled &&
+  currentRule.threshold_percent === targetRule.threshold_percent &&
+  currentRule.recover_percent === targetRule.recover_percent &&
+  currentRule.sample_interval_seconds === targetRule.sample_interval_seconds &&
+  currentRule.sustain_seconds === targetRule.sustain_seconds;
 
 const LEGACY_REVERSE_PROXY_THROTTLE_CONFIG: Pick<
   ReverseProxyThrottleConfig,
@@ -561,6 +650,32 @@ const DEFAULT_CONFIG: AppConfig = {
   auth_credential_settings: {
     ...DEFAULT_AUTH_CREDENTIAL_SETTINGS,
   },
+  event_system: {
+    ...DEFAULT_EVENT_SYSTEM_CONFIG,
+    rules: {
+      login_failure: {
+        ...DEFAULT_EVENT_SYSTEM_CONFIG.rules.login_failure,
+      },
+      ip_drift: {
+        ...DEFAULT_EVENT_SYSTEM_CONFIG.rules.ip_drift,
+      },
+      scanner_blocked: {
+        ...DEFAULT_EVENT_SYSTEM_CONFIG.rules.scanner_blocked,
+      },
+      ddns_update: {
+        ...DEFAULT_EVENT_SYSTEM_CONFIG.rules.ddns_update,
+      },
+      gateway_throttle_block: {
+        ...DEFAULT_EVENT_SYSTEM_CONFIG.rules.gateway_throttle_block,
+      },
+      cpu_alert: {
+        ...DEFAULT_EVENT_SYSTEM_CONFIG.rules.cpu_alert,
+      },
+      memory_alert: {
+        ...DEFAULT_EVENT_SYSTEM_CONFIG.rules.memory_alert,
+      },
+    },
+  },
   terminal_feature: {
     ...DEFAULT_TERMINAL_FEATURE_CONFIG,
   },
@@ -617,6 +732,123 @@ const normalizeReverseProxyThrottleConfig = (
       raw.block_seconds,
       DEFAULT_REVERSE_PROXY_THROTTLE_CONFIG.block_seconds,
     ),
+  };
+};
+
+const normalizeEventSystemSimpleRuleConfig = (
+  value?: Partial<EventSystemSimpleRuleConfig> | null,
+  fallback: EventSystemSimpleRuleConfig = { enabled: true },
+): EventSystemSimpleRuleConfig => {
+  const raw = value ?? {};
+
+  return {
+    enabled: typeof raw.enabled === "boolean" ? raw.enabled : fallback.enabled,
+  };
+};
+
+const normalizeEventSystemResourceAlertRuleConfig = (
+  value?: Partial<EventSystemResourceAlertRuleConfig> | null,
+  fallback: EventSystemResourceAlertRuleConfig = DEFAULT_EVENT_SYSTEM_CONFIG
+    .rules.cpu_alert,
+): EventSystemResourceAlertRuleConfig => {
+  const raw = value ?? {};
+  const thresholdPercent = normalizeBoundedInt(
+    raw.threshold_percent,
+    fallback.threshold_percent,
+    {
+      min: 1,
+      max: 100,
+    },
+  );
+  const recoverPercent = normalizeBoundedInt(
+    raw.recover_percent,
+    fallback.recover_percent,
+    {
+      min: 0,
+      max: thresholdPercent,
+    },
+  );
+
+  return {
+    enabled: typeof raw.enabled === "boolean" ? raw.enabled : fallback.enabled,
+    threshold_percent: thresholdPercent,
+    recover_percent: recoverPercent,
+    sample_interval_seconds: normalizePositiveInt(
+      raw.sample_interval_seconds,
+      fallback.sample_interval_seconds,
+      {
+        min: 5,
+        max: 3600,
+      },
+    ),
+    sustain_seconds: normalizePositiveInt(
+      raw.sustain_seconds,
+      fallback.sustain_seconds,
+      {
+        min: 10,
+        max: 24 * 3600,
+      },
+    ),
+  };
+};
+
+const normalizeEventSystemConfig = (
+  value?: Partial<EventSystemConfig> | null,
+): EventSystemConfig => {
+  const raw = value ?? {};
+  const rawRules =
+    (raw.rules as
+      | Partial<EventSystemConfig["rules"]>
+      | {
+          login_failure_threshold?: Partial<EventSystemSimpleRuleConfig> & {
+            count?: unknown;
+          };
+        }
+      | undefined) ?? {};
+
+  return {
+    enabled:
+      typeof raw.enabled === "boolean"
+        ? raw.enabled
+        : DEFAULT_EVENT_SYSTEM_CONFIG.enabled,
+    retention_days: normalizePositiveInt(
+      raw.retention_days,
+      DEFAULT_EVENT_SYSTEM_CONFIG.retention_days,
+      {
+        min: 1,
+        max: 90,
+      },
+    ),
+    rules: {
+      login_failure: normalizeEventSystemSimpleRuleConfig(
+        rawRules.login_failure ?? rawRules.login_failure_threshold,
+        DEFAULT_EVENT_SYSTEM_CONFIG.rules.login_failure,
+      ),
+      ip_drift: normalizeEventSystemSimpleRuleConfig(
+        rawRules.ip_drift,
+        DEFAULT_EVENT_SYSTEM_CONFIG.rules.ip_drift,
+      ),
+      scanner_blocked: normalizeEventSystemSimpleRuleConfig(
+        rawRules.scanner_blocked,
+        DEFAULT_EVENT_SYSTEM_CONFIG.rules.scanner_blocked,
+      ),
+      ddns_update: normalizeEventSystemSimpleRuleConfig(
+        rawRules.ddns_update,
+        DEFAULT_EVENT_SYSTEM_CONFIG.rules.ddns_update,
+      ),
+      gateway_throttle_block: normalizeEventSystemSimpleRuleConfig(
+        rawRules.gateway_throttle_block,
+        DEFAULT_EVENT_SYSTEM_CONFIG.rules.gateway_throttle_block,
+      ),
+      cpu_alert: normalizeEventSystemResourceAlertRuleConfig(
+        rawRules.cpu_alert,
+        DEFAULT_EVENT_SYSTEM_CONFIG.rules.cpu_alert,
+      ),
+      memory_alert: normalizeEventSystemResourceAlertRuleConfig(
+        rawRules.memory_alert,
+        DEFAULT_EVENT_SYSTEM_CONFIG.rules.memory_alert,
+      ),
+    },
   };
 };
 
@@ -801,6 +1033,19 @@ const normalizePositiveInt = (
   fallback: number,
   {
     min = 1,
+    max = Number.MAX_SAFE_INTEGER,
+  }: { min?: number; max?: number } = {},
+): number => {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+};
+
+const normalizeBoundedInt = (
+  value: unknown,
+  fallback: number,
+  {
+    min = 0,
     max = Number.MAX_SAFE_INTEGER,
   }: { min?: number; max?: number } = {},
 ): number => {
@@ -1480,6 +1725,35 @@ export class ConfigManager {
   private runModePromptPreferencesKey = "fn_knock:run-mode:prompt-preferences";
   private reverseProxyThrottlePatchFlagKey =
     LEGACY_REVERSE_PROXY_THROTTLE_PATCH_FLAG_KEY;
+  private eventSystemResourceAlertsPatchFlagKey =
+    LEGACY_EVENT_SYSTEM_RESOURCE_ALERTS_PATCH_FLAG_KEY;
+  private consumeMatchingValueScript = `
+local key = KEYS[1]
+local expected = ARGV[1]
+local actual = redis.call('GET', key)
+
+if not actual then
+  return 0
+end
+
+if actual ~= expected then
+  return -1
+end
+
+redis.call('DEL', key)
+return 1
+`;
+  private consumeStoredValueScript = `
+local key = KEYS[1]
+local actual = redis.call('GET', key)
+
+if not actual then
+  return false
+end
+
+redis.call('DEL', key)
+return actual
+`;
 
   constructor() {
     this.redis = redis;
@@ -1716,6 +1990,64 @@ export class ConfigManager {
     };
   }
 
+  async applyLegacyEventSystemResourceAlertsPatchIfNeeded(): Promise<{
+    applied: boolean;
+    config: AppConfig;
+  }> {
+    const [config, patchFlag] = await Promise.all([
+      this.getConfig(),
+      this.redis.get(this.eventSystemResourceAlertsPatchFlagKey),
+    ]);
+
+    if (patchFlag === "1") {
+      return { applied: false, config };
+    }
+
+    const currentEventSystem = normalizeEventSystemConfig(config.event_system);
+    const currentCpuRule = currentEventSystem.rules.cpu_alert;
+    const currentMemoryRule = currentEventSystem.rules.memory_alert;
+    const shouldPatch =
+      isSameResourceAlertRule(currentCpuRule, LEGACY_DISABLED_CPU_ALERT_RULE) &&
+      isSameResourceAlertRule(
+        currentMemoryRule,
+        LEGACY_DISABLED_MEMORY_ALERT_RULE,
+      );
+
+    if (!shouldPatch) {
+      await this.redis.set(this.eventSystemResourceAlertsPatchFlagKey, "1");
+      return { applied: false, config };
+    }
+
+    const nextConfig: AppConfig = {
+      ...config,
+      event_system: {
+        ...currentEventSystem,
+        rules: {
+          ...currentEventSystem.rules,
+          cpu_alert: {
+            ...currentCpuRule,
+            enabled: true,
+          },
+          memory_alert: {
+            ...currentMemoryRule,
+            enabled: true,
+          },
+        },
+      },
+    };
+
+    await this.redis
+      .multi()
+      .set(this.configKey, JSON.stringify(nextConfig))
+      .set(this.eventSystemResourceAlertsPatchFlagKey, "1")
+      .exec();
+
+    return {
+      applied: true,
+      config: nextConfig,
+    };
+  }
+
   async getConfig(): Promise<AppConfig> {
     try {
       const data = await this.redis.get(this.configKey);
@@ -1764,6 +2096,7 @@ export class ConfigManager {
               parsed.subdomain_mode?.auto_add_whitelist_on_login,
           },
         );
+        parsed.event_system = normalizeEventSystemConfig(parsed.event_system);
         parsed.terminal_feature = normalizeTerminalFeatureConfig(
           parsed.terminal_feature,
         );
@@ -1794,6 +2127,7 @@ export class ConfigManager {
         ...DEFAULT_SMART_CONNECT_CONFIG,
       },
       auth_credential_settings: { ...DEFAULT_AUTH_CREDENTIAL_SETTINGS },
+      event_system: normalizeEventSystemConfig(DEFAULT_CONFIG.event_system),
       terminal_feature: { ...DEFAULT_TERMINAL_FEATURE_CONFIG },
     };
   }
@@ -4089,10 +4423,13 @@ export class ConfigManager {
     type: "register" | "auth",
   ): Promise<boolean> {
     const key = `${this.passkeyChallengeKey}:${challenge}`;
-    const value = await this.redis.get(key);
-    if (value !== type) return false;
-    await this.redis.del(key);
-    return true;
+    const result = await this.redis.eval(
+      this.consumeMatchingValueScript,
+      1,
+      key,
+      type,
+    );
+    return Number(result) === 1;
   }
 
   async createPasskeyBindToken(
@@ -4116,10 +4453,8 @@ export class ConfigManager {
 
   async consumePasskeyBindToken(token: string): Promise<string | null> {
     const key = `${this.passkeyBindKey}:${token}`;
-    const value = await this.redis.get(key);
-    if (!value) return null;
-    await this.redis.del(key);
-    return value;
+    const value = await this.redis.eval(this.consumeStoredValueScript, 1, key);
+    return typeof value === "string" && value ? value : null;
   }
 }
 

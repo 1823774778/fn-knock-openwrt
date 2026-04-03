@@ -119,14 +119,14 @@
                 type="button"
                 :variant="isCaptchaVerified ? 'secondary' : 'default'"
                 class="w-full"
-                :disabled="isPasskeyLoading"
+                :disabled="isPasskeyLoading || isLoginCoolingDown"
                 @click="handlePasskeyLogin"
               >
                 <span
                   v-if="isPasskeyLoading"
                   class="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-background border-t-foreground"
                 ></span>
-                Passkey 一键登录
+                {{ passkeyButtonLabel }}
               </Button>
             </div>
 
@@ -136,7 +136,7 @@
                 :maxlength="6"
                 v-model="token"
                 @complete="handleOtpComplete"
-                :disabled="isLoading"
+                :disabled="isLoading || isLoginCoolingDown"
                 :autofocus="true"
                 autocomplete="off"
                 data-form-type="other"
@@ -234,7 +234,7 @@
             <Button
               type="button"
               class="w-full"
-              :disabled="isLoading"
+              :disabled="isLoading || isLoginCoolingDown"
               v-if="isCaptchaVerified"
               @click="handleLogin"
             >
@@ -242,7 +242,7 @@
                 v-if="isLoading"
                 class="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-background border-t-foreground"
               ></span>
-              立即验证
+              {{ loginButtonLabel }}
             </Button>
           </form>
         </CardContent>
@@ -258,7 +258,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import {
   Card,
@@ -313,6 +313,7 @@ const rememberMe = ref(false);
 const errorMessage = ref("");
 const showErrorDialog = ref(false);
 const isLoading = ref(false);
+const loginCooldownSeconds = ref(0);
 const isPasskeySupported = ref(false);
 const isPasskeyAvailable = ref(false);
 const isPasskeyLoading = ref(false);
@@ -326,6 +327,7 @@ const pendingRedirectTo = ref<string | null>(null);
 const { clientIp, ipLocation, ipLocationStatus, startLocationPolling } =
   useClientIpLocation();
 let lastLoginAttemptAt = 0;
+let loginCooldownTimer: number | null = null;
 const PASSKEY_BIND_PROMPT_STORAGE_KEY =
   "server-auth-view:passkey-bind-prompt-dismissed";
 
@@ -355,6 +357,25 @@ const captchaUnavailableReason = computed(
 const hasTurnstileSiteKey = computed(
   () => !!captchaConfig.value?.turnstile.site_key.trim(),
 );
+const isLoginCoolingDown = computed(() => loginCooldownSeconds.value > 0);
+const loginButtonLabel = computed(() => {
+  if (isLoading.value) {
+    return "正在验证...";
+  }
+  if (isLoginCoolingDown.value) {
+    return `${loginCooldownSeconds.value} 秒后重试`;
+  }
+  return "立即验证";
+});
+const passkeyButtonLabel = computed(() => {
+  if (isPasskeyLoading.value) {
+    return "正在验证...";
+  }
+  if (isLoginCoolingDown.value) {
+    return `${loginCooldownSeconds.value} 秒后重试`;
+  }
+  return "Passkey 一键登录";
+});
 const queryParams =
   typeof window !== "undefined"
     ? new URLSearchParams(window.location.search)
@@ -395,6 +416,10 @@ function onPowStateChange(ev: CustomEvent) {
 onMounted(async () => {
   initBrowserCapabilities();
   await loadBootstrap();
+});
+
+onUnmounted(() => {
+  clearLoginCooldownTimer();
 });
 
 function initBrowserCapabilities() {
@@ -473,6 +498,62 @@ function handleCaptchaReset() {
   captchaSubmission.value = null;
 }
 
+function clearLoginCooldownTimer() {
+  if (typeof window === "undefined" || loginCooldownTimer === null) {
+    return;
+  }
+
+  window.clearInterval(loginCooldownTimer);
+  loginCooldownTimer = null;
+}
+
+function startLoginCooldown(seconds: unknown) {
+  const parsedSeconds = Math.max(0, Math.ceil(Number(seconds) || 0));
+  if (parsedSeconds <= 0) {
+    return 0;
+  }
+
+  clearLoginCooldownTimer();
+  loginCooldownSeconds.value = parsedSeconds;
+
+  if (typeof window === "undefined") {
+    return parsedSeconds;
+  }
+
+  loginCooldownTimer = window.setInterval(() => {
+    if (loginCooldownSeconds.value <= 1) {
+      loginCooldownSeconds.value = 0;
+      clearLoginCooldownTimer();
+      return;
+    }
+    loginCooldownSeconds.value -= 1;
+  }, 1000);
+
+  return parsedSeconds;
+}
+
+function extractRetryAfterSeconds(payload: any): number {
+  const rawRetryAfter =
+    payload?.retryAfter ??
+    payload?.response?.data?.retryAfter ??
+    payload?.response?.headers?.["retry-after"];
+  const retryAfterValue = Array.isArray(rawRetryAfter)
+    ? rawRetryAfter[0]
+    : rawRetryAfter;
+  const parsedSeconds = Number(retryAfterValue);
+
+  return Number.isFinite(parsedSeconds) && parsedSeconds > 0
+    ? Math.ceil(parsedSeconds)
+    : 0;
+}
+
+function resolveRetryAfterMessage(message: string, retryAfter: number) {
+  if (retryAfter <= 0 || message.includes("秒后重试")) {
+    return message;
+  }
+  return `${message}，请在 ${retryAfter} 秒后重试`;
+}
+
 function handleOtpComplete() {
   void handleLogin();
 }
@@ -511,7 +592,7 @@ function handlePasskeyBindDialogOpenChange(open: boolean) {
 }
 
 async function handleLogin() {
-  if (isLoading.value) {
+  if (isLoading.value || isLoginCoolingDown.value) {
     return;
   }
   if (token.value.length !== 6) {
@@ -568,13 +649,21 @@ async function handleLogin() {
       }
       completeLogin(runType, redirectTo);
     } else {
-      errorMessage.value = res.data.message || "验证失败，请重试";
+      const retryAfter = startLoginCooldown(extractRetryAfterSeconds(res.data));
+      errorMessage.value = resolveRetryAfterMessage(
+        res.data.message || "验证失败，请重试",
+        retryAfter,
+      );
       showErrorDialog.value = true;
       resetLoginState();
     }
   } catch (e: any) {
     console.error("Login error:", e);
-    errorMessage.value = e?.response?.data?.message || "验证失败，请重试";
+    const retryAfter = startLoginCooldown(extractRetryAfterSeconds(e));
+    errorMessage.value = resolveRetryAfterMessage(
+      e?.response?.data?.message || "验证失败，请重试",
+      retryAfter,
+    );
     showErrorDialog.value = true;
     resetLoginState();
   } finally {
@@ -598,7 +687,13 @@ function completeLogin(runType: 0 | 1 | 3, redirectTo?: string | null) {
 }
 
 async function handlePasskeyLogin() {
-  if (!isPasskeySupported.value || !isPasskeyAvailable.value) return;
+  if (
+    !isPasskeySupported.value ||
+    !isPasskeyAvailable.value ||
+    isLoginCoolingDown.value
+  ) {
+    return;
+  }
   isPasskeyLoading.value = true;
   errorMessage.value = "";
   try {
@@ -625,10 +720,22 @@ async function handlePasskeyLogin() {
       );
       return;
     }
-    throw new Error(verifyRes.data.message || "Passkey 验证失败");
+    const retryAfter = startLoginCooldown(
+      extractRetryAfterSeconds(verifyRes.data),
+    );
+    throw new Error(
+      resolveRetryAfterMessage(
+        verifyRes.data.message || "Passkey 验证失败",
+        retryAfter,
+      ),
+    );
   } catch (e: any) {
+    const retryAfter = startLoginCooldown(extractRetryAfterSeconds(e));
     errorMessage.value =
-      e?.response?.data?.message || e?.message || "Passkey 登录失败，请重试";
+      resolveRetryAfterMessage(
+        e?.response?.data?.message || e?.message || "Passkey 登录失败，请重试",
+        retryAfter,
+      );
     showErrorDialog.value = true;
   } finally {
     isPasskeyLoading.value = false;

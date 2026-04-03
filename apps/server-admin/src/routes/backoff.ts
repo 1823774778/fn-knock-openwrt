@@ -1,4 +1,5 @@
 import { Elysia, t } from "elysia";
+import { resetAuthFailureTracking } from "../lib/auth-failure";
 import { loginBackoffService } from "../lib/login-backoff";
 
 export const backoffRoutes = new Elysia({ prefix: "/api/admin/backoff" })
@@ -15,12 +16,15 @@ export const backoffRoutes = new Elysia({ prefix: "/api/admin/backoff" })
     const st = await loginBackoffService.getStatus(ip);
     return { success: true, data: st };
   })
-  .post("/reset", async ({ body }) => {
-    await loginBackoffService.reset(body.ip);
-    return { success: true };
-  }, {
-    body: t.Object({
-      ip: t.String()
-    })
-  });
-
+  .post(
+    "/reset",
+    async ({ body }) => {
+      await resetAuthFailureTracking(body.ip);
+      return { success: true };
+    },
+    {
+      body: t.Object({
+        ip: t.String(),
+      }),
+    },
+  );

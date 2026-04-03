@@ -18,15 +18,17 @@ import { authMobilitySessionManager } from "../lib/auth-mobility-session";
 import { buildClientInfo, getClientIp } from "../lib/auth-request";
 import { passkeyRoutes } from "./auth/passkey";
 import { whitelistManager } from "../lib/whitelist-manager";
-import { authLogManager } from "../lib/auth-log";
 import { loginBackoffService } from "../lib/login-backoff";
 import { recentAuthIPsManager } from "../lib/recent-auth-ips";
 import { scanDetector } from "../lib/scan-detector";
 import { ipLocationService } from "../lib/ip-location";
 import {
-  revokeCustomPostLoginIpGrant,
-} from "../lib/post-login-ip-grant";
+  normalizeAuthFailureTrackingIp,
+  registerAuthFailure,
+} from "../lib/auth-failure";
+import { revokeCustomPostLoginIpGrant } from "../lib/post-login-ip-grant";
 import { scheduleSyncReverseProxyTrustedIPs } from "../lib/reverse-proxy-trusted-ips";
+import { emitLogoutEvent } from "../lib/system-events/helpers";
 import {
   buildFnosShareSessionClearCookie,
   buildSessionClearCookie,
@@ -243,15 +245,20 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
     async ({ body, set, request }) => {
       const config = await configManager.getConfig();
       const clientIp = getClientIp(request);
-      const gate = await loginBackoffService.ensureNotBlocked(clientIp);
+      const gate = await loginBackoffService.ensureNotBlocked(
+        normalizeAuthFailureTrackingIp(clientIp),
+      );
       if (!gate.allowed) {
         set.status = 429;
         if (gate.retryAfter)
           set.headers["Retry-After"] = String(gate.retryAfter);
         return {
           success: false,
-          message: "尝试过于频繁，请稍后重试",
+          message: gate.retryAfter
+            ? `尝试过于频繁，请在 ${gate.retryAfter} 秒后重试`
+            : "尝试过于频繁，请稍后重试",
           retryAfter: gate.retryAfter,
+          blockedUntil: gate.blockedUntil,
         };
       }
       try {
@@ -284,15 +291,12 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
 
       if (!matchedTotpId) {
         const userAgent = request.headers.get("user-agent") || "Unknown";
-        await authLogManager.recordLog({
-          type: "login",
-          method: "TOTP",
-          ip: clientIp,
+        const rf = await registerAuthFailure({
+          clientIp,
           userAgent,
-          success: false,
+          method: "TOTP",
           credentialName: "! Unknown TOTP",
         });
-        const rf = await loginBackoffService.registerFailure(clientIp);
         set.status = 429;
         set.headers["Retry-After"] = String(rf.retryAfter);
         return {
@@ -307,7 +311,6 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
         totpCredentials.find((t) => t.id === matchedTotpId)?.comment ||
         "Unknown TOTP";
 
-      await loginBackoffService.reset(clientIp);
       const redirectTo = resolveSafeRedirectUri({
         config,
         request,
@@ -351,7 +354,7 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
     const config = await configManager.getConfig();
     const cookieDomain = resolveCookieDomain(config, request);
     const { sessionId } = authMobilitySessionManager.inspectRequest(request);
-    let session = null;
+    let session: Awaited<ReturnType<typeof configManager.getSession>> = null;
     let loginIpFromSession: string | null = null;
     if (sessionId) {
       session = await configManager.getSession(sessionId);
@@ -361,7 +364,6 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
     }
 
     const clientIp = getClientIp(request);
-    const userAgent = request.headers.get("user-agent") || "Unknown";
     if (!sessionId) {
       await whitelistManager.removeRecordsByIP(
         loginIpFromSession || clientIp,
@@ -375,13 +377,20 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
       );
     }
 
-    await authLogManager.recordLog({
-      type: "logout",
-      ip: clientIp,
-      userAgent,
-      success: true,
-    });
     scheduleSyncReverseProxyTrustedIPs({ reason: "logout" });
+    if (sessionId && session) {
+      await emitLogoutEvent({
+        sessionId,
+        authMethod: session.method,
+        credentialId: session.credentialId,
+        credentialName: session.credentialName,
+        ip: session.ip,
+        ...(session.ipLocation ? { ipLocation: session.ipLocation } : {}),
+        userAgent: session.userAgent,
+        ...(session.loginTime ? { loginTime: session.loginTime } : {}),
+        logoutSource: "user_logout",
+      });
+    }
 
     const headers = new Headers({
       Location: buildPostLogoutLocation(request),
