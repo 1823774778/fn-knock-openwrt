@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { Loader2, Pencil, Plus, Send, Trash2 } from "lucide-vue-next";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,7 +32,6 @@ import {
 import RefreshButton from "@/components/RefreshButton.vue";
 import HumanFriendlyTime from "@admin-shared/components/common/HumanFriendlyTime.vue";
 import ConfirmDangerPopover from "@admin-shared/components/common/ConfirmDangerPopover.vue";
-import ConfigCollapsibleCard from "@admin-shared/components/ConfigCollapsibleCard.vue";
 import { toast } from "@admin-shared/utils/toast";
 import { EventCenterAPI } from "../../../lib/api";
 import type {
@@ -55,6 +54,25 @@ type EditableProviderForm = {
   connection_config: Record<string, unknown>;
 };
 
+const sortProviderCatalog = (
+  definitions: NotificationProviderDefinition[],
+) =>
+  [...definitions].sort((left, right) => {
+    if (left.type === right.type) return 0;
+    if (left.type === "webhook") return 1;
+    if (right.type === "webhook") return -1;
+    return 0;
+  });
+
+const props = withDefaults(
+  defineProps<{
+    active?: boolean;
+  }>(),
+  {
+    active: false,
+  },
+);
+
 const catalog = ref<NotificationProviderDefinition[]>([]);
 const providers = ref<NotificationProviderView[]>([]);
 const loading = ref(false);
@@ -67,7 +85,7 @@ const editingProvider = ref<NotificationProviderView | null>(null);
 
 const providerForm = ref<EditableProviderForm>({
   name: "",
-  type: "webhook",
+  type: "",
   enabled: true,
   connection_config: {},
 });
@@ -88,20 +106,6 @@ const configuredSensitiveFields = computed(() => {
         Boolean(editingProvider.value?.connection_config_masked[field.key]),
     )
     .map((field) => field.key);
-});
-
-const enabledProviderCount = computed(
-  () => providers.value.filter((provider) => provider.enabled).length,
-);
-
-const providerSummary = computed(() => {
-  if (loading.value && providers.value.length === 0) {
-    return "正在加载通知提供商";
-  }
-  if (providers.value.length === 0) {
-    return "还没有配置任何通知提供商";
-  }
-  return `已配置 ${providers.value.length} 个提供商，${enabledProviderCount.value} 个启用`;
 });
 
 const buildGeneratedProviderName = (type: string) => {
@@ -135,7 +139,7 @@ const loadData = async () => {
       throw new Error(providersResult.message || "加载提供商列表失败");
     }
 
-    catalog.value = catalogResult.data.providers || [];
+    catalog.value = sortProviderCatalog(catalogResult.data.providers || []);
     providers.value = providersResult.data.providers || [];
 
     if (!providerForm.value.type && catalog.value[0]) {
@@ -313,143 +317,123 @@ const testProvider = async (provider: NotificationProviderView) => {
 const resolveProviderTypeLabel = (type: string) =>
   catalog.value.find((item) => item.type === type)?.label || type;
 
-onMounted(() => {
-  void loadData();
-});
+watch(
+  () => props.active,
+  (active) => {
+    if (!active) return;
+    void loadData();
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
-  <ConfigCollapsibleCard
-    title="通知提供商"
-    :configured="providers.length > 0"
-    :ready="!loading"
-    edit-label="管理提供商"
-    card-class="rounded-none border-0 bg-transparent shadow-none"
-    expanded-content-class="p-0"
-    summary-class="text-xs text-muted-foreground w-full max-w-full truncate"
-  >
-    <template #summary>
-      {{ providerSummary }}
-    </template>
-
-    <div class="space-y-4 p-4 sm:p-6">
-      <div class="flex flex-wrap items-center gap-2">
-        <div class="text-sm text-muted-foreground">
-          必须先配置提供商，才能在规则里选择发送目标并启用告警通知。
-        </div>
-        <div class="ml-auto flex items-center gap-2">
-          <RefreshButton
-            :loading="loading"
-            :disabled="loading"
-            @click="loadData"
-          />
-          <Button @click="openCreateDialog">
-            <Plus class="mr-2 h-4 w-4" />
-            新增提供商
-          </Button>
-        </div>
+  <div class="space-y-4 p-4 sm:p-6">
+    <div class="flex flex-wrap items-center gap-2">
+      <div class="text-sm text-muted-foreground">
+        必须先配置提供商，才能在规则里选择发送目标并启用告警通知。
       </div>
-
-      <div class="overflow-hidden rounded-md border bg-background">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>名称</TableHead>
-              <TableHead>类型</TableHead>
-              <TableHead>状态</TableHead>
-              <TableHead>更新时间</TableHead>
-              <TableHead class="w-[180px] text-right">操作</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            <TableRow v-if="loading && providers.length === 0">
-              <TableCell colspan="6" class="py-10 text-center">
-                <Loader2
-                  class="mx-auto h-5 w-5 animate-spin text-muted-foreground"
-                />
-              </TableCell>
-            </TableRow>
-            <TableRow v-else-if="providers.length === 0">
-              <TableCell
-                colspan="6"
-                class="py-10 text-center text-muted-foreground"
-              >
-                暂无通知提供商
-              </TableCell>
-            </TableRow>
-            <TableRow v-for="provider in providers" :key="provider.id">
-              <TableCell>
-                <div class="space-y-1">
-                  <div class="font-medium">{{ provider.name }}</div>
-                  <div
-                    v-if="provider.last_error"
-                    class="line-clamp-2 text-xs text-muted-foreground"
-                  >
-                    最近错误：{{ provider.last_error }}
-                  </div>
-                </div>
-              </TableCell>
-              <TableCell>{{
-                resolveProviderTypeLabel(provider.type)
-              }}</TableCell>
-              <TableCell>
-                <Badge
-                  variant="outline"
-                  :class="
-                    provider.enabled
-                      ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700'
-                      : 'border-muted-foreground/20 bg-muted text-muted-foreground'
-                  "
-                >
-                  {{ provider.enabled ? "启用" : "停用" }}
-                </Badge>
-              </TableCell>
-              <TableCell class="text-sm text-muted-foreground">
-                <HumanFriendlyTime :value="provider.updated_at" />
-              </TableCell>
-              <TableCell class="text-right">
-                <div class="inline-flex items-center gap-1">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    :disabled="testingId === provider.id"
-                    @click="testProvider(provider)"
-                  >
-                    <Send class="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    @click="openEditDialog(provider)"
-                  >
-                    <Pencil class="h-4 w-4" />
-                  </Button>
-                  <ConfirmDangerPopover
-                    title="确认删除该提供商？"
-                    description="若该提供商已被规则引用，后端会阻止删除。"
-                    :loading="deletingId === provider.id"
-                    :disabled="deletingId === provider.id"
-                    :on-confirm="() => deleteProvider(provider)"
-                  >
-                    <template #trigger>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        class="text-destructive"
-                        :disabled="deletingId === provider.id"
-                      >
-                        <Trash2 class="h-4 w-4" />
-                      </Button>
-                    </template>
-                  </ConfirmDangerPopover>
-                </div>
-              </TableCell>
-            </TableRow>
-          </TableBody>
-        </Table>
+      <div class="ml-auto flex items-center gap-2">
+        <RefreshButton :loading="loading" :disabled="loading" @click="loadData" />
+        <Button @click="openCreateDialog">
+          <Plus class="mr-2 h-4 w-4" />
+          新增提供商
+        </Button>
       </div>
     </div>
-  </ConfigCollapsibleCard>
+
+    <div class="overflow-hidden rounded-md border bg-background">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>名称</TableHead>
+            <TableHead>类型</TableHead>
+            <TableHead>状态</TableHead>
+            <TableHead>更新时间</TableHead>
+            <TableHead class="w-[180px] text-right">操作</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          <TableRow v-if="loading && providers.length === 0">
+            <TableCell colspan="6" class="py-10 text-center">
+              <Loader2 class="mx-auto h-5 w-5 animate-spin text-muted-foreground" />
+            </TableCell>
+          </TableRow>
+          <TableRow v-else-if="providers.length === 0">
+            <TableCell colspan="6" class="py-10 text-center text-muted-foreground">
+              暂无通知提供商
+            </TableCell>
+          </TableRow>
+          <TableRow v-for="provider in providers" :key="provider.id">
+            <TableCell>
+              <div class="space-y-1">
+                <div class="font-medium">{{ provider.name }}</div>
+                <div
+                  v-if="provider.last_error"
+                  class="line-clamp-2 text-xs text-muted-foreground"
+                >
+                  最近错误：{{ provider.last_error }}
+                </div>
+              </div>
+            </TableCell>
+            <TableCell>{{ resolveProviderTypeLabel(provider.type) }}</TableCell>
+            <TableCell>
+              <Badge
+                variant="outline"
+                :class="
+                  provider.enabled
+                    ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700'
+                    : 'border-muted-foreground/20 bg-muted text-muted-foreground'
+                "
+              >
+                {{ provider.enabled ? "启用" : "停用" }}
+              </Badge>
+            </TableCell>
+            <TableCell class="text-sm text-muted-foreground">
+              <HumanFriendlyTime :value="provider.updated_at" />
+            </TableCell>
+            <TableCell class="text-right">
+              <div class="inline-flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  :disabled="testingId === provider.id"
+                  @click="testProvider(provider)"
+                >
+                  <Send class="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  @click="openEditDialog(provider)"
+                >
+                  <Pencil class="h-4 w-4" />
+                </Button>
+                <ConfirmDangerPopover
+                  title="确认删除该提供商？"
+                  description="若该提供商已被规则引用，后端会阻止删除。"
+                  :loading="deletingId === provider.id"
+                  :disabled="deletingId === provider.id"
+                  :on-confirm="() => deleteProvider(provider)"
+                >
+                  <template #trigger>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      class="text-destructive"
+                      :disabled="deletingId === provider.id"
+                    >
+                      <Trash2 class="h-4 w-4" />
+                    </Button>
+                  </template>
+                </ConfirmDangerPopover>
+              </div>
+            </TableCell>
+          </TableRow>
+        </TableBody>
+      </Table>
+    </div>
+  </div>
 
   <Dialog v-model:open="dialogOpen">
     <DialogContent class="max-h-[85vh] overflow-y-auto sm:max-w-[760px]">

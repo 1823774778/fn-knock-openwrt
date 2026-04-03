@@ -710,7 +710,11 @@ export interface SystemEventListPayload {
   total: number;
 }
 
-export type NotificationProviderType = "webhook" | "pushdeer";
+export type NotificationProviderType =
+  | "webhook"
+  | "pushdeer"
+  | "bark"
+  | "telegram";
 
 export type NotificationGroupBy =
   | "GLOBAL"

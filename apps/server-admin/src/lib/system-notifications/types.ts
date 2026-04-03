@@ -1,13 +1,16 @@
-import type {
-  SystemEventEnvelope,
-} from "../system-events/types";
+import type { SystemEventEnvelope } from "../system-events/types";
 import type {
   SystemEventLevel,
   SystemEventSource,
   SystemEventType,
 } from "../system-events/constants";
 
-export const NOTIFICATION_PROVIDER_TYPES = ["webhook", "pushdeer"] as const;
+export const NOTIFICATION_PROVIDER_TYPES = [
+  "webhook",
+  "pushdeer",
+  "bark",
+  "telegram",
+] as const;
 export type NotificationProviderType =
   (typeof NOTIFICATION_PROVIDER_TYPES)[number];
 

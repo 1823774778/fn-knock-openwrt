@@ -79,15 +79,24 @@ watch(currentTab, (nextTab) => {
       </div>
 
       <RekaTabsContent value="providers" class="min-h-0">
-        <ProvidersTab v-if="visitedTabs.includes('providers')" />
+        <ProvidersTab
+          v-if="visitedTabs.includes('providers')"
+          :active="currentTab === 'providers'"
+        />
       </RekaTabsContent>
 
       <RekaTabsContent value="rules" class="min-h-0">
-        <RulesTab v-if="visitedTabs.includes('rules')" />
+        <RulesTab
+          v-if="visitedTabs.includes('rules')"
+          :active="currentTab === 'rules'"
+        />
       </RekaTabsContent>
 
       <RekaTabsContent value="deliveries" class="min-h-0">
-        <DeliveriesTab v-if="visitedTabs.includes('deliveries')" />
+        <DeliveriesTab
+          v-if="visitedTabs.includes('deliveries')"
+          :active="currentTab === 'deliveries'"
+        />
       </RekaTabsContent>
     </RekaTabs>
   </div>

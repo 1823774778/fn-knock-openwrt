@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { ChevronDown, Loader2, Pencil, Plus, Trash2 } from "lucide-vue-next";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -38,7 +38,6 @@ import {
 import RefreshButton from "@/components/RefreshButton.vue";
 import HumanFriendlyTime from "@admin-shared/components/common/HumanFriendlyTime.vue";
 import ConfirmDangerPopover from "@admin-shared/components/common/ConfirmDangerPopover.vue";
-import ConfigCollapsibleCard from "@admin-shared/components/ConfigCollapsibleCard.vue";
 import { toast } from "@admin-shared/utils/toast";
 import { EventCenterAPI } from "../../../lib/api";
 import type {
@@ -83,6 +82,15 @@ type EditableRuleForm = {
   targets: EditableRuleTarget[];
 };
 
+const props = withDefaults(
+  defineProps<{
+    active?: boolean;
+  }>(),
+  {
+    active: false,
+  },
+);
+
 const catalog = ref<NotificationProviderDefinition[]>([]);
 const providers = ref<NotificationProviderView[]>([]);
 const rules = ref<NotificationRule[]>([]);
@@ -98,6 +106,8 @@ const editingRule = ref<NotificationRule | null>(null);
 const allEventTypes = SYSTEM_EVENT_TYPE_OPTIONS.map(
   (option) => option.value,
 ) as SystemEventType[];
+const DEFAULT_RULE_WINDOW_SECONDS = "60";
+const DEFAULT_RULE_COOLDOWN_SECONDS = "60";
 const createEmptyDeliveryPolicy = () => ({
   timeout_seconds: "",
   max_attempts: "",
@@ -106,10 +116,10 @@ const createEmptyDeliveryPolicy = () => ({
 
 const ruleForm = ref<EditableRuleForm>({
   event_types: [...allEventTypes],
-  window_seconds: "300",
+  window_seconds: DEFAULT_RULE_WINDOW_SECONDS,
   threshold_count: "1",
   group_by: "auto",
-  cooldown_seconds: "300",
+  cooldown_seconds: DEFAULT_RULE_COOLDOWN_SECONDS,
   targets: [],
 });
 
@@ -145,22 +155,6 @@ const availableProvidersForAdd = computed(() =>
 const hasAvailableProvidersForAdd = computed(
   () => availableProvidersForAdd.value.length > 0,
 );
-
-const rulesSummary = computed(() => {
-  if (loading.value && rules.value.length === 0) {
-    return "正在加载通知规则";
-  }
-  if (!hasProviders.value) {
-    return "请先在上方添加至少一个通知提供商";
-  }
-  if (rules.value.length === 0) {
-    return "还没有创建通知规则";
-  }
-
-  const coveredEventCount = new Set(rules.value.map((rule) => rule.event_type))
-    .size;
-  return `已配置 ${rules.value.length} 条规则，覆盖 ${coveredEventCount} 种事件`;
-});
 
 const selectedEventTypeCount = computed(
   () => ruleForm.value.event_types.length,
@@ -283,10 +277,10 @@ const createTarget = (
 const resetRuleForm = () => {
   ruleForm.value = {
     event_types: [...availableEventTypes.value],
-    window_seconds: "300",
+    window_seconds: DEFAULT_RULE_WINDOW_SECONDS,
     threshold_count: "1",
     group_by: "auto",
-    cooldown_seconds: "300",
+    cooldown_seconds: DEFAULT_RULE_COOLDOWN_SECONDS,
     targets: [],
   };
 };
@@ -650,195 +644,181 @@ const resolveProviderTypeLabel = (providerId: string) => {
   return resolveProviderById(providerId)?.type || "未知类型";
 };
 
-onMounted(() => {
-  void loadData();
-});
+watch(
+  () => props.active,
+  (active) => {
+    if (!active) return;
+    void loadData();
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
-  <ConfigCollapsibleCard
-    title="通知规则"
-    :configured="rules.length > 0"
-    :ready="!loading"
-    edit-label="管理规则"
-    card-class="rounded-none border-0 bg-transparent shadow-none"
-    expanded-content-class="p-0"
-    summary-class="text-xs text-muted-foreground w-full max-w-full truncate"
-  >
-    <template #summary>
-      {{ rulesSummary }}
-    </template>
-
-    <div class="space-y-4 p-4 sm:p-6">
-      <div class="flex flex-wrap items-center gap-2">
-        <div class="space-y-1">
-          <div class="text-xs text-muted-foreground">
-            右侧动作菜单支持快速清空已有规则。
-          </div>
+  <div class="space-y-4 p-4 sm:p-6">
+    <div class="flex flex-wrap items-center gap-2">
+      <div class="space-y-1">
+        <div class="text-xs text-muted-foreground">
+          右侧动作菜单支持快速清空已有规则。
         </div>
-        <div class="ml-auto flex items-center gap-2">
-          <RefreshButton
-            :loading="loading"
+      </div>
+      <div class="ml-auto flex items-center gap-2">
+        <RefreshButton
+          :loading="loading"
+          :disabled="loading || clearingAll"
+          @click="loadData"
+        />
+        <div class="flex">
+          <Button
+            class="rounded-r-none"
             :disabled="loading || clearingAll"
-            @click="loadData"
-          />
-          <div class="flex">
-            <Button
-              class="rounded-r-none"
-              :disabled="loading || clearingAll"
-              @click="handleCreateRuleClick"
-            >
-              <Plus class="mr-2 h-4 w-4" />
-              新增规则
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger as-child>
-                <Button
-                  variant="default"
-                  size="icon"
-                  class="rounded-l-none border-l border-primary-foreground/20 px-2"
-                  :disabled="loading || clearingAll"
-                >
-                  <ChevronDown class="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" class="w-52">
-                <DropdownMenuItem
-                  variant="destructive"
-                  :disabled="rules.length === 0 || clearingAll"
-                  @click="clearAllDialogOpen = true"
-                >
-                  <Trash2 class="mr-2 h-4 w-4" />
-                  清空全部规则
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </div>
-      </div>
-
-      <div
-        v-if="!hasProviders"
-        class="rounded-md border border-dashed bg-muted/30 px-4 py-6 text-sm text-muted-foreground"
-      >
-        还没有可用的通知提供商。请先在上方“通知提供商”区域配置至少一个
-        provider。
-      </div>
-
-      <div
-        v-else-if="!hasAvailableEventTypes"
-        class="rounded-md border border-dashed bg-muted/30 px-4 py-6 text-sm text-muted-foreground"
-      >
-        所有事件都已经配置规则。如需重新配置，请先删除已有规则后再新增。
-      </div>
-
-      <div class="overflow-hidden rounded-md border bg-background">
-        <div class="overflow-x-auto">
-          <Table class="min-w-[700px] sm:min-w-[760px]">
-            <TableHeader>
-              <TableRow>
-                <TableHead
-                  class="sticky left-0 z-20 w-[168px] min-w-[168px] border-r bg-background sm:w-[220px] sm:min-w-[220px]"
-                >
-                  规则名称
-                </TableHead>
-                <TableHead>事件类型</TableHead>
-                <TableHead>触发条件</TableHead>
-                <TableHead>聚合维度</TableHead>
-                <TableHead>目标数量</TableHead>
-                <TableHead>最近触发</TableHead>
-                <TableHead class="w-[140px] text-right">操作</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              <TableRow v-if="loading && rules.length === 0">
-                <TableCell colspan="7" class="py-10 text-center">
-                  <Loader2
-                    class="mx-auto h-5 w-5 animate-spin text-muted-foreground"
-                  />
-                </TableCell>
-              </TableRow>
-              <TableRow v-else-if="rules.length === 0">
-                <TableCell
-                  colspan="7"
-                  class="py-10 text-center text-muted-foreground"
-                >
-                  暂无通知规则
-                </TableCell>
-              </TableRow>
-              <TableRow v-for="rule in rules" :key="rule.id">
-                <TableCell
-                  class="sticky left-0 z-10 w-[168px] min-w-[168px] border-r bg-background sm:w-[220px] sm:min-w-[220px]"
-                >
-                  <div class="space-y-1">
-                    <div class="font-medium">
-                      {{ buildRuleDisplayName(rule.event_type) }}
-                    </div>
-                    <div class="line-clamp-2 text-xs text-muted-foreground">
-                      <span
-                        v-for="target in rule.targets"
-                        :key="target.id"
-                        class="mr-2 inline-block"
-                      >
-                        {{ resolveProviderName(target.provider_id) }}
-                      </span>
-                    </div>
-                  </div>
-                </TableCell>
-                <TableCell>{{
-                  formatSystemEventTypeLabel(rule.event_type)
-                }}</TableCell>
-                <TableCell>
-                  {{ rule.window_seconds }} 秒内触发
-                  {{ rule.threshold_count }} 次
-                </TableCell>
-                <TableCell>{{
-                  formatNotificationGroupByLabel(rule.group_by)
-                }}</TableCell>
-                <TableCell>{{ rule.targets.length }}</TableCell>
-                <TableCell class="text-sm text-muted-foreground">
-                  <span v-if="rule.last_triggered_at">
-                    <HumanFriendlyTime :value="rule.last_triggered_at" />
-                  </span>
-                  <span v-else>-</span>
-                </TableCell>
-                <TableCell class="text-right">
-                  <div class="inline-flex items-center gap-1">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      :disabled="clearingAll"
-                      @click="openEditDialog(rule)"
-                    >
-                      <Pencil class="h-4 w-4" />
-                    </Button>
-                    <ConfirmDangerPopover
-                      title="确认删除该规则？"
-                      description="删除后不会影响已有事件，但后续不再触发通知。"
-                      :loading="deletingId === rule.id"
-                      :disabled="deletingId === rule.id || clearingAll"
-                      :on-confirm="() => deleteRule(rule)"
-                    >
-                      <template #trigger>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          class="text-destructive"
-                          :disabled="deletingId === rule.id || clearingAll"
-                        >
-                          <Trash2 class="h-4 w-4" />
-                        </Button>
-                      </template>
-                    </ConfirmDangerPopover>
-                  </div>
-                </TableCell>
-              </TableRow>
-            </TableBody>
-          </Table>
+            @click="handleCreateRuleClick"
+          >
+            <Plus class="mr-2 h-4 w-4" />
+            新增规则
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger as-child>
+              <Button
+                variant="default"
+                size="icon"
+                class="rounded-l-none border-l border-primary-foreground/20 px-2"
+                :disabled="loading || clearingAll"
+              >
+                <ChevronDown class="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" class="w-52">
+              <DropdownMenuItem
+                variant="destructive"
+                :disabled="rules.length === 0 || clearingAll"
+                @click="clearAllDialogOpen = true"
+              >
+                <Trash2 class="mr-2 h-4 w-4" />
+                清空全部规则
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
     </div>
-  </ConfigCollapsibleCard>
+
+    <div
+      v-if="!hasProviders"
+      class="rounded-md border border-dashed bg-muted/30 px-4 py-6 text-sm text-muted-foreground"
+    >
+      还没有可用的通知提供商。请先在上方“通知提供商”区域配置至少一个
+      provider。
+    </div>
+
+    <div
+      v-else-if="!hasAvailableEventTypes"
+      class="rounded-md border border-dashed bg-muted/30 px-4 py-6 text-sm text-muted-foreground"
+    >
+      所有事件都已经配置规则。如需重新配置，请先删除已有规则后再新增。
+    </div>
+
+    <div class="overflow-hidden rounded-md border bg-background">
+      <div class="overflow-x-auto">
+        <Table class="min-w-[700px] sm:min-w-[760px]">
+          <TableHeader>
+            <TableRow>
+              <TableHead
+                class="sticky left-0 z-20 w-[168px] min-w-[168px] border-r bg-background sm:w-[220px] sm:min-w-[220px]"
+              >
+                规则名称
+              </TableHead>
+              <TableHead>事件类型</TableHead>
+              <TableHead>触发条件</TableHead>
+              <TableHead>聚合维度</TableHead>
+              <TableHead>目标数量</TableHead>
+              <TableHead>最近触发</TableHead>
+              <TableHead class="w-[140px] text-right">操作</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <TableRow v-if="loading && rules.length === 0">
+              <TableCell colspan="7" class="py-10 text-center">
+                <Loader2
+                  class="mx-auto h-5 w-5 animate-spin text-muted-foreground"
+                />
+              </TableCell>
+            </TableRow>
+            <TableRow v-else-if="rules.length === 0">
+              <TableCell colspan="7" class="py-10 text-center text-muted-foreground">
+                暂无通知规则
+              </TableCell>
+            </TableRow>
+            <TableRow v-for="rule in rules" :key="rule.id">
+              <TableCell
+                class="sticky left-0 z-10 w-[168px] min-w-[168px] border-r bg-background sm:w-[220px] sm:min-w-[220px]"
+              >
+                <div class="space-y-1">
+                  <div class="font-medium">
+                    {{ buildRuleDisplayName(rule.event_type) }}
+                  </div>
+                  <div class="line-clamp-2 text-xs text-muted-foreground">
+                    <span
+                      v-for="target in rule.targets"
+                      :key="target.id"
+                      class="mr-2 inline-block"
+                    >
+                      {{ resolveProviderName(target.provider_id) }}
+                    </span>
+                  </div>
+                </div>
+              </TableCell>
+              <TableCell>{{ formatSystemEventTypeLabel(rule.event_type) }}</TableCell>
+              <TableCell>
+                {{ rule.window_seconds }} 秒内触发
+                {{ rule.threshold_count }} 次
+              </TableCell>
+              <TableCell>{{
+                formatNotificationGroupByLabel(rule.group_by)
+              }}</TableCell>
+              <TableCell>{{ rule.targets.length }}</TableCell>
+              <TableCell class="text-sm text-muted-foreground">
+                <span v-if="rule.last_triggered_at">
+                  <HumanFriendlyTime :value="rule.last_triggered_at" />
+                </span>
+                <span v-else>-</span>
+              </TableCell>
+              <TableCell class="text-right">
+                <div class="inline-flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    :disabled="clearingAll"
+                    @click="openEditDialog(rule)"
+                  >
+                    <Pencil class="h-4 w-4" />
+                  </Button>
+                  <ConfirmDangerPopover
+                    title="确认删除该规则？"
+                    description="删除后不会影响已有事件，但后续不再触发通知。"
+                    :loading="deletingId === rule.id"
+                    :disabled="deletingId === rule.id || clearingAll"
+                    :on-confirm="() => deleteRule(rule)"
+                  >
+                    <template #trigger>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        class="text-destructive"
+                        :disabled="deletingId === rule.id || clearingAll"
+                      >
+                        <Trash2 class="h-4 w-4" />
+                      </Button>
+                    </template>
+                  </ConfirmDangerPopover>
+                </div>
+              </TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </div>
+    </div>
+  </div>
 
   <Dialog v-model:open="dialogOpen">
     <DialogContent
@@ -886,7 +866,7 @@ onMounted(() => {
             </div>
             <div class="flex items-center gap-2">
               <div
-                class="flex items-center gap-2 rounded-full border px-3 py-2"
+                class="flex items-center gap-2 px-3 py-2"
               >
                 <Checkbox
                   :model-value="isAllEventTypesSelected"
@@ -894,14 +874,6 @@ onMounted(() => {
                 />
                 <span class="text-xs text-muted-foreground">全选</span>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                :disabled="selectedEventTypeCount === 0"
-                @click="ruleForm.event_types = []"
-              >
-                清空
-              </Button>
             </div>
           </div>
 
@@ -956,7 +928,7 @@ onMounted(() => {
                 v-model="ruleForm.window_seconds"
                 type="number"
                 min="1"
-                placeholder="300"
+                :placeholder="DEFAULT_RULE_WINDOW_SECONDS"
               />
             </div>
 
@@ -998,7 +970,7 @@ onMounted(() => {
                 v-model="ruleForm.cooldown_seconds"
                 type="number"
                 min="0"
-                placeholder="300"
+                :placeholder="DEFAULT_RULE_COOLDOWN_SECONDS"
               />
             </div>
           </div>

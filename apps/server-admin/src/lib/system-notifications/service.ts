@@ -44,6 +44,8 @@ const DEFAULT_DELIVERY_POLICY: Required<NotificationDeliveryPolicy> = {
   max_attempts: 3,
   backoff_seconds: 30,
 };
+const DEFAULT_RULE_WINDOW_SECONDS = 60;
+const DEFAULT_RULE_COOLDOWN_SECONDS = 60;
 
 const nowIso = () => new Date().toISOString();
 
@@ -539,19 +541,27 @@ export class SystemNotificationService {
       ...(eventSourceFilter.length
         ? { event_source_filter: eventSourceFilter }
         : {}),
-      window_seconds: parseNumberField(input.window_seconds, 300, {
-        min: 1,
-        max: 86400,
-      }),
+      window_seconds: parseNumberField(
+        input.window_seconds,
+        DEFAULT_RULE_WINDOW_SECONDS,
+        {
+          min: 1,
+          max: 86400,
+        },
+      ),
       threshold_count: parseNumberField(input.threshold_count, 1, {
         min: 1,
         max: 9999,
       }),
       group_by: groupBy as NotificationRule["group_by"],
-      cooldown_seconds: parseNumberField(input.cooldown_seconds, 300, {
-        min: 0,
-        max: 86400,
-      }),
+      cooldown_seconds: parseNumberField(
+        input.cooldown_seconds,
+        DEFAULT_RULE_COOLDOWN_SECONDS,
+        {
+          min: 0,
+          max: 86400,
+        },
+      ),
       targets,
       message_template_mode:
         messageTemplateMode as NotificationRule["message_template_mode"],
@@ -748,10 +758,9 @@ export class SystemNotificationService {
         };
         triggerCreated =
           await redisNotificationStore.saveTriggerIfAbsent(draftTrigger);
-        trigger =
-          triggerCreated
-            ? draftTrigger
-            : await redisNotificationStore.getTrigger(draftTrigger.id);
+        trigger = triggerCreated
+          ? draftTrigger
+          : await redisNotificationStore.getTrigger(draftTrigger.id);
       }
 
       if (!trigger) {
@@ -828,7 +837,10 @@ export class SystemNotificationService {
         const existingDelivery = await redisNotificationStore.getDelivery(
           delivery.id,
         );
-        if (existingDelivery && !isTerminalDeliveryStatus(existingDelivery.status)) {
+        if (
+          existingDelivery &&
+          !isTerminalDeliveryStatus(existingDelivery.status)
+        ) {
           await redisNotificationStore.enqueueDelivery(
             existingDelivery.id,
             resolveDeliveryReadyAtMs(existingDelivery),
