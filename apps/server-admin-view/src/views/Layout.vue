@@ -219,6 +219,7 @@ import {
 } from "@/components/ui/sheet";
 const APP_GITHUB_URL = "https://github.com/kci-lnk/fn-knock-turborepo";
 import {
+  Bell,
   LayoutDashboard,
   ShieldCheck,
   Lock,
@@ -226,13 +227,12 @@ import {
   Cable,
   Key,
   Github,
-  FileText,
   ScrollText,
   Settings,
   Terminal,
   Users,
-  Globe,
   Menu,
+  Network,
   Server,
 } from "lucide-vue-next";
 
@@ -302,7 +302,7 @@ const navItems = computed(() => {
   ) {
     items.unshift({ name: "控制台", path: "/", icon: LayoutDashboard });
   }
-  items.push({ name: "动态域名", path: "/ddns", icon: Globe });
+  items.push({ name: "动态域名", path: "/ddns", icon: Network });
   if (configStore.config?.run_type === 1) {
     items.splice(1, 0, {
       name: isReverseProxySubdomainMode(configStore.config)
@@ -333,7 +333,7 @@ const navItems = computed(() => {
     });
   }
   items.push({ name: "认证配置", path: "/auth", icon: Key });
-  items.push({ name: "事件中心", path: "/events", icon: FileText });
+  items.push({ name: "事件中心", path: "/events", icon: Bell });
   if (configStore.config?.gateway_logging?.enabled) {
     items.push({ name: "请求日志", path: "/request-logs", icon: ScrollText });
   }

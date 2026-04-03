@@ -33,6 +33,7 @@ import {
   Clock,
   Globe,
   Network,
+  Route as RouteIcon,
   ShieldAlert,
   TriangleAlert,
   Wifi,
@@ -584,7 +585,7 @@ const ddnsCards = computed(() => [
       ? ddnsUpdateScopeLabels[ddnsStatus.value.updateScope]
       : "IPv4 & IPv6",
     hint: "当前生效策略",
-    icon: Network,
+    icon: RouteIcon,
   },
   {
     label: "最近检查",

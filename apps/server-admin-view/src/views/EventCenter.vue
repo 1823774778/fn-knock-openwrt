@@ -232,6 +232,9 @@ const detailFieldDefinitions = [
 const formatEventTypeLabel = (type: SystemEventType) =>
   TYPE_OPTIONS.find((option) => option.value === type)?.label || type;
 
+const eventTypeTextClass = (event: SystemEventRecord) =>
+  event.level === "INFO" ? "text-black" : "text-red-700";
+
 const LEVEL_LABELS: Record<SystemEventLevel, string> = {
   INFO: "信息",
   WARN: "注意",
@@ -655,7 +658,8 @@ onMounted(() => {
                       <HumanFriendlyTime :value="event.happened_at" />
                     </div>
                     <div
-                      class="min-w-0 text-sm font-semibold leading-6 text-foreground"
+                      class="min-w-0 text-sm font-semibold leading-6"
+                      :class="eventTypeTextClass(event)"
                     >
                       {{ formatEventTypeLabel(event.type) }}
                     </div>

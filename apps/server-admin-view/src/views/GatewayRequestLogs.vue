@@ -739,11 +739,7 @@ onBeforeUnmount(() => {
             >
               <TableRow>
                 <TableHead
-                  class="sticky left-0 z-20 h-10 bg-background/95 text-[11px] font-medium text-muted-foreground"
-                  >时间</TableHead
-                >
-                <TableHead
-                  class="h-10 w-[240px] min-w-[240px] text-[11px] font-medium text-muted-foreground"
+                  class="h-10 w-[320px] min-w-[320px] text-[11px] font-medium text-muted-foreground"
                   >请求</TableHead
                 >
                 <TableHead
@@ -775,7 +771,7 @@ onBeforeUnmount(() => {
             <TableBody>
               <TableRow v-if="loading">
                 <TableCell
-                  colspan="8"
+                  colspan="7"
                   class="py-10 text-center text-muted-foreground"
                 >
                   加载中...
@@ -783,7 +779,7 @@ onBeforeUnmount(() => {
               </TableRow>
               <TableRow v-else-if="entries.length === 0">
                 <TableCell
-                  colspan="8"
+                  colspan="7"
                   class="py-10 text-center text-muted-foreground"
                 >
                   暂无请求日志
@@ -795,24 +791,28 @@ onBeforeUnmount(() => {
                 :key="`${entry.time}-${entry.request_uri}-${entry.remote_ip}`"
                 class="align-top"
               >
-                <TableCell
-                  class="sticky left-0 z-10 whitespace-nowrap bg-background py-2.5 text-sm"
-                >
-                  <HumanFriendlyTime :value="entry.time" />
-                </TableCell>
-                <TableCell class="w-[240px] min-w-[240px] max-w-[240px] py-2.5">
-                  <div class="space-y-1">
-                    <div
-                      class="flex items-center gap-2 text-sm text-foreground"
-                    >
-                      <span
-                        class="font-mono text-[11px] tracking-[0.12em] text-muted-foreground"
+                <TableCell class="w-[320px] min-w-[320px] max-w-[320px] py-2.5">
+                  <div class="space-y-1.5">
+                    <div class="flex items-start gap-2">
+                      <div
+                        class="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium leading-5 text-muted-foreground"
                       >
-                        {{ entry.method || "-" }}
-                      </span>
-                      <span class="min-w-0 flex-1 truncate">{{
-                        entry.host || "-"
-                      }}</span>
+                        <HumanFriendlyTime :value="entry.time" />
+                      </div>
+                      <div class="min-w-0 flex-1">
+                        <div
+                          class="flex items-center gap-2 text-sm text-foreground"
+                        >
+                          <span
+                            class="font-mono text-[11px] tracking-[0.12em] text-muted-foreground"
+                          >
+                            {{ entry.method || "-" }}
+                          </span>
+                          <span class="min-w-0 flex-1 truncate">{{
+                            entry.host || "-"
+                          }}</span>
+                        </div>
+                      </div>
                     </div>
                     <div
                       class="whitespace-normal break-all font-mono text-[11px] leading-5 text-muted-foreground"
@@ -895,8 +895,7 @@ onBeforeUnmount(() => {
           <TableSkeletonBlock
             v-else-if="showTableSkeleton"
             :header-widths="[
-              'w-24',
-              'w-40',
+              'w-56',
               'w-16',
               'w-16',
               'w-20',
@@ -905,8 +904,7 @@ onBeforeUnmount(() => {
               'w-10',
             ]"
             :row-widths="[
-              'w-28',
-              'w-56',
+              'w-64',
               'w-12',
               'w-20',
               'w-24',

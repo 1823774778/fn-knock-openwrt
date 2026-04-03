@@ -14,11 +14,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  Cable,
   RefreshCw,
   Trash2,
   Globe,
   Wifi,
   Clock,
+  Network,
+  Route as RouteIcon,
   Eye,
   EyeOff,
 } from "lucide-vue-next";
@@ -946,10 +949,7 @@ onUnmounted(() => {
           >
             <div class="flex items-center gap-4 shrink-0">
               <div class="p-2.5 rounded-xl">
-                <RefreshCw
-                  class="h-5 w-5"
-                  :class="{ 'animate-spin': isTesting }"
-                />
+                <Clock class="h-5 w-5" />
               </div>
               <div class="space-y-1">
                 <p
@@ -968,7 +968,7 @@ onUnmounted(() => {
 
             <div class="flex items-center gap-4 shrink-0">
               <div class="p-2.5 rounded-xl">
-                <Globe class="h-5 w-5" />
+                <RouteIcon class="h-5 w-5" />
               </div>
               <div class="space-y-1">
                 <p
@@ -982,7 +982,7 @@ onUnmounted(() => {
 
             <div class="flex items-center gap-4 shrink-0">
               <div class="p-2.5 rounded-xl">
-                <RefreshCw class="h-5 w-5" />
+                <Network class="h-5 w-5" />
               </div>
               <div class="space-y-1">
                 <p
@@ -996,7 +996,7 @@ onUnmounted(() => {
 
             <div class="flex items-center gap-4 shrink-0">
               <div class="p-2.5 rounded-xl">
-                <Wifi class="h-5 w-5" />
+                <Cable class="h-5 w-5" />
               </div>
               <div class="space-y-1 max-w-[240px]">
                 <p
