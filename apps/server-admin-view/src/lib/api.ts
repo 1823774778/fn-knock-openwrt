@@ -54,6 +54,13 @@ import type {
   CidrLookupPayload,
   CidrProvincesPayload,
   CidrSelectorPayload,
+  NotificationDeliveryListPayload,
+  NotificationDeliveryStatus,
+  NotificationProviderCatalogPayload,
+  NotificationProviderListPayload,
+  NotificationRuleListPayload,
+  NotificationTriggerListPayload,
+  NotificationTriggerStatus,
 } from "../types";
 import { createSignedApiClient } from "@frontend-core/api/createSignedApiClient";
 import type { CaptchaSettings } from "@frontend-core/captcha/types";
@@ -487,6 +494,151 @@ export const EventCenterAPI = {
   async deleteEvents(ids: string[]) {
     const res = await apiClient.delete("/events", { data: { ids } });
     return res.data;
+  },
+  async getNotificationProviderCatalog(): Promise<{
+    success: boolean;
+    data: NotificationProviderCatalogPayload;
+    message?: string;
+  }> {
+    const res = await apiClient.get("/notifications/providers/catalog");
+    return res.data;
+  },
+  async getNotificationProviders(): Promise<{
+    success: boolean;
+    data: NotificationProviderListPayload;
+    message?: string;
+  }> {
+    const res = await apiClient.get("/notifications/providers");
+    return res.data;
+  },
+  async createNotificationProvider(payload: {
+    name?: string;
+    type: string;
+    enabled: boolean;
+    connection_config: Record<string, unknown>;
+  }) {
+    const res = await apiClient.post("/notifications/providers", payload);
+    return res.data;
+  },
+  async updateNotificationProvider(
+    id: string,
+    payload: {
+      name?: string;
+      enabled?: boolean;
+      connection_config?: Record<string, unknown>;
+    },
+  ) {
+    const res = await apiClient.patch(
+      `/notifications/providers/${encodeURIComponent(id)}`,
+      payload,
+    );
+    return res.data;
+  },
+  async deleteNotificationProvider(id: string) {
+    const res = await apiClient.delete(
+      `/notifications/providers/${encodeURIComponent(id)}`,
+    );
+    return res.data;
+  },
+  async testNotificationProvider(id: string) {
+    const res = await apiClient.post(
+      `/notifications/providers/${encodeURIComponent(id)}/test`,
+    );
+    return res.data;
+  },
+  async getNotificationRules(): Promise<{
+    success: boolean;
+    data: NotificationRuleListPayload;
+    message?: string;
+  }> {
+    const res = await apiClient.get("/notifications/rules");
+    return res.data;
+  },
+  async createNotificationRule(payload: Record<string, unknown>) {
+    const res = await apiClient.post("/notifications/rules", payload);
+    return res.data;
+  },
+  async updateNotificationRule(id: string, payload: Record<string, unknown>) {
+    const res = await apiClient.patch(
+      `/notifications/rules/${encodeURIComponent(id)}`,
+      payload,
+    );
+    return res.data;
+  },
+  async deleteNotificationRule(id: string) {
+    const res = await apiClient.delete(
+      `/notifications/rules/${encodeURIComponent(id)}`,
+    );
+    return res.data;
+  },
+  async getNotificationTriggers(params: {
+    page: number;
+    limit: number;
+    rule_id?: string;
+    status?: NotificationTriggerStatus | "all";
+  }): Promise<{
+    success: boolean;
+    data: NotificationTriggerListPayload;
+    message?: string;
+  }> {
+    const res = await apiClient.get("/notifications/triggers", {
+      params: {
+        page: params.page,
+        limit: params.limit,
+        rule_id: params.rule_id || undefined,
+        status:
+          params.status && params.status !== "all" ? params.status : undefined,
+      },
+    });
+    return res.data;
+  },
+  async getNotificationDeliveries(params: {
+    page: number;
+    limit: number;
+    rule_id?: string;
+    provider_id?: string;
+    trigger_id?: string;
+    status?: NotificationDeliveryStatus | "all";
+  }): Promise<{
+    success: boolean;
+    data: NotificationDeliveryListPayload;
+    message?: string;
+  }> {
+    const res = await apiClient.get("/notifications/deliveries", {
+      params: {
+        page: params.page,
+        limit: params.limit,
+        rule_id: params.rule_id || undefined,
+        provider_id: params.provider_id || undefined,
+        trigger_id: params.trigger_id || undefined,
+        status:
+          params.status && params.status !== "all" ? params.status : undefined,
+      },
+    });
+    return res.data;
+  },
+  async clearNotificationDeliveries(params: {
+    rule_id?: string;
+    provider_id?: string;
+    trigger_id?: string;
+    status?: NotificationDeliveryStatus | "all";
+  }) {
+    const res = await apiClient.delete("/notifications/deliveries", {
+      data: {
+        rule_id: params.rule_id || undefined,
+        provider_id: params.provider_id || undefined,
+        trigger_id: params.trigger_id || undefined,
+        status:
+          params.status && params.status !== "all" ? params.status : undefined,
+      },
+    });
+    return res.data as {
+      success: boolean;
+      data: {
+        deleted_count: number;
+      };
+      message?: string;
+    };
   },
 };
 

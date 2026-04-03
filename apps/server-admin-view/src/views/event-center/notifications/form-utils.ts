@@ -1,0 +1,106 @@
+import type { NotificationSchemaField } from "../../../types";
+
+const escapeRegExp = (value: string) =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+export const createEditableSchemaRecord = (
+  fields: NotificationSchemaField[],
+  source: Record<string, unknown> = {},
+) =>
+  fields.reduce<Record<string, unknown>>((acc, field) => {
+    const value = source[field.key];
+    if (value === undefined || value === null) {
+      acc[field.key] =
+        field.type === "boolean"
+          ? Boolean(field.default_value ?? false)
+          : (field.default_value ?? "");
+      return acc;
+    }
+
+    if (field.type === "json" && typeof value === "object") {
+      acc[field.key] = JSON.stringify(value, null, 2);
+      return acc;
+    }
+
+    acc[field.key] = value;
+    return acc;
+  }, {});
+
+export const buildSchemaPayload = (args: {
+  fields: NotificationSchemaField[];
+  value: Record<string, unknown>;
+  editing?: boolean;
+  configuredSensitiveFields?: string[];
+}) => {
+  const configuredSensitiveFields = new Set(
+    args.configuredSensitiveFields || [],
+  );
+  const payload: Record<string, unknown> = {};
+
+  for (const field of args.fields) {
+    const raw = args.value[field.key];
+    if (field.sensitive) {
+      const text = String(raw ?? "").trim();
+      if (args.editing && configuredSensitiveFields.has(field.key) && !text) {
+        continue;
+      }
+      if (!text) {
+        if (field.required) {
+          payload[field.key] = "";
+        }
+        continue;
+      }
+      payload[field.key] = text;
+      continue;
+    }
+
+    if (typeof raw === "string") {
+      const trimmed = raw.trim();
+      if (!trimmed) {
+        if (field.required) {
+          payload[field.key] = "";
+        }
+        continue;
+      }
+      payload[field.key] = trimmed;
+      continue;
+    }
+
+    if (raw === undefined || raw === null) {
+      if (field.required) {
+        payload[field.key] = "";
+      }
+      continue;
+    }
+
+    payload[field.key] = raw;
+  }
+
+  return payload;
+};
+
+export const buildNextSequentialName = (
+  baseLabel: string,
+  existingNames: string[],
+) => {
+  const normalizedBase = baseLabel.trim() || "未命名";
+  const pattern = new RegExp(`^${escapeRegExp(normalizedBase)}\\s+(\\d+)$`);
+  const usedIndexes = new Set<number>();
+
+  for (const name of existingNames) {
+    const match = name.trim().match(pattern);
+    if (!match) continue;
+
+    const index = Number.parseInt(match[1] || "", 10);
+    if (Number.isFinite(index) && index > 0) {
+      usedIndexes.add(index);
+    }
+  }
+
+  let nextIndex = 1;
+  while (usedIndexes.has(nextIndex)) {
+    nextIndex += 1;
+  }
+
+  return `${normalizedBase} ${nextIndex}`;
+};

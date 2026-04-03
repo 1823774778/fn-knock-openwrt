@@ -8,6 +8,7 @@ interface Props {
   configured: boolean
   ready?: boolean
   editLabel?: string
+  cardClass?: string
   collapsedContentClass?: string
   expandedContentClass?: string
   summaryClass?: string
@@ -17,6 +18,7 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   ready: true,
   editLabel: '编辑配置',
+  cardClass: '',
   collapsedContentClass: 'h-[40px] flex items-center justify-between gap-3',
   expandedContentClass: '',
   summaryClass: 'text-xs text-muted-foreground truncate w-64 max-w-full',
@@ -126,7 +128,7 @@ watch(
 </script>
 
 <template>
-  <Card :class="open ? 'py-0 gap-0' : ''">
+  <Card :class="[open ? 'py-0 gap-0' : '', props.cardClass]">
     <div
       ref="wrapperRef"
       class="relative transition-[height] ease-in-out"

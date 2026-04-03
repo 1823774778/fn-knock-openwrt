@@ -26,6 +26,7 @@ export type IssueCertParams = {
   dnsType?: string;
   envVars?: Record<string, string>;
   certificateAuthority?: AcmeCertificateAuthority;
+  force?: boolean;
   jobId?: string;
   onLog?: (line: string) => Promise<void> | void;
 };
@@ -357,6 +358,7 @@ export class AcmeService {
     envVars,
     onLog,
     certificateAuthority,
+    force,
   }: IssueCertParams) {
     if (this.state.status !== "installed") {
       throw new Error("请先安装 acme.sh");
@@ -369,9 +371,26 @@ export class AcmeService {
     await this.registerAccount({ certificateAuthority });
 
     const args: string[] = [this.acmePath, "--issue"];
+    const recentLogLines: string[] = [];
+    const appendRecentLog = async (line: string) => {
+      const normalizedLine = line.trim();
+      if (normalizedLine) {
+        recentLogLines.push(normalizedLine);
+        if (recentLogLines.length > 20) {
+          recentLogLines.shift();
+        }
+      }
+      if (onLog) {
+        await onLog(line);
+      }
+    };
+
     args.push("--home", this.acmeDir, "--config-home", this.acmeDir);
     if (certificateAuthority) {
       args.push("--server", certificateAuthority);
+    }
+    if (force !== false) {
+      args.push("--force");
     }
     if (method === "dns") {
       if (!dnsType) throw new Error("缺少 DNS 验证类型");
@@ -391,13 +410,37 @@ export class AcmeService {
     });
     const issueExitPromise = waitForProcessExit(issueProc);
 
-    const p1 = this.processIssueStream(issueProc.stdout, onLog);
-    const p2 = this.processIssueStream(issueProc.stderr, onLog);
+    const p1 = this.processIssueStream(issueProc.stdout, appendRecentLog);
+    const p2 = this.processIssueStream(issueProc.stderr, appendRecentLog);
     await Promise.all([p1, p2]);
     const exitCode = await issueExitPromise;
-    if (exitCode !== 0) throw new Error(`证书签发失败，请检查 DNS API 密钥或网络状况。退出码: ${exitCode}`);
+    if (exitCode !== 0) {
+      const brief = recentLogLines
+        .filter((line) => !/^https?:\/\//i.test(line) && !/^v\d/i.test(line))
+        .slice(-5)
+        .join(" | ");
+      throw new Error(
+        `证书签发失败（退出码: ${exitCode}）${brief ? `: ${brief}` : ""}`,
+      );
+    }
     
     return true;
+  }
+
+  async clearDomainWorkingState(domain: string): Promise<void> {
+    const normalizedDomain = domain.trim().toLowerCase();
+    if (!normalizedDomain) return;
+
+    await Promise.all([
+      rm(join(this.acmeDir, normalizedDomain), {
+        recursive: true,
+        force: true,
+      }),
+      rm(join(this.acmeDir, `${normalizedDomain}_ecc`), {
+        recursive: true,
+        force: true,
+      }),
+    ]);
   }
 
   private async processIssueStream(

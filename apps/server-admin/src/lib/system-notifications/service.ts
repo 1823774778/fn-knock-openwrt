@@ -1,0 +1,1035 @@
+import { createHash, randomBytes } from "node:crypto";
+import {
+  getNotificationProviderDefinition,
+  listNotificationProviderDefinitions,
+  maskNotificationProvider,
+  sendNotificationWithProvider,
+} from "./definitions";
+import {
+  buildNotificationGroupKey,
+  eventMatchesNotificationRule,
+} from "./matcher";
+import { redisNotificationStore } from "./redis-store";
+import {
+  buildNotificationMessage,
+  buildNotificationRuleName,
+} from "./templates";
+import {
+  NOTIFICATION_DELIVERY_STATUSES,
+  NOTIFICATION_GROUP_BY_VALUES,
+  NOTIFICATION_MESSAGE_TEMPLATE_MODES,
+  NOTIFICATION_PROVIDER_TYPES,
+  NOTIFICATION_TEMPLATE_OVERRIDE_MODES,
+  type NotificationDeliveryClearQuery,
+  type NotificationDelivery,
+  type NotificationDeliveryListQuery,
+  type NotificationDeliveryPolicy,
+  type NotificationProvider,
+  type NotificationProviderUpsertInput,
+  type NotificationRule,
+  type NotificationRuleUpsertInput,
+  type NotificationTargetBinding,
+  type NotificationTrigger,
+  type NotificationTriggerListQuery,
+} from "./types";
+import {
+  isSystemEventLevel,
+  isSystemEventSource,
+  isSystemEventType,
+} from "../system-events/constants";
+import type { SystemEventEnvelope } from "../system-events/types";
+
+const DEFAULT_DELIVERY_POLICY: Required<NotificationDeliveryPolicy> = {
+  timeout_seconds: 5,
+  max_attempts: 3,
+  backoff_seconds: 30,
+};
+
+const nowIso = () => new Date().toISOString();
+
+const createId = (prefix: string) =>
+  `${prefix}_${randomBytes(10).toString("hex")}`;
+
+const createStableId = (prefix: string, ...parts: string[]) =>
+  `${prefix}_${createHash("sha256")
+    .update(parts.join("\u0000"))
+    .digest("hex")
+    .slice(0, 24)}`;
+
+const escapeRegExp = (value: string) =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const asPlainRecord = (value: unknown) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {} as Record<string, unknown>;
+  }
+  return value as Record<string, unknown>;
+};
+
+const uniqueStrings = (values: string[] | undefined) =>
+  Array.from(
+    new Set((values || []).map((value) => value.trim()).filter(Boolean)),
+  );
+
+const buildNextSequentialName = (
+  baseLabel: string,
+  existingNames: string[],
+) => {
+  const normalizedBase = baseLabel.trim() || "未命名";
+  const pattern = new RegExp(`^${escapeRegExp(normalizedBase)}\\s+(\\d+)$`);
+  const usedIndexes = new Set<number>();
+
+  for (const name of existingNames) {
+    const match = name.trim().match(pattern);
+    if (!match) continue;
+
+    const index = Number.parseInt(match[1] || "", 10);
+    if (Number.isFinite(index) && index > 0) {
+      usedIndexes.add(index);
+    }
+  }
+
+  let nextIndex = 1;
+  while (usedIndexes.has(nextIndex)) {
+    nextIndex += 1;
+  }
+
+  return `${normalizedBase} ${nextIndex}`;
+};
+
+const parseNumberField = (
+  value: unknown,
+  fallback: number,
+  options: { min?: number; max?: number } = {},
+) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  const floored = Math.floor(parsed);
+  if (options.min !== undefined && floored < options.min) {
+    return options.min;
+  }
+  if (options.max !== undefined && floored > options.max) {
+    return options.max;
+  }
+  return floored;
+};
+
+const normalizeJsonField = (value: unknown, fieldLabel: string) => {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value) as unknown;
+    } catch {
+      throw new Error(`${fieldLabel} 必须是合法 JSON`);
+    }
+  }
+  return value;
+};
+
+const normalizeSchemaPatch = (
+  raw: Record<string, unknown>,
+  fields: Array<{
+    key: string;
+    label: string;
+    type: "string" | "number" | "boolean" | "select" | "json";
+    options?: Array<{ value: string }>;
+  }>,
+) => {
+  const normalized: Record<string, unknown> = {};
+
+  for (const field of fields) {
+    if (!(field.key in raw)) continue;
+    const input = raw[field.key];
+    switch (field.type) {
+      case "string":
+        normalized[field.key] =
+          input === undefined || input === null ? "" : String(input).trim();
+        break;
+      case "number":
+        normalized[field.key] = parseNumberField(input, 0);
+        break;
+      case "boolean":
+        normalized[field.key] = Boolean(input);
+        break;
+      case "select": {
+        const value = String(input ?? "").trim();
+        if (
+          field.options?.length &&
+          !field.options.some((option) => option.value === value)
+        ) {
+          throw new Error(`${field.label} 取值不合法`);
+        }
+        normalized[field.key] = value;
+        break;
+      }
+      case "json":
+        normalized[field.key] = normalizeJsonField(input, field.label);
+        break;
+    }
+  }
+
+  return normalized;
+};
+
+const applySchemaDefaults = (
+  config: Record<string, unknown>,
+  fields: Array<{
+    key: string;
+    default_value?: string | number | boolean | null;
+  }>,
+) => {
+  const next = { ...config };
+  for (const field of fields) {
+    if (next[field.key] !== undefined) continue;
+    if (field.default_value === undefined) continue;
+    next[field.key] = field.default_value;
+  }
+  return next;
+};
+
+const validateRequiredSchemaFields = (
+  config: Record<string, unknown>,
+  fields: Array<{
+    key: string;
+    label: string;
+    required?: boolean;
+  }>,
+) => {
+  for (const field of fields) {
+    if (!field.required) continue;
+    const value = config[field.key];
+    if (value === undefined || value === null || value === "") {
+      throw new Error(`${field.label} 不能为空`);
+    }
+  }
+};
+
+const resolveDeliveryPolicy = (
+  policy?: NotificationDeliveryPolicy | null,
+): Required<NotificationDeliveryPolicy> => ({
+  timeout_seconds: parseNumberField(
+    policy?.timeout_seconds,
+    DEFAULT_DELIVERY_POLICY.timeout_seconds,
+    { min: 1, max: 30 },
+  ),
+  max_attempts: parseNumberField(
+    policy?.max_attempts,
+    DEFAULT_DELIVERY_POLICY.max_attempts,
+    { min: 1, max: 10 },
+  ),
+  backoff_seconds: parseNumberField(
+    policy?.backoff_seconds,
+    DEFAULT_DELIVERY_POLICY.backoff_seconds,
+    { min: 5, max: 3600 },
+  ),
+});
+
+const isTerminalDeliveryStatus = (status: NotificationDelivery["status"]) =>
+  status === "success" || status === "gave_up" || status === "skipped";
+
+const resolveDeliveryReadyAtMs = (delivery: NotificationDelivery) => {
+  const nextRetryAtMs = delivery.next_retry_at
+    ? Date.parse(delivery.next_retry_at)
+    : NaN;
+  if (Number.isFinite(nextRetryAtMs)) {
+    return nextRetryAtMs;
+  }
+
+  const triggeredAtMs = Date.parse(delivery.triggered_at);
+  return Number.isFinite(triggeredAtMs) ? triggeredAtMs : Date.now();
+};
+
+export class SystemNotificationService {
+  listProviderCatalog() {
+    return listNotificationProviderDefinitions();
+  }
+
+  async listProviders() {
+    const providers = await redisNotificationStore.listProviders();
+    return providers.map(maskNotificationProvider);
+  }
+
+  async createProvider(input: NotificationProviderUpsertInput) {
+    const requestedName = String(input.name || "").trim();
+    const type = String(input.type || "").trim();
+    if (!NOTIFICATION_PROVIDER_TYPES.includes(type as any)) {
+      throw new Error("不支持的通知提供商类型");
+    }
+
+    const definition = getNotificationProviderDefinition(type);
+    if (!definition) {
+      throw new Error("通知提供商定义不存在");
+    }
+
+    const configPatch = normalizeSchemaPatch(
+      asPlainRecord(input.connection_config),
+      definition.connection_schema,
+    );
+    const connectionConfig = applySchemaDefaults(
+      configPatch,
+      definition.connection_schema,
+    );
+    validateRequiredSchemaFields(
+      connectionConfig,
+      definition.connection_schema,
+    );
+
+    const existingProviders = await redisNotificationStore.listProviders();
+    const name =
+      requestedName ||
+      buildNextSequentialName(
+        definition.label,
+        existingProviders.map((provider) => provider.name),
+      );
+
+    const provider: NotificationProvider = {
+      id: createId("ntfprov"),
+      name,
+      type: definition.type,
+      enabled: input.enabled ?? true,
+      connection_config: connectionConfig,
+      created_at: nowIso(),
+      updated_at: nowIso(),
+      last_test_status: "idle",
+      last_error: null,
+    };
+
+    await redisNotificationStore.saveProvider(provider);
+    return maskNotificationProvider(provider);
+  }
+
+  async updateProvider(id: string, input: NotificationProviderUpsertInput) {
+    const provider = await redisNotificationStore.getProvider(id);
+    if (!provider) {
+      throw new Error("通知提供商不存在");
+    }
+
+    const definition = getNotificationProviderDefinition(provider.type);
+    if (!definition) {
+      throw new Error("通知提供商定义不存在");
+    }
+
+    const patch = normalizeSchemaPatch(
+      asPlainRecord(input.connection_config),
+      definition.connection_schema,
+    );
+    const connectionConfig = applySchemaDefaults(
+      {
+        ...provider.connection_config,
+        ...patch,
+      },
+      definition.connection_schema,
+    );
+    validateRequiredSchemaFields(
+      connectionConfig,
+      definition.connection_schema,
+    );
+
+    const updatedProvider: NotificationProvider = {
+      ...provider,
+      name: input.name?.trim() ? input.name.trim() : provider.name,
+      enabled: input.enabled ?? provider.enabled,
+      connection_config: connectionConfig,
+      updated_at: nowIso(),
+    };
+
+    await redisNotificationStore.saveProvider(updatedProvider);
+    return maskNotificationProvider(updatedProvider);
+  }
+
+  async deleteProvider(id: string) {
+    const rules = await redisNotificationStore.listRules();
+    const referencedByRule = rules.find((rule) =>
+      rule.targets.some((target) => target.provider_id === id),
+    );
+    if (referencedByRule) {
+      throw new Error(`该提供商仍被规则「${referencedByRule.name}」引用`);
+    }
+
+    await redisNotificationStore.deleteProvider(id);
+  }
+
+  async testProvider(id: string) {
+    const provider = await redisNotificationStore.getProvider(id);
+    if (!provider) {
+      throw new Error("通知提供商不存在");
+    }
+
+    const timeoutSeconds = parseNumberField(
+      provider.connection_config.timeout_seconds,
+      DEFAULT_DELIVERY_POLICY.timeout_seconds,
+      { min: 1, max: 30 },
+    );
+    const message = {
+      title: "[测试] fn-knock 事件中心通知",
+      summary: "这是一条来自 fn-knock 的测试通知。",
+      body_text: "这是一条来自 fn-knock 事件中心的测试通知，链路已经可以发送。",
+      body_markdown:
+        "- 这是一条来自 fn-knock 事件中心的测试通知\n- 如果你能看到这条消息，说明发送链路可用",
+      severity: "info" as const,
+      facts: [
+        { label: "类型", value: "Provider Test" },
+        { label: "提供商", value: provider.name },
+      ],
+      actions: [],
+      mentions: [],
+      occurred_at: nowIso(),
+      metadata: {
+        test: true,
+      },
+    };
+
+    const result = await sendNotificationWithProvider(
+      provider,
+      message,
+      undefined,
+      timeoutSeconds,
+    );
+
+    const updatedProvider: NotificationProvider = {
+      ...provider,
+      last_test_at: nowIso(),
+      last_test_status: result.success ? "success" : "failed",
+      last_error: result.success ? null : result.reason || "测试发送失败",
+      updated_at: nowIso(),
+    };
+    await redisNotificationStore.saveProvider(updatedProvider);
+
+    return {
+      success: result.success,
+      message: result.success
+        ? "测试发送成功"
+        : result.reason || "测试发送失败",
+      data: {
+        provider: maskNotificationProvider(updatedProvider),
+        request_summary: result.request_summary,
+        response_summary: result.response_summary,
+      },
+    };
+  }
+
+  async listRules() {
+    return redisNotificationStore.listRules();
+  }
+
+  private async normalizeRuleTargets(
+    inputTargets: NotificationRuleUpsertInput["targets"],
+    currentTargets: NotificationTargetBinding[] = [],
+  ) {
+    const providers = await redisNotificationStore.listProviders();
+    const providerMap = new Map(
+      providers.map((provider) => [provider.id, provider]),
+    );
+    const currentTargetMap = new Map(
+      currentTargets.map((target) => [target.id, target]),
+    );
+
+    const targets: NotificationTargetBinding[] = [];
+    for (const inputTarget of inputTargets || []) {
+      const provider = providerMap.get(inputTarget.provider_id);
+      if (!provider) {
+        throw new Error("规则引用了不存在的通知提供商");
+      }
+
+      const definition = getNotificationProviderDefinition(provider.type);
+      if (!definition) {
+        throw new Error("通知提供商定义不存在");
+      }
+
+      const existingTarget = inputTarget.id
+        ? currentTargetMap.get(inputTarget.id)
+        : null;
+      const targetPatch = normalizeSchemaPatch(
+        asPlainRecord(inputTarget.target_config),
+        definition.target_schema,
+      );
+      const targetConfig = applySchemaDefaults(
+        {
+          ...(existingTarget?.target_config || {}),
+          ...targetPatch,
+        },
+        definition.target_schema,
+      );
+
+      const now = nowIso();
+      const templateOverrideMode = String(
+        inputTarget.template_override_mode ||
+          existingTarget?.template_override_mode ||
+          "inherit",
+      ).trim();
+      if (
+        !NOTIFICATION_TEMPLATE_OVERRIDE_MODES.includes(
+          templateOverrideMode as any,
+        )
+      ) {
+        throw new Error("目标模板覆盖模式不合法");
+      }
+
+      targets.push({
+        id: inputTarget.id || createId("ntftarget"),
+        provider_id: provider.id,
+        enabled: inputTarget.enabled ?? existingTarget?.enabled ?? true,
+        target_config: targetConfig,
+        template_override_mode:
+          templateOverrideMode as NotificationTargetBinding["template_override_mode"],
+        template_override:
+          inputTarget.template_override ??
+          existingTarget?.template_override ??
+          null,
+        delivery_policy:
+          inputTarget.delivery_policy ??
+          existingTarget?.delivery_policy ??
+          null,
+        created_at: existingTarget?.created_at || now,
+        updated_at: now,
+      });
+    }
+
+    return targets;
+  }
+
+  async createRule(input: NotificationRuleUpsertInput) {
+    const eventType = String(input.event_type || "").trim();
+    const groupBy = String(input.group_by || "").trim();
+    const messageTemplateMode = String(
+      input.message_template_mode || "default",
+    ).trim();
+
+    if (!isSystemEventType(eventType)) {
+      throw new Error("不支持的系统事件类型");
+    }
+    if (!NOTIFICATION_GROUP_BY_VALUES.includes(groupBy as any)) {
+      throw new Error("聚合维度不合法");
+    }
+    if (
+      !NOTIFICATION_MESSAGE_TEMPLATE_MODES.includes(messageTemplateMode as any)
+    ) {
+      throw new Error("消息模板模式不合法");
+    }
+
+    const eventLevelFilter = uniqueStrings(input.event_level_filter);
+    if (!eventLevelFilter.every((value) => isSystemEventLevel(value))) {
+      throw new Error("事件级别过滤条件不合法");
+    }
+
+    const eventSourceFilter = uniqueStrings(input.event_source_filter);
+    if (!eventSourceFilter.every((value) => isSystemEventSource(value))) {
+      throw new Error("事件来源过滤条件不合法");
+    }
+
+    const targets = await this.normalizeRuleTargets(input.targets);
+    if (!targets.length) {
+      throw new Error("至少需要绑定一个通知目标");
+    }
+
+    const existingRules = await redisNotificationStore.listRules();
+    if (existingRules.some((rule) => rule.event_type === eventType)) {
+      throw new Error("该事件已有通知规则，请先删除原规则");
+    }
+
+    const now = nowIso();
+    const rule: NotificationRule = {
+      id: createId("ntfrule"),
+      name: buildNotificationRuleName(eventType),
+      enabled: input.enabled ?? true,
+      event_type: eventType,
+      ...(eventLevelFilter.length
+        ? { event_level_filter: eventLevelFilter }
+        : {}),
+      ...(eventSourceFilter.length
+        ? { event_source_filter: eventSourceFilter }
+        : {}),
+      window_seconds: parseNumberField(input.window_seconds, 300, {
+        min: 1,
+        max: 86400,
+      }),
+      threshold_count: parseNumberField(input.threshold_count, 1, {
+        min: 1,
+        max: 9999,
+      }),
+      group_by: groupBy as NotificationRule["group_by"],
+      cooldown_seconds: parseNumberField(input.cooldown_seconds, 300, {
+        min: 0,
+        max: 86400,
+      }),
+      targets,
+      message_template_mode:
+        messageTemplateMode as NotificationRule["message_template_mode"],
+      message_template: input.message_template ?? null,
+      created_at: now,
+      updated_at: now,
+      last_triggered_at: null,
+    };
+
+    await redisNotificationStore.saveRule(rule);
+    return rule;
+  }
+
+  async updateRule(id: string, input: NotificationRuleUpsertInput) {
+    const currentRule = await redisNotificationStore.getRule(id);
+    if (!currentRule) {
+      throw new Error("通知规则不存在");
+    }
+
+    const eventType = input.event_type
+      ? String(input.event_type).trim()
+      : currentRule.event_type;
+    const groupBy = input.group_by
+      ? String(input.group_by).trim()
+      : currentRule.group_by;
+    const messageTemplateMode = input.message_template_mode
+      ? String(input.message_template_mode).trim()
+      : currentRule.message_template_mode;
+
+    if (!isSystemEventType(eventType)) {
+      throw new Error("不支持的系统事件类型");
+    }
+    if (!NOTIFICATION_GROUP_BY_VALUES.includes(groupBy as any)) {
+      throw new Error("聚合维度不合法");
+    }
+    if (
+      !NOTIFICATION_MESSAGE_TEMPLATE_MODES.includes(messageTemplateMode as any)
+    ) {
+      throw new Error("消息模板模式不合法");
+    }
+
+    const eventLevelFilter =
+      input.event_level_filter !== undefined
+        ? uniqueStrings(input.event_level_filter)
+        : currentRule.event_level_filter || [];
+    if (!eventLevelFilter.every((value) => isSystemEventLevel(value))) {
+      throw new Error("事件级别过滤条件不合法");
+    }
+
+    const eventSourceFilter =
+      input.event_source_filter !== undefined
+        ? uniqueStrings(input.event_source_filter)
+        : currentRule.event_source_filter || [];
+    if (!eventSourceFilter.every((value) => isSystemEventSource(value))) {
+      throw new Error("事件来源过滤条件不合法");
+    }
+
+    const targets =
+      input.targets !== undefined
+        ? await this.normalizeRuleTargets(input.targets, currentRule.targets)
+        : currentRule.targets;
+    if (!targets.length) {
+      throw new Error("至少需要绑定一个通知目标");
+    }
+
+    if (
+      eventType !== currentRule.event_type &&
+      (await redisNotificationStore.listRules()).some(
+        (rule) => rule.id !== currentRule.id && rule.event_type === eventType,
+      )
+    ) {
+      throw new Error("该事件已有通知规则，请先删除原规则");
+    }
+
+    const updatedRule: NotificationRule = {
+      ...currentRule,
+      name: buildNotificationRuleName(eventType),
+      enabled: input.enabled ?? currentRule.enabled,
+      event_type: eventType,
+      event_level_filter: eventLevelFilter.length
+        ? eventLevelFilter
+        : undefined,
+      event_source_filter: eventSourceFilter.length
+        ? eventSourceFilter
+        : undefined,
+      window_seconds:
+        input.window_seconds !== undefined
+          ? parseNumberField(input.window_seconds, currentRule.window_seconds, {
+              min: 1,
+              max: 86400,
+            })
+          : currentRule.window_seconds,
+      threshold_count:
+        input.threshold_count !== undefined
+          ? parseNumberField(
+              input.threshold_count,
+              currentRule.threshold_count,
+              {
+                min: 1,
+                max: 9999,
+              },
+            )
+          : currentRule.threshold_count,
+      group_by: groupBy as NotificationRule["group_by"],
+      cooldown_seconds:
+        input.cooldown_seconds !== undefined
+          ? parseNumberField(
+              input.cooldown_seconds,
+              currentRule.cooldown_seconds,
+              {
+                min: 0,
+                max: 86400,
+              },
+            )
+          : currentRule.cooldown_seconds,
+      targets,
+      message_template_mode:
+        messageTemplateMode as NotificationRule["message_template_mode"],
+      message_template:
+        input.message_template !== undefined
+          ? input.message_template
+          : currentRule.message_template,
+      updated_at: nowIso(),
+    };
+
+    await redisNotificationStore.saveRule(updatedRule);
+    return updatedRule;
+  }
+
+  async deleteRule(id: string) {
+    await redisNotificationStore.deleteRule(id);
+  }
+
+  async listTriggers(query: NotificationTriggerListQuery) {
+    return redisNotificationStore.listTriggers(query);
+  }
+
+  async listDeliveries(query: NotificationDeliveryListQuery) {
+    return redisNotificationStore.listDeliveries(query);
+  }
+
+  async clearDeliveries(query: NotificationDeliveryClearQuery) {
+    return redisNotificationStore.clearDeliveries(query);
+  }
+
+  async handleEvent(event: SystemEventEnvelope) {
+    const rules = await redisNotificationStore.listRules();
+    const matchingRules = rules.filter((rule) =>
+      eventMatchesNotificationRule(event, rule),
+    );
+    if (!matchingRules.length) return;
+
+    for (const rule of matchingRules) {
+      const triggerId = createStableId("ntftrig", rule.id, event.id);
+      let trigger = await redisNotificationStore.getTrigger(triggerId);
+      let triggerCreated = false;
+
+      if (!trigger) {
+        const groupKey = buildNotificationGroupKey(event, rule.group_by);
+        const matchedCount = await redisNotificationStore.appendWindowHit({
+          ruleId: rule.id,
+          groupKey,
+          eventId: event.id,
+          happenedAtMs: Date.parse(event.happened_at) || Date.now(),
+          windowSeconds: rule.window_seconds,
+        });
+        if (matchedCount < rule.threshold_count) {
+          continue;
+        }
+
+        const cooldownUntil = await redisNotificationStore.getCooldownUntil(
+          rule.id,
+          groupKey,
+        );
+        if (cooldownUntil && toMs(cooldownUntil) > Date.now()) {
+          continue;
+        }
+
+        const draftTrigger: NotificationTrigger = {
+          id: triggerId,
+          rule_id: rule.id,
+          event_id: event.id,
+          group_key: groupKey,
+          matched_count: matchedCount,
+          message_snapshot: buildNotificationMessage({
+            event,
+            rule,
+            matchedCount,
+            groupKey,
+          }),
+          rule_snapshot: rule,
+          status: "created",
+          created_at: nowIso(),
+        };
+        triggerCreated =
+          await redisNotificationStore.saveTriggerIfAbsent(draftTrigger);
+        trigger =
+          triggerCreated
+            ? draftTrigger
+            : await redisNotificationStore.getTrigger(draftTrigger.id);
+      }
+
+      if (!trigger) {
+        continue;
+      }
+
+      const fanoutRule = trigger.rule_snapshot;
+      const fanoutMessage = trigger.message_snapshot;
+      const triggerCreatedAt = trigger.created_at;
+
+      for (const target of fanoutRule.targets) {
+        const provider = await redisNotificationStore.getProvider(
+          target.provider_id,
+        );
+        const deliveryId = createStableId("ntfdel", trigger.id, target.id);
+        if (!provider || !provider.enabled || !target.enabled) {
+          const skippedDelivery: NotificationDelivery = {
+            id: deliveryId,
+            trigger_id: trigger.id,
+            rule_id: trigger.rule_id,
+            target_id: target.id,
+            provider_id: target.provider_id,
+            event_id: event.id,
+            status: "skipped",
+            reason: !provider
+              ? "provider_missing"
+              : !provider.enabled
+                ? "provider_disabled"
+                : "target_disabled",
+            provider_type: provider?.type || "webhook",
+            message_snapshot: fanoutMessage,
+            target_snapshot: target,
+            provider_snapshot: provider
+              ? maskNotificationProvider(provider)
+              : {
+                  id: target.provider_id,
+                  name: "已删除提供商",
+                  type: "webhook",
+                  enabled: false,
+                  created_at: triggerCreatedAt,
+                  updated_at: triggerCreatedAt,
+                  connection_config_masked: {},
+                },
+            attempt_count: 0,
+            triggered_at: triggerCreatedAt,
+          };
+          await redisNotificationStore.saveDeliveryIfAbsent(skippedDelivery);
+          continue;
+        }
+
+        const delivery: NotificationDelivery = {
+          id: deliveryId,
+          trigger_id: trigger.id,
+          rule_id: trigger.rule_id,
+          target_id: target.id,
+          provider_id: provider.id,
+          event_id: event.id,
+          status: "queued",
+          provider_type: provider.type,
+          message_snapshot: fanoutMessage,
+          target_snapshot: target,
+          provider_snapshot: maskNotificationProvider(provider),
+          attempt_count: 0,
+          triggered_at: triggerCreatedAt,
+          next_retry_at: triggerCreatedAt,
+        };
+        const deliveryCreated =
+          await redisNotificationStore.saveDeliveryIfAbsent(delivery);
+        if (deliveryCreated) {
+          await redisNotificationStore.enqueueDelivery(delivery.id, Date.now());
+          continue;
+        }
+
+        const existingDelivery = await redisNotificationStore.getDelivery(
+          delivery.id,
+        );
+        if (existingDelivery && !isTerminalDeliveryStatus(existingDelivery.status)) {
+          await redisNotificationStore.enqueueDelivery(
+            existingDelivery.id,
+            resolveDeliveryReadyAtMs(existingDelivery),
+          );
+        }
+      }
+
+      if (triggerCreated) {
+        const updatedRule: NotificationRule = {
+          ...rule,
+          last_triggered_at: triggerCreatedAt,
+          updated_at: triggerCreatedAt,
+        };
+        await redisNotificationStore.saveRule(updatedRule);
+      }
+
+      const latestTrigger = await redisNotificationStore.getTrigger(trigger.id);
+      if (latestTrigger?.status === "created") {
+        await redisNotificationStore.saveTrigger({
+          ...latestTrigger,
+          status: "fanout_done",
+        });
+      }
+      await this.refreshTriggerStatus(trigger.id);
+
+      if (fanoutRule.cooldown_seconds > 0 && triggerCreated) {
+        const until = new Date(
+          Date.now() + fanoutRule.cooldown_seconds * 1000,
+        ).toISOString();
+        await redisNotificationStore.setCooldown({
+          ruleId: fanoutRule.id,
+          groupKey: trigger.group_key,
+          until,
+          cooldownSeconds: fanoutRule.cooldown_seconds,
+        });
+      }
+    }
+  }
+
+  async processReadyDeliveries(limit = 10) {
+    const deliveryIds =
+      await redisNotificationStore.pullReadyDeliveryIds(limit);
+    for (const deliveryId of deliveryIds) {
+      await this.processDelivery(deliveryId);
+    }
+    return deliveryIds.length;
+  }
+
+  private async processDelivery(deliveryId: string) {
+    const delivery = await redisNotificationStore.getDelivery(deliveryId);
+    if (!delivery) return;
+    if (
+      delivery.status === "success" ||
+      delivery.status === "gave_up" ||
+      delivery.status === "skipped"
+    ) {
+      return;
+    }
+
+    const trigger = await redisNotificationStore.getTrigger(
+      delivery.trigger_id,
+    );
+    const rule = await redisNotificationStore.getRule(delivery.rule_id);
+    const provider = await redisNotificationStore.getProvider(
+      delivery.provider_id,
+    );
+    if (!trigger || !rule || !provider) {
+      await redisNotificationStore.saveDelivery({
+        ...delivery,
+        status: "gave_up",
+        reason: "missing_trigger_rule_or_provider",
+      });
+      if (trigger) {
+        await this.refreshTriggerStatus(trigger.id);
+      }
+      return;
+    }
+
+    const target =
+      rule.targets.find((item) => item.id === delivery.target_id) ||
+      delivery.target_snapshot;
+    const eventId = delivery.event_id;
+    const policy = resolveDeliveryPolicy(target.delivery_policy);
+    const sendingDelivery: NotificationDelivery = {
+      ...delivery,
+      status: "sending",
+      attempt_count: delivery.attempt_count + 1,
+      reason: null,
+      next_retry_at: null,
+    };
+    await redisNotificationStore.saveDelivery(sendingDelivery);
+
+    const definition = getNotificationProviderDefinition(provider.type);
+    if (!definition) {
+      await redisNotificationStore.saveDelivery({
+        ...sendingDelivery,
+        status: "gave_up",
+        reason: `unsupported_provider:${provider.type}`,
+      });
+      await this.refreshTriggerStatus(trigger.id);
+      return;
+    }
+
+    const event = {
+      id: eventId,
+      type: rule.event_type,
+      source: rule.event_source_filter?.[0] || "SERVER_ADMIN",
+      level: rule.event_level_filter?.[0] || "WARN",
+      happened_at: delivery.message_snapshot.occurred_at,
+      payload: {},
+    } as SystemEventEnvelope;
+
+    const result = await sendNotificationWithProvider(
+      provider,
+      delivery.message_snapshot,
+      {
+        trigger,
+        delivery: sendingDelivery,
+        rule,
+        target,
+        provider,
+        event,
+        effective_delivery_policy: policy,
+      },
+      policy.timeout_seconds,
+    );
+
+    if (result.success) {
+      await redisNotificationStore.saveDelivery({
+        ...sendingDelivery,
+        status: "success",
+        request_summary: result.request_summary || null,
+        response_summary: result.response_summary || null,
+        sent_at: nowIso(),
+        next_retry_at: null,
+      });
+      await this.refreshTriggerStatus(trigger.id);
+      return;
+    }
+
+    const shouldRetry =
+      result.retryable && sendingDelivery.attempt_count < policy.max_attempts;
+    if (shouldRetry) {
+      const nextRetryAt = new Date(
+        Date.now() + policy.backoff_seconds * 1000,
+      ).toISOString();
+      await redisNotificationStore.saveDelivery({
+        ...sendingDelivery,
+        status: "failed",
+        reason: result.reason || "delivery_failed",
+        request_summary: result.request_summary || null,
+        response_summary: result.response_summary || null,
+        next_retry_at: nextRetryAt,
+      });
+      await redisNotificationStore.enqueueDelivery(
+        sendingDelivery.id,
+        Date.parse(nextRetryAt),
+      );
+      return;
+    }
+
+    await redisNotificationStore.saveDelivery({
+      ...sendingDelivery,
+      status: "gave_up",
+      reason: result.reason || "delivery_gave_up",
+      request_summary: result.request_summary || null,
+      response_summary: result.response_summary || null,
+      next_retry_at: null,
+    });
+    await this.refreshTriggerStatus(trigger.id);
+  }
+
+  private async refreshTriggerStatus(triggerId: string) {
+    const trigger = await redisNotificationStore.getTrigger(triggerId);
+    if (!trigger) return;
+
+    const deliveries =
+      await redisNotificationStore.listDeliveriesByTrigger(triggerId);
+    if (!deliveries.length) return;
+
+    const hasPending = deliveries.some(
+      (delivery) => !isTerminalDeliveryStatus(delivery.status),
+    );
+    if (hasPending) {
+      return;
+    }
+
+    const allSucceeded = deliveries.every(
+      (delivery) =>
+        delivery.status === "success" || delivery.status === "skipped",
+    );
+    await redisNotificationStore.saveTrigger({
+      ...trigger,
+      status: allSucceeded ? "completed" : "partially_failed",
+    });
+  }
+}
+
+const toMs = (value: string) => {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+export const systemNotificationService = new SystemNotificationService();

@@ -3586,6 +3586,25 @@ return actual
     const domainDir = join(dataPath, "ssl", domain);
     const installedKeyPath = join(domainDir, `${domain}.key`);
     const installedFullchainPath = join(domainDir, "fullchain.cer");
+    const normalizedDomain = domain.trim().toLowerCase();
+    const acmeDirCandidates = [
+      {
+        dir: join(ACME_HOME_DIR, `${normalizedDomain}_ecc`),
+        useEcc: true,
+      },
+      {
+        dir: join(ACME_HOME_DIR, normalizedDomain),
+        useEcc: false,
+      },
+      {
+        dir: join(homedir(), ".acme.sh", `${normalizedDomain}_ecc`),
+        useEcc: true,
+      },
+      {
+        dir: join(homedir(), ".acme.sh", normalizedDomain),
+        useEcc: false,
+      },
+    ];
 
     try {
       const hasKey = await fileExists(installedKeyPath);
@@ -3597,9 +3616,21 @@ return actual
         const exists = await fileExists(ACME_EXECUTABLE_PATH);
         if (!exists) return false;
 
-        const installProc = spawn(
-          ACME_EXECUTABLE_PATH,
-          [
+        const existingCandidates: typeof acmeDirCandidates = [];
+        for (const candidate of acmeDirCandidates) {
+          if (await fileExists(candidate.dir)) {
+            existingCandidates.push(candidate);
+          }
+        }
+
+        const installVariants =
+          existingCandidates.length > 0
+            ? [...new Set(existingCandidates.map((candidate) => candidate.useEcc))]
+            : [true, false];
+
+        let installSucceeded = false;
+        for (const useEcc of installVariants) {
+          const installArgs = [
             "--home",
             ACME_HOME_DIR,
             "--config-home",
@@ -3611,17 +3642,28 @@ return actual
             installedKeyPath,
             "--fullchain-file",
             installedFullchainPath,
-          ],
-          { stdio: ["ignore", "pipe", "pipe"] },
-        );
-        const installExitPromise = waitForProcessExit(installProc);
+          ];
+          if (useEcc) {
+            installArgs.push("--ecc");
+          }
 
-        const [, , exitCode] = await Promise.all([
-          collectStreamOutput(installProc.stdout).catch(() => ""),
-          collectStreamOutput(installProc.stderr).catch(() => ""),
-          installExitPromise,
-        ]);
-        if (exitCode !== 0) return false;
+          const installProc = spawn(ACME_EXECUTABLE_PATH, installArgs, {
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+          const installExitPromise = waitForProcessExit(installProc);
+
+          const [, , exitCode] = await Promise.all([
+            collectStreamOutput(installProc.stdout).catch(() => ""),
+            collectStreamOutput(installProc.stderr).catch(() => ""),
+            installExitPromise,
+          ]);
+          if (exitCode === 0) {
+            installSucceeded = true;
+            break;
+          }
+        }
+
+        if (!installSucceeded) return false;
       }
 
       const cert = await fs.readFile(installedFullchainPath, "utf-8");
@@ -3632,12 +3674,10 @@ return actual
       return true;
     } catch {
       try {
-        const fallbackHomes = [ACME_HOME_DIR, join(homedir(), ".acme.sh")];
-        for (const home of fallbackHomes) {
-          const certDir = join(home, domain);
-          const certPathA = join(certDir, "fullchain.cer");
-          const certPathB = join(certDir, `${domain}.cer`);
-          const keyPath = join(certDir, `${domain}.key`);
+        for (const candidate of acmeDirCandidates) {
+          const certPathA = join(candidate.dir, "fullchain.cer");
+          const certPathB = join(candidate.dir, `${normalizedDomain}.cer`);
+          const keyPath = join(candidate.dir, `${normalizedDomain}.key`);
           try {
             const cert = await fs
               .readFile(certPathA, "utf-8")

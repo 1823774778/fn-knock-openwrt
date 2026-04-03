@@ -63,6 +63,8 @@ import { ipLocationRoutes } from "./routes/ip-location";
 import { internalSystemEventRoutes } from "./routes/internal-system-events";
 import { cleanupLegacyAuthLogStorage } from "./lib/cleanup-legacy-auth-logs";
 import { eventRoutes } from "./routes/events";
+import { notificationRoutes } from "./routes/notifications";
+import { systemNotificationRuntime } from "./lib/system-notifications/runtime";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -281,6 +283,7 @@ app.use(portScannerPlugin);
 app.use(assetsRoutes);
 app.use(adminRoutes);
 app.use(eventRoutes);
+app.use(notificationRoutes);
 app.use(sslRoutes);
 app.use(acmeRoutes);
 app.use(systemRoutes);
@@ -463,6 +466,7 @@ await restoreCloudflaredOnBoot();
 await terminalManager.cleanupExpiredSessions().catch((error) => {
   console.error("[terminal] failed to cleanup sessions on boot:", error);
 });
+systemNotificationRuntime.start();
 
 const backendPort = toPort(BACKEND_PORT);
 const authPort = toPort(AUTH_PORT);

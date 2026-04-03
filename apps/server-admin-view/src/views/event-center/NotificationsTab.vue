@@ -1,0 +1,94 @@
+<script setup lang="ts">
+import { computed, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import {
+  RekaTabs,
+  RekaTabsContent,
+  RekaTabsList,
+  RekaTabsTrigger,
+} from "@/components/reka-tabs";
+import { useSyncedQueryTab } from "@admin-shared/composables/useSyncedQueryTab";
+import ProvidersTab from "./notifications/ProvidersTab.vue";
+import RulesTab from "./notifications/RulesTab.vue";
+import DeliveriesTab from "./notifications/DeliveriesTab.vue";
+
+const notificationTabs = [
+  {
+    value: "providers",
+    label: "提供商",
+  },
+  {
+    value: "rules",
+    label: "规则",
+  },
+  {
+    value: "deliveries",
+    label: "投递记录",
+  },
+] as const;
+
+type NotificationTabValue = (typeof notificationTabs)[number]["value"];
+
+const router = useRouter();
+const route = useRoute();
+
+const allowedTabs = notificationTabs.map((tab) => tab.value);
+const isNotificationsRouteActive = computed(
+  () => String(route.query.tab || "events") === "notifications",
+);
+
+const { currentTab, navigateTo } = useSyncedQueryTab({
+  route,
+  router,
+  defaultTab: "providers",
+  allowedTabs,
+  queryKey: "notificationsTab",
+  active: isNotificationsRouteActive,
+});
+
+const visitedTabs = ref<NotificationTabValue[]>(["providers"]);
+
+watch(currentTab, (nextTab) => {
+  const normalizedTab = nextTab as NotificationTabValue;
+  if (visitedTabs.value.includes(normalizedTab)) return;
+  visitedTabs.value = [...visitedTabs.value, normalizedTab];
+});
+</script>
+
+<template>
+  <div class="min-h-0">
+    <RekaTabs
+      :model-value="currentTab"
+      @update:model-value="navigateTo"
+      :unmount-on-hide="false"
+      class="min-h-0 gap-0 overflow-hidden rounded-xl border bg-background shadow-sm"
+    >
+      <div class="border-b px-4 sm:px-6">
+        <RekaTabsList
+          aria-label="通知配置分区"
+          class="w-fit rounded-none border-0 bg-transparent px-0 after:right-0 after:left-0"
+        >
+          <RekaTabsTrigger
+            v-for="tab in notificationTabs"
+            :key="tab.value"
+            :value="tab.value"
+          >
+            {{ tab.label }}
+          </RekaTabsTrigger>
+        </RekaTabsList>
+      </div>
+
+      <RekaTabsContent value="providers" class="min-h-0">
+        <ProvidersTab v-if="visitedTabs.includes('providers')" />
+      </RekaTabsContent>
+
+      <RekaTabsContent value="rules" class="min-h-0">
+        <RulesTab v-if="visitedTabs.includes('rules')" />
+      </RekaTabsContent>
+
+      <RekaTabsContent value="deliveries" class="min-h-0">
+        <DeliveriesTab v-if="visitedTabs.includes('deliveries')" />
+      </RekaTabsContent>
+    </RekaTabs>
+  </div>
+</template>

@@ -341,6 +341,22 @@ export const executeAcmeApplicationJob = async (options: {
           : "证书签发成功，但读取证书文件失败（请稍后重试或检查 acme.sh 目录）",
       );
     }
+    if (saved) {
+      try {
+        await acme.clearDomainWorkingState(application.primaryDomain);
+        await configManager.appendAcmeLog(
+          jobId,
+          "已清理 acme.sh 域名工作目录，证书列表与续期由系统任务统一管理",
+        );
+      } catch (error: any) {
+        await configManager.appendAcmeLog(
+          jobId,
+          `证书已保存，但清理 acme.sh 域名状态失败: ${
+            error?.message || String(error)
+          }`,
+        );
+      }
+    }
 
     const linkedLibraryCertificate = saved
       ? await configManager.getSSLCertificateBySourceRef("acme", application.id)
