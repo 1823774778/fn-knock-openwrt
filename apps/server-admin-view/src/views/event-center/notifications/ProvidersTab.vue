@@ -313,28 +313,6 @@ const testProvider = async (provider: NotificationProviderView) => {
 const resolveProviderTypeLabel = (type: string) =>
   catalog.value.find((item) => item.type === type)?.label || type;
 
-const resolveTestStatusLabel = (status?: string | null) => {
-  switch (status) {
-    case "success":
-      return "最近成功";
-    case "failed":
-      return "最近失败";
-    default:
-      return "未测试";
-  }
-};
-
-const resolveTestStatusClass = (status?: string | null) => {
-  switch (status) {
-    case "success":
-      return "border-emerald-500/25 bg-emerald-500/10 text-emerald-700";
-    case "failed":
-      return "border-rose-500/25 bg-rose-500/10 text-rose-700";
-    default:
-      return "border-muted-foreground/20 bg-muted text-muted-foreground";
-  }
-};
-
 onMounted(() => {
   void loadData();
 });
