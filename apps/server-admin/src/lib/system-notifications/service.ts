@@ -68,6 +68,55 @@ const asPlainRecord = (value: unknown) => {
   return value as Record<string, unknown>;
 };
 
+const normalizeProviderConnectionConfig = (
+  providerType: string,
+  raw: Record<string, unknown>,
+) => {
+  if (providerType !== "wxpusher") {
+    return raw;
+  }
+
+  return {
+    ...raw,
+    ...(!("app_token" in raw) && "appToken" in raw
+      ? { app_token: raw.appToken }
+      : {}),
+    ...(!("server_url" in raw) && "serverUrl" in raw
+      ? { server_url: raw.serverUrl }
+      : {}),
+    ...(!("timeout_seconds" in raw) && "timeoutSeconds" in raw
+      ? { timeout_seconds: raw.timeoutSeconds }
+      : {}),
+  };
+};
+
+const normalizeProviderTargetConfig = (
+  providerType: string,
+  raw: Record<string, unknown>,
+) => {
+  if (providerType !== "wxpusher") {
+    return raw;
+  }
+
+  const topicValue =
+    raw.topic_ids ??
+    raw.topicIds ??
+    raw.topic_id ??
+    raw.topicId ??
+    raw.topic ??
+    raw.Topic;
+
+  return {
+    ...raw,
+    ...(raw.topic_ids === undefined && topicValue !== undefined
+      ? { topic_ids: topicValue }
+      : {}),
+    ...(!("verify_pay_type" in raw) && "verifyPayType" in raw
+      ? { verify_pay_type: raw.verifyPayType }
+      : {}),
+  };
+};
+
 const uniqueStrings = (values: string[] | undefined) =>
   Array.from(
     new Set((values || []).map((value) => value.trim()).filter(Boolean)),
@@ -264,7 +313,10 @@ export class SystemNotificationService {
     }
 
     const configPatch = normalizeSchemaPatch(
-      asPlainRecord(input.connection_config),
+      normalizeProviderConnectionConfig(
+        type,
+        asPlainRecord(input.connection_config),
+      ),
       definition.connection_schema,
     );
     const connectionConfig = applySchemaDefaults(
@@ -312,7 +364,10 @@ export class SystemNotificationService {
     }
 
     const patch = normalizeSchemaPatch(
-      asPlainRecord(input.connection_config),
+      normalizeProviderConnectionConfig(
+        provider.type,
+        asPlainRecord(input.connection_config),
+      ),
       definition.connection_schema,
     );
     const connectionConfig = applySchemaDefaults(
@@ -363,16 +418,12 @@ export class SystemNotificationService {
       { min: 1, max: 30 },
     );
     const message = {
-      title: "[测试] fn-knock 事件中心通知",
-      summary: "这是一条来自 fn-knock 的测试通知。",
-      body_text: "这是一条来自 fn-knock 事件中心的测试通知，链路已经可以发送。",
-      body_markdown:
-        "- 这是一条来自 fn-knock 事件中心的测试通知\n- 如果你能看到这条消息，说明发送链路可用",
+      title: "[测试] fn-knock",
+      summary: "通知发送正常",
+      body_text: "",
+      body_markdown: "",
       severity: "info" as const,
-      facts: [
-        { label: "类型", value: "Provider Test" },
-        { label: "提供商", value: provider.name },
-      ],
+      facts: [],
       actions: [],
       mentions: [],
       occurred_at: nowIso(),
@@ -442,7 +493,10 @@ export class SystemNotificationService {
         ? currentTargetMap.get(inputTarget.id)
         : null;
       const targetPatch = normalizeSchemaPatch(
-        asPlainRecord(inputTarget.target_config),
+        normalizeProviderTargetConfig(
+          provider.type,
+          asPlainRecord(inputTarget.target_config),
+        ),
         definition.target_schema,
       );
       const targetConfig = applySchemaDefaults(

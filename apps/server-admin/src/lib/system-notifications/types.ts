@@ -6,6 +6,10 @@ import type {
 } from "../system-events/constants";
 
 export const NOTIFICATION_PROVIDER_TYPES = [
+  "wxpusher",
+  "wecom",
+  "dingtalk",
+  "feishu",
   "webhook",
   "pushdeer",
   "bark",

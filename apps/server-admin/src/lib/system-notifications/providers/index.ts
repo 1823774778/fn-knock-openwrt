@@ -7,9 +7,13 @@ import type {
   NotificationSendResult,
 } from "../types";
 import { barkProviderDefinition, sendBarkMessage } from "./bark";
+import { dingtalkProviderDefinition, sendDingTalkMessage } from "./dingtalk";
+import { feishuProviderDefinition, sendFeishuMessage } from "./feishu";
 import { pushdeerProviderDefinition, sendPushDeerMessage } from "./pushdeer";
 import { telegramProviderDefinition, sendTelegramMessage } from "./telegram";
+import { wecomProviderDefinition, sendWecomMessage } from "./wecom";
 import { webhookProviderDefinition, sendWebhookMessage } from "./webhook";
+import { wxpusherProviderDefinition, sendWxPusherMessage } from "./wxpusher";
 
 type NotificationProviderRegistration = {
   definition: NotificationProviderDefinition;
@@ -22,6 +26,22 @@ type NotificationProviderRegistration = {
 };
 
 const PROVIDER_REGISTRY = {
+  wxpusher: {
+    definition: wxpusherProviderDefinition,
+    send: sendWxPusherMessage,
+  },
+  wecom: {
+    definition: wecomProviderDefinition,
+    send: sendWecomMessage,
+  },
+  dingtalk: {
+    definition: dingtalkProviderDefinition,
+    send: sendDingTalkMessage,
+  },
+  feishu: {
+    definition: feishuProviderDefinition,
+    send: sendFeishuMessage,
+  },
   webhook: {
     definition: webhookProviderDefinition,
     send: sendWebhookMessage,

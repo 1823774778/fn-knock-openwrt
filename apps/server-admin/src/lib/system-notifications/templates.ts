@@ -26,13 +26,6 @@ export const formatNotificationEventLabel = (
 export const buildNotificationRuleName = (type: SystemEventEnvelope["type"]) =>
   `${formatNotificationEventLabel(type)} 通知`;
 
-const LEVEL_LABELS: Record<SystemEventEnvelope["level"], string> = {
-  INFO: "信息",
-  WARN: "注意",
-  ERROR: "错误",
-  CRITICAL: "严重",
-};
-
 const readPayloadValue = (event: SystemEventEnvelope, key: string) => {
   const payload = event.payload as Record<string, unknown>;
   const value = payload[key];
@@ -40,30 +33,84 @@ const readPayloadValue = (event: SystemEventEnvelope, key: string) => {
   return String(value);
 };
 
+const joinCompactParts = (...parts: Array<string | undefined>) =>
+  parts
+    .map((part) => String(part || "").trim())
+    .filter(Boolean)
+    .join(" | ");
+
 const formatEventSummary = (event: SystemEventEnvelope) => {
   switch (event.type) {
     case "FN_EVENT_AUTH_LOGIN_SUCCESS":
-      return `${readPayloadValue(event, "credential_name") || "未知凭证"} 通过 ${readPayloadValue(event, "auth_method") || "-"} 登录，来源 ${readPayloadValue(event, "ip") || "-"}`;
+      return joinCompactParts(
+        readPayloadValue(event, "credential_name") || "未知凭证",
+        readPayloadValue(event, "ip"),
+      );
     case "FN_EVENT_AUTH_LOGOUT":
-      return `${readPayloadValue(event, "credential_name") || "未知凭证"} 已退出登录，会话 ${readPayloadValue(event, "session_id") || "-"}`;
+      return joinCompactParts(
+        readPayloadValue(event, "credential_name") || "未知凭证",
+        readPayloadValue(event, "ip"),
+      );
     case "FN_EVENT_AUTH_LOGIN_FAILURE":
-      return `IP ${readPayloadValue(event, "ip") || "-"} 在 1 小时内第 ${readPayloadValue(event, "attempts") || "-"} 次登录失败`;
+      return joinCompactParts(
+        readPayloadValue(event, "ip"),
+        readPayloadValue(event, "attempts")
+          ? `${readPayloadValue(event, "attempts")}次失败`
+          : "",
+      );
     case "FN_EVENT_AUTH_SESSION_IP_DRIFT":
-      return `会话 ${readPayloadValue(event, "session_id") || "-"} 从 ${readPayloadValue(event, "from_ip") || "-"} 漂移到 ${readPayloadValue(event, "to_ip") || "-"}`;
+      return [
+        readPayloadValue(event, "from_ip"),
+        readPayloadValue(event, "to_ip"),
+      ]
+        .filter(Boolean)
+        .join(" -> ");
     case "FN_EVENT_SECURITY_SCANNER_BLOCKED":
-      return `${readPayloadValue(event, "ip") || "-"} 因扫描命中 ${readPayloadValue(event, "hit_count") || "-"} 次被拦截`;
+      return joinCompactParts(
+        readPayloadValue(event, "ip"),
+        readPayloadValue(event, "hit_count")
+          ? `${readPayloadValue(event, "hit_count")}次扫描`
+          : "扫描拦截",
+      );
     case "FN_EVENT_DDNS_UPDATE_COMPLETED":
-      return `${readPayloadValue(event, "provider") || "-"} ${readPayloadValue(event, "success") === "true" ? "更新成功" : "更新完成"}：${readPayloadValue(event, "message") || "-"}`;
+      return joinCompactParts(
+        readPayloadValue(event, "provider"),
+        readPayloadValue(event, "success") === "true" ? "成功" : "失败",
+      );
     case "FN_EVENT_GATEWAY_THROTTLE_BLOCKED":
-      return `${readPayloadValue(event, "ip") || "-"} 触发节流封锁 ${readPayloadValue(event, "block_seconds") || "-"} 秒`;
+      return joinCompactParts(
+        readPayloadValue(event, "ip"),
+        readPayloadValue(event, "block_seconds")
+          ? `封锁${readPayloadValue(event, "block_seconds")}s`
+          : "触发封锁",
+      );
     case "FN_EVENT_SYSTEM_CPU_ALERT":
     case "FN_EVENT_SYSTEM_CPU_RECOVERED":
     case "FN_EVENT_SYSTEM_MEMORY_ALERT":
     case "FN_EVENT_SYSTEM_MEMORY_RECOVERED":
-      return `${readPayloadValue(event, "hostname") || "-"} 使用率 ${readPayloadValue(event, "usage_percent") || "-"}%`;
+      return joinCompactParts(
+        readPayloadValue(event, "hostname"),
+        readPayloadValue(event, "usage_percent")
+          ? `${readPayloadValue(event, "usage_percent")}%`
+          : "",
+      );
     default:
-      return JSON.stringify(event.payload);
+      return "";
   }
+};
+
+const buildNotificationTitle = (
+  event: SystemEventEnvelope,
+  matchedCount: number,
+) => {
+  const baseTitle =
+    event.type === "FN_EVENT_DDNS_UPDATE_COMPLETED"
+      ? readPayloadValue(event, "success") === "true"
+        ? "DDNS 更新成功"
+        : "DDNS 更新失败"
+      : formatNotificationEventLabel(event.type);
+
+  return matchedCount > 1 ? `${baseTitle} x${matchedCount}` : baseTitle;
 };
 
 const toSeverity = (event: SystemEventEnvelope): NotificationSeverity => {
@@ -87,39 +134,17 @@ export const buildNotificationMessage = (args: {
   matchedCount: number;
   groupKey: string;
 }): NotificationMessage => {
-  const eventLabel = formatNotificationEventLabel(args.event.type);
-  const levelLabel = LEVEL_LABELS[args.event.level] || args.event.level;
-  const summary = formatEventSummary(args.event);
-  const facts = [
-    { label: "事件", value: eventLabel },
-    { label: "级别", value: levelLabel },
-    { label: "来源系统", value: args.event.source },
-    { label: "发生时间", value: args.event.happened_at },
-    { label: "规则", value: args.rule.name },
-    { label: "聚合键", value: args.groupKey },
-    { label: "窗口命中次数", value: String(args.matchedCount) },
-    { label: "事件 ID", value: args.event.id },
-  ];
-
-  const bodyLines = [
-    `${levelLabel}事件已命中通知规则。`,
-    `事件摘要：${summary}`,
-    `规则：${args.rule.name}`,
-    `聚合键：${args.groupKey}`,
-    `窗口：${args.rule.window_seconds} 秒内达到 ${args.matchedCount} 次`,
-    `事件 ID：${args.event.id}`,
-  ];
+  const summary =
+    formatEventSummary(args.event) ||
+    formatNotificationEventLabel(args.event.type);
 
   return {
-    title:
-      args.rule.threshold_count > 1
-        ? `[${levelLabel}] ${eventLabel} 达到通知阈值`
-        : `[${levelLabel}] ${eventLabel}`,
+    title: buildNotificationTitle(args.event, args.matchedCount),
     summary,
-    body_text: bodyLines.join("\n"),
-    body_markdown: bodyLines.map((line) => `- ${line}`).join("\n"),
+    body_text: "",
+    body_markdown: "",
     severity: toSeverity(args.event),
-    facts,
+    facts: [],
     actions: [],
     mentions: [],
     dedupe_key: `${args.rule.id}:${args.groupKey}`,
@@ -129,6 +154,12 @@ export const buildNotificationMessage = (args: {
       event_type: args.event.type,
       event_level: args.event.level,
       event_source: args.event.source,
+      rule_id: args.rule.id,
+      rule_name: args.rule.name,
+      group_key: args.groupKey,
+      matched_count: args.matchedCount,
+      window_seconds: args.rule.window_seconds,
+      threshold_count: args.rule.threshold_count,
     },
   };
 };

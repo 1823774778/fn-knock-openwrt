@@ -139,11 +139,12 @@ const buildBarkPayload = (
   context?: Partial<NotificationDispatchContext>,
 ) => {
   const targetConfig = toPlainRecord(context?.target?.target_config);
-  const body = toTrimmedString(
-    message.body_text || message.summary || message.title,
-  );
+  const summary = toTrimmedString(message.summary);
+  const bodyText = toTrimmedString(message.body_text);
+  const hasStandaloneBody = Boolean(bodyText) && bodyText !== summary;
   const title = toTrimmedString(message.title || "fn-knock 通知");
-  const subtitle = toTrimmedString(message.summary);
+  const subtitle = hasStandaloneBody ? summary : "";
+  const body = hasStandaloneBody ? bodyText : summary || bodyText || title;
   const url =
     toTrimmedString(targetConfig.url) || resolvePrimaryActionUrl(message);
   const level = toTrimmedString(targetConfig.level || "active");

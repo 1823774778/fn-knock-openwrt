@@ -711,6 +711,10 @@ export interface SystemEventListPayload {
 }
 
 export type NotificationProviderType =
+  | "wxpusher"
+  | "wecom"
+  | "dingtalk"
+  | "feishu"
   | "webhook"
   | "pushdeer"
   | "bark"
