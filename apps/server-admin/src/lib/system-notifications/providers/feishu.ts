@@ -18,7 +18,7 @@ const FEISHU_CONNECTION_SCHEMA: NotificationSchemaField[] = [
   {
     key: "webhook_url",
     label: "Webhook URL",
-    description: "飞书自定义机器人生成的完整 Webhook 地址。",
+    description: "飞书机器人生成的完整 Webhook 地址。",
     placeholder: "https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxxx",
     type: "string",
     required: true,
@@ -65,9 +65,9 @@ const FEISHU_TARGET_SCHEMA: NotificationSchemaField[] = [
 
 export const feishuProviderDefinition: NotificationProviderDefinition = {
   type: "feishu",
-  label: "飞书自定义机器人",
+  label: "飞书机器人",
   description:
-    "通过飞书自定义机器人 Webhook 向群聊发送 post 富文本通知，并支持签名校验。",
+    "通过飞书机器人 Webhook 向群聊发送 post 富文本通知，并支持签名校验。",
   connection_schema: FEISHU_CONNECTION_SCHEMA,
   target_schema: FEISHU_TARGET_SCHEMA,
   sensitive_fields: ["webhook_url", "secret"],

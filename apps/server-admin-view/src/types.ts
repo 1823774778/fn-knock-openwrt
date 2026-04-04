@@ -715,6 +715,7 @@ export type NotificationProviderType =
   | "wecom"
   | "dingtalk"
   | "feishu"
+  | "email"
   | "webhook"
   | "pushdeer"
   | "bark"

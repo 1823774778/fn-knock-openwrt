@@ -8,6 +8,7 @@ import type {
 } from "../types";
 import { barkProviderDefinition, sendBarkMessage } from "./bark";
 import { dingtalkProviderDefinition, sendDingTalkMessage } from "./dingtalk";
+import { emailProviderDefinition, sendEmailMessage } from "./email";
 import { feishuProviderDefinition, sendFeishuMessage } from "./feishu";
 import { pushdeerProviderDefinition, sendPushDeerMessage } from "./pushdeer";
 import { telegramProviderDefinition, sendTelegramMessage } from "./telegram";
@@ -41,6 +42,10 @@ const PROVIDER_REGISTRY = {
   feishu: {
     definition: feishuProviderDefinition,
     send: sendFeishuMessage,
+  },
+  email: {
+    definition: emailProviderDefinition,
+    send: sendEmailMessage,
   },
   webhook: {
     definition: webhookProviderDefinition,

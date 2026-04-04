@@ -418,12 +418,23 @@ export class SystemNotificationService {
       { min: 1, max: 30 },
     );
     const message = {
-      title: "[测试] fn-knock",
-      summary: "通知发送正常",
-      body_text: "",
-      body_markdown: "",
+      title: "测试通知",
+      summary: "通知通道配置正常，已成功触发一条测试消息。",
+      body_text:
+        "这是一条由敲门 knock 主动发出的测试通知，用于验证当前提供商的连通性、结构化文案以及展示效果。",
+      body_markdown:
+        "**连通性检查已通过。**\n\n这是一条由敲门 knock 主动发出的测试通知，用于验证当前提供商的连通性、结构化文案以及展示效果。",
       severity: "info" as const,
-      facts: [],
+      facts: [
+        {
+          label: "发送类型",
+          value: "提供商测试",
+        },
+        {
+          label: "发送时间",
+          value: nowIso(),
+        },
+      ],
       actions: [],
       mentions: [],
       occurred_at: nowIso(),

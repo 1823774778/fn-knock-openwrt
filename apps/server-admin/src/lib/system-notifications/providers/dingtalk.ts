@@ -18,7 +18,7 @@ const DINGTALK_CONNECTION_SCHEMA: NotificationSchemaField[] = [
   {
     key: "webhook_url",
     label: "Webhook URL",
-    description: "钉钉自定义机器人生成的完整 Webhook 地址。",
+    description: "钉钉机器人生成的完整 Webhook 地址。",
     placeholder: "https://oapi.dingtalk.com/robot/send?access_token=xxxxxx",
     type: "string",
     required: true,
@@ -79,9 +79,9 @@ const DINGTALK_TARGET_SCHEMA: NotificationSchemaField[] = [
 
 export const dingtalkProviderDefinition: NotificationProviderDefinition = {
   type: "dingtalk",
-  label: "钉钉自定义机器人",
+  label: "钉钉机器人",
   description:
-    "通过钉钉自定义机器人 Webhook 向群聊发送 Markdown 通知，并支持加签校验。",
+    "通过钉钉机器人 Webhook 向群聊发送 Markdown 通知，并支持加签校验。",
   connection_schema: DINGTALK_CONNECTION_SCHEMA,
   target_schema: DINGTALK_TARGET_SCHEMA,
   sensitive_fields: ["webhook_url", "secret"],

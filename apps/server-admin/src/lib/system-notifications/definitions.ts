@@ -2,6 +2,7 @@ import {
   getRegisteredNotificationProvider,
   listRegisteredNotificationProviders,
 } from "./providers";
+import { normalizeNotificationMessage } from "./brand";
 import type {
   NotificationDispatchContext,
   NotificationMessage,
@@ -70,9 +71,11 @@ export const sendNotificationWithProvider = async (
     };
   }
 
+  const normalizedMessage = normalizeNotificationMessage(message);
+
   return registration.send({
     provider,
-    message,
+    message: normalizedMessage,
     context,
     timeoutSeconds,
   });

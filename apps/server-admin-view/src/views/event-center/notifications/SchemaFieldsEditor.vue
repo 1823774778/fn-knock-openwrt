@@ -81,6 +81,7 @@ const resolvePlaceholder = (field: NotificationSchemaField) => {
 
       <Input
         v-if="field.type === 'string'"
+        :type="field.sensitive ? 'password' : 'text'"
         :model-value="String(readFieldValue(field) ?? '')"
         :placeholder="resolvePlaceholder(field)"
         @update:model-value="(value) => updateField(field.key, value)"
@@ -102,7 +103,9 @@ const resolvePlaceholder = (field: NotificationSchemaField) => {
         @update:model-value="(value) => updateField(field.key, value)"
       >
         <SelectTrigger>
-          <SelectValue :placeholder="resolvePlaceholder(field) || field.label" />
+          <SelectValue
+            :placeholder="resolvePlaceholder(field) || field.label"
+          />
         </SelectTrigger>
         <SelectContent>
           <SelectItem

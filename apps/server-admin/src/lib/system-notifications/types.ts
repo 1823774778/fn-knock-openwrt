@@ -10,6 +10,7 @@ export const NOTIFICATION_PROVIDER_TYPES = [
   "wecom",
   "dingtalk",
   "feishu",
+  "email",
   "webhook",
   "pushdeer",
   "bark",
