@@ -712,6 +712,8 @@ export interface SystemEventListPayload {
 
 export type NotificationProviderType =
   | "wxpusher"
+  | "serverchan"
+  | "pushplus"
   | "wecom"
   | "dingtalk"
   | "feishu"

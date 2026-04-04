@@ -510,11 +510,10 @@ export class SystemNotificationService {
         ),
         definition.target_schema,
       );
+      // Target config is edited as a full snapshot in the UI, so blank values
+      // should clear older overrides instead of silently keeping them.
       const targetConfig = applySchemaDefaults(
-        {
-          ...(existingTarget?.target_config || {}),
-          ...targetPatch,
-        },
+        targetPatch,
         definition.target_schema,
       );
 

@@ -11,6 +11,11 @@ import { dingtalkProviderDefinition, sendDingTalkMessage } from "./dingtalk";
 import { emailProviderDefinition, sendEmailMessage } from "./email";
 import { feishuProviderDefinition, sendFeishuMessage } from "./feishu";
 import { pushdeerProviderDefinition, sendPushDeerMessage } from "./pushdeer";
+import { pushplusProviderDefinition, sendPushPlusMessage } from "./pushplus";
+import {
+  sendServerChanMessage,
+  serverchanProviderDefinition,
+} from "./serverchan";
 import { telegramProviderDefinition, sendTelegramMessage } from "./telegram";
 import { wecomProviderDefinition, sendWecomMessage } from "./wecom";
 import { webhookProviderDefinition, sendWebhookMessage } from "./webhook";
@@ -30,6 +35,14 @@ const PROVIDER_REGISTRY = {
   wxpusher: {
     definition: wxpusherProviderDefinition,
     send: sendWxPusherMessage,
+  },
+  serverchan: {
+    definition: serverchanProviderDefinition,
+    send: sendServerChanMessage,
+  },
+  pushplus: {
+    definition: pushplusProviderDefinition,
+    send: sendPushPlusMessage,
   },
   wecom: {
     definition: wecomProviderDefinition,

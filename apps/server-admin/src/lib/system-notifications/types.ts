@@ -7,6 +7,8 @@ import type {
 
 export const NOTIFICATION_PROVIDER_TYPES = [
   "wxpusher",
+  "serverchan",
+  "pushplus",
   "wecom",
   "dingtalk",
   "feishu",

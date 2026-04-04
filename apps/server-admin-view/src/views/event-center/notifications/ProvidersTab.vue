@@ -1,6 +1,14 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { Loader2, Pencil, Plus, Send, Trash2 } from "lucide-vue-next";
+import {
+  AlertTriangle,
+  Loader2,
+  Pencil,
+  Plus,
+  Send,
+  Trash2,
+} from "lucide-vue-next";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -54,13 +62,26 @@ type EditableProviderForm = {
   connection_config: Record<string, unknown>;
 };
 
-const sortProviderCatalog = (
-  definitions: NotificationProviderDefinition[],
-) =>
+const PROVIDER_TAIL_ORDER = [
+  "webhook",
+  "wxpusher",
+  "serverchan",
+  "pushplus",
+] as const;
+
+const resolveProviderSortWeight = (type: string) => {
+  const tailIndex = PROVIDER_TAIL_ORDER.indexOf(
+    type as (typeof PROVIDER_TAIL_ORDER)[number],
+  );
+  return tailIndex === -1 ? 0 : 100 + tailIndex;
+};
+
+const sortProviderCatalog = (definitions: NotificationProviderDefinition[]) =>
   [...definitions].sort((left, right) => {
-    if (left.type === right.type) return 0;
-    if (left.type === "webhook") return 1;
-    if (right.type === "webhook") return -1;
+    const weightDiff =
+      resolveProviderSortWeight(left.type) -
+      resolveProviderSortWeight(right.type);
+    if (weightDiff !== 0) return weightDiff;
     return 0;
   });
 
@@ -231,16 +252,30 @@ const saveProvider = async () => {
   saving.value = true;
   try {
     const trimmedName = providerForm.value.name.trim();
+    const connectionConfig = buildSchemaPayload({
+      fields: selectedDefinition.value.connection_schema,
+      value: providerForm.value.connection_config,
+      editing: dialogMode.value === "edit",
+      configuredSensitiveFields: configuredSensitiveFields.value,
+    });
+
+    if (
+      dialogMode.value === "edit" &&
+      selectedDefinition.value.type === "wxpusher"
+    ) {
+      for (const key of ["uids", "topic_ids", "url"]) {
+        if (key in connectionConfig) continue;
+        connectionConfig[key] = String(
+          providerForm.value.connection_config[key] ?? "",
+        ).trim();
+      }
+    }
+
     const payload = {
       name: trimmedName || undefined,
       type: providerForm.value.type,
       enabled: providerForm.value.enabled,
-      connection_config: buildSchemaPayload({
-        fields: selectedDefinition.value.connection_schema,
-        value: providerForm.value.connection_config,
-        editing: dialogMode.value === "edit",
-        configuredSensitiveFields: configuredSensitiveFields.value,
-      }),
+      connection_config: connectionConfig,
     };
 
     const result =
@@ -317,6 +352,10 @@ const testProvider = async (provider: NotificationProviderView) => {
 const resolveProviderTypeLabel = (type: string) =>
   catalog.value.find((item) => item.type === type)?.label || type;
 
+const showWxPusherAlert = computed(
+  () => selectedDefinition.value?.type === "wxpusher",
+);
+
 watch(
   () => props.active,
   (active) => {
@@ -334,7 +373,11 @@ watch(
         必须先配置提供商，才能在规则里选择发送目标并启用告警通知。
       </div>
       <div class="ml-auto flex items-center gap-2">
-        <RefreshButton :loading="loading" :disabled="loading" @click="loadData" />
+        <RefreshButton
+          :loading="loading"
+          :disabled="loading"
+          @click="loadData"
+        />
         <Button @click="openCreateDialog">
           <Plus class="mr-2 h-4 w-4" />
           新增提供商
@@ -356,11 +399,16 @@ watch(
         <TableBody>
           <TableRow v-if="loading && providers.length === 0">
             <TableCell colspan="6" class="py-10 text-center">
-              <Loader2 class="mx-auto h-5 w-5 animate-spin text-muted-foreground" />
+              <Loader2
+                class="mx-auto h-5 w-5 animate-spin text-muted-foreground"
+              />
             </TableCell>
           </TableRow>
           <TableRow v-else-if="providers.length === 0">
-            <TableCell colspan="6" class="py-10 text-center text-muted-foreground">
+            <TableCell
+              colspan="6"
+              class="py-10 text-center text-muted-foreground"
+            >
               暂无通知提供商
             </TableCell>
           </TableRow>
@@ -486,6 +534,24 @@ watch(
             </Select>
           </div>
         </div>
+
+        <Alert
+          v-if="showWxPusherAlert"
+          class="border-amber-200 bg-amber-50/80 text-amber-950"
+        >
+          <AlertTriangle class="h-4 w-4" />
+          <AlertTitle>WxPusher 已不再支持微信内消息接收</AlertTitle>
+          <AlertDescription class="space-y-2">
+            <p>
+              该渠道已经不再支持直接通过微信接收推送消息，必须下载并登录
+              WxPusher 官方 App 才能正常收到通知。
+            </p>
+            <p>
+              下方新增的 UID / Topic / 跳转链接 /
+              订阅验证属于提供商默认值；规则里的同名字段留空时会沿用它们，测试发送也会直接使用这套默认配置。
+            </p>
+          </AlertDescription>
+        </Alert>
 
         <div class="flex items-center justify-between rounded-md border p-3">
           <div class="space-y-1">
