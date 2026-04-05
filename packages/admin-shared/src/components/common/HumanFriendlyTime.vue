@@ -11,6 +11,7 @@ const props = withDefaults(defineProps<{
   keepInvalidRawText?: boolean;
   absoluteFormatOptions?: Intl.DateTimeFormatOptions;
   refreshIntervalMs?: number;
+  tooltipLines?: string[];
 }>(), {
   locale: 'zh-CN',
   emptyText: '-',
@@ -63,7 +64,16 @@ const displayText = computed(() =>
     now: now.value,
   }),
 );
-const showTooltip = computed(() => Boolean(resolvedDate.value) && fullText.value !== displayText.value);
+const customTooltipLines = computed(() =>
+  (props.tooltipLines || []).map((line) => line?.trim()).filter(Boolean),
+);
+const tooltipContentLines = computed(() =>
+  customTooltipLines.value.length > 0 ? customTooltipLines.value : [fullText.value],
+);
+const showTooltip = computed(() =>
+  customTooltipLines.value.length > 0 ||
+  (Boolean(resolvedDate.value) && fullText.value !== displayText.value),
+);
 
 const handleOpenChange = (nextOpen: boolean) => {
   open.value = nextOpen;
@@ -142,7 +152,7 @@ onUnmounted(() => {
         </span>
       </TooltipTrigger>
       <TooltipContent>
-        <p>{{ fullText }}</p>
+        <p v-for="line in tooltipContentLines" :key="line">{{ line }}</p>
       </TooltipContent>
     </Tooltip>
   </TooltipProvider>

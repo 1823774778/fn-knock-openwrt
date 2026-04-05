@@ -48,6 +48,7 @@ import type { DDNSNetworkInterfacePayload } from "../lib/api";
 import { useConfigStore } from "../store/config";
 import { isAnySubdomainRoutingMode } from "../lib/reverse-proxy-submode";
 import { docsUrls } from "../lib/docs";
+import { buildDDNSTimestampTooltipLines } from "../lib/ddns-time";
 
 interface ProviderField {
   key: string;
@@ -771,6 +772,13 @@ function formatTime(iso: string | null): string {
   return formatDateTimeSafe(iso, { locale: "zh-CN", emptyText: "从未" });
 }
 
+const lastCheckTooltipLines = computed(() =>
+  buildDDNSTimestampTooltipLines({
+    updatedAt: lastIP.value.updated_at,
+    checkedAt: lastCheck.value.checked_at,
+  }),
+);
+
 async function copyTextToClipboard(text: string) {
   if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text);
@@ -955,12 +963,13 @@ onUnmounted(() => {
                 <p
                   class="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground"
                 >
-                  最后成功更新
+                  最后检查
                 </p>
                 <p class="text-sm font-medium">
                   <HumanFriendlyTime
-                    :value="lastIP.updated_at"
+                    :value="lastCheck.checked_at"
                     empty-text="从未"
+                    :tooltip-lines="lastCheckTooltipLines"
                   />
                 </p>
               </div>

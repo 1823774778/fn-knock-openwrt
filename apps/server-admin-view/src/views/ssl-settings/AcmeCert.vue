@@ -16,7 +16,7 @@
               </Badge>
             </CardTitle>
             <CardDescription>
-              管理多个 ACME 申请项、签发证书和证书库关联状态。
+              管理多个 ACME 申请项、签发证书和证书库关联状态。申请成功后会自动同步到证书库。
             </CardDescription>
           </div>
           <div class="flex flex-wrap items-center gap-2">

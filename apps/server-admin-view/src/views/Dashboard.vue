@@ -43,6 +43,7 @@ import { useDelayedLoading } from "@admin-shared/composables/useDelayedLoading";
 import HumanFriendlyTime from "@admin-shared/components/common/HumanFriendlyTime.vue";
 import { useTargetPolling } from "../composables/useTargetPolling";
 import { useConfigStore } from "../store/config";
+import { buildDDNSTimestampTooltipLines } from "../lib/ddns-time";
 import VChart from "vue-echarts";
 import type { EChartsOption } from "echarts";
 import { use } from "echarts/core";
@@ -588,11 +589,15 @@ const ddnsCards = computed(() => [
     icon: RouteIcon,
   },
   {
-    label: "最近检查",
+    label: "最后检查",
     value: ddnsStatus.value?.lastCheck?.checked_at ?? null,
     hint: "自动检查时间",
     icon: Clock,
     isTime: true,
+    tooltipLines: buildDDNSTimestampTooltipLines({
+      updatedAt: ddnsStatus.value?.lastIP?.updated_at,
+      checkedAt: ddnsStatus.value?.lastCheck?.checked_at,
+    }),
   },
 ]);
 
@@ -803,6 +808,7 @@ const tunnelCards = computed(() => [
                       :value="item.value"
                       empty-text="从未"
                       :keep-invalid-raw-text="false"
+                      :tooltip-lines="item.tooltipLines"
                     />
                     <template v-else>{{ item.value }}</template>
                   </div>

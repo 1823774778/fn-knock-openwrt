@@ -49,7 +49,13 @@ const SUPPORTED_BACKUP_IMPORT_VERSION_RANGE = formatVersionRange(
   APP_BACKUP_IMPORT_VERSION_RANGE,
 );
 
-type RedisBackupValueType = "string" | "hash" | "list" | "set" | "zset";
+type RedisBackupValueType =
+  | "string"
+  | "hash"
+  | "list"
+  | "set"
+  | "zset"
+  | "stream";
 type CommandResult = {
   exitCode: number;
   stdout: string;
@@ -82,6 +88,11 @@ type RedisZSetEntry = {
   score: number;
 };
 
+type RedisStreamEntry = {
+  id: string;
+  fields: string[];
+};
+
 type RedisBackupEntry =
   | {
       key: string;
@@ -112,6 +123,12 @@ type RedisBackupEntry =
       type: "zset";
       ttl_ms: number | null;
       value: RedisZSetEntry[];
+    }
+  | {
+      key: string;
+      type: "stream";
+      ttl_ms: number | null;
+      value: RedisStreamEntry[];
     };
 
 export type FnKnockBackupPayload = {
@@ -171,7 +188,8 @@ const isSupportedType = (value: unknown): value is RedisBackupValueType =>
   value === "hash" ||
   value === "list" ||
   value === "set" ||
-  value === "zset";
+  value === "zset" ||
+  value === "stream";
 
 const chunk = <T>(items: T[], size: number): T[][] => {
   const safeSize = Math.max(1, Math.floor(size));
@@ -546,6 +564,43 @@ class MaintenanceBackupService {
       return { key, type, ttl_ms: normalizedTtlMs, value };
     }
 
+    if (type === "stream") {
+      const response = (await (redis as any).xrange(
+        key,
+        "-",
+        "+",
+      )) as Array<[string, Array<string>]> | null;
+      const value: RedisStreamEntry[] = [];
+
+      for (const item of response ?? []) {
+        const [id, fields] = item;
+        if (typeof id !== "string" || !Array.isArray(fields)) {
+          continue;
+        }
+
+        const normalizedFields = fields.filter(
+          (field): field is string => typeof field === "string",
+        );
+        if (
+          normalizedFields.length !== fields.length ||
+          normalizedFields.length === 0 ||
+          normalizedFields.length % 2 !== 0
+        ) {
+          throw new MaintenanceBackupError(
+            `Redis stream 数据格式无效: ${key} (${id})`,
+            500,
+          );
+        }
+
+        value.push({
+          id,
+          fields: normalizedFields,
+        });
+      }
+
+      return { key, type, ttl_ms: normalizedTtlMs, value };
+    }
+
     throw new MaintenanceBackupError(
       `不支持导出的 Redis 数据类型: ${type} (${key})`,
       500,
@@ -728,6 +783,37 @@ class MaintenanceBackupService {
     });
   }
 
+  private parseStreamValue(value: unknown, label: string): RedisStreamEntry[] {
+    if (!Array.isArray(value)) {
+      throw new MaintenanceBackupError(`${label} 必须是数组`, 400);
+    }
+
+    return value.map((item, index) => {
+      if (!isRecord(item) || typeof item.id !== "string") {
+        throw new MaintenanceBackupError(
+          `${label}[${index}] 必须包含字符串 id`,
+          400,
+        );
+      }
+
+      const fields = this.parseStringArray(
+        item.fields,
+        `${label}[${index}].fields`,
+      );
+      if (fields.length === 0 || fields.length % 2 !== 0) {
+        throw new MaintenanceBackupError(
+          `${label}[${index}].fields 必须是偶数长度且非空的字符串数组`,
+          400,
+        );
+      }
+
+      return {
+        id: item.id,
+        fields,
+      };
+    });
+  }
+
   private parseEntry(value: unknown, index: number): RedisBackupEntry {
     if (!isRecord(value)) {
       throw new MaintenanceBackupError(`entries[${index}] 必须是对象`, 400);
@@ -782,6 +868,15 @@ class MaintenanceBackupService {
         type: value.type,
         ttl_ms: ttlMs,
         value: this.parseStringArray(value.value, `entries[${index}].value`),
+      };
+    }
+
+    if (value.type === "stream") {
+      return {
+        key,
+        type: value.type,
+        ttl_ms: ttlMs,
+        value: this.parseStreamValue(value.value, `entries[${index}].value`),
       };
     }
 
@@ -937,10 +1032,15 @@ class MaintenanceBackupService {
 
   private async restoreEntries(entries: RedisBackupEntry[]): Promise<void> {
     let pipeline = redis.pipeline();
-    let batchedKeys = 0;
+    let batchedCommands = 0;
+
+    const queue = (task: () => void) => {
+      task();
+      batchedCommands += 1;
+    };
 
     const flush = async () => {
-      if (batchedKeys === 0) return;
+      if (batchedCommands === 0) return;
       const result = await pipeline.exec();
       const failed = result?.find(([error]) => error != null);
       if (failed?.[0]) {
@@ -950,49 +1050,82 @@ class MaintenanceBackupService {
         );
       }
       pipeline = redis.pipeline();
-      batchedKeys = 0;
+      batchedCommands = 0;
     };
 
     for (const entry of entries) {
       if (entry.type === "string") {
         if (entry.ttl_ms) {
-          pipeline.set(entry.key, entry.value, "PX", entry.ttl_ms);
+          queue(() => {
+            pipeline.set(entry.key, entry.value, "PX", entry.ttl_ms!);
+          });
         } else {
-          pipeline.set(entry.key, entry.value);
+          queue(() => {
+            pipeline.set(entry.key, entry.value);
+          });
         }
       } else if (entry.type === "hash") {
         if (Object.keys(entry.value).length > 0) {
-          pipeline.hmset(entry.key, entry.value);
+          queue(() => {
+            pipeline.hmset(entry.key, entry.value);
+          });
         }
         if (entry.ttl_ms) {
-          pipeline.pexpire(entry.key, entry.ttl_ms);
+          queue(() => {
+            pipeline.pexpire(entry.key, entry.ttl_ms!);
+          });
         }
       } else if (entry.type === "list") {
         if (entry.value.length > 0) {
-          pipeline.rpush(entry.key, ...entry.value);
+          queue(() => {
+            pipeline.rpush(entry.key, ...entry.value);
+          });
         }
         if (entry.ttl_ms) {
-          pipeline.pexpire(entry.key, entry.ttl_ms);
+          queue(() => {
+            pipeline.pexpire(entry.key, entry.ttl_ms!);
+          });
         }
       } else if (entry.type === "set") {
         if (entry.value.length > 0) {
-          pipeline.sadd(entry.key, ...entry.value);
+          queue(() => {
+            pipeline.sadd(entry.key, ...entry.value);
+          });
         }
         if (entry.ttl_ms) {
-          pipeline.pexpire(entry.key, entry.ttl_ms);
+          queue(() => {
+            pipeline.pexpire(entry.key, entry.ttl_ms!);
+          });
         }
-      } else {
+      } else if (entry.type === "zset") {
         if (entry.value.length > 0) {
           const args = entry.value.flatMap((item) => [item.score, item.member]);
-          pipeline.zadd(entry.key, ...args);
+          queue(() => {
+            pipeline.zadd(entry.key, ...args);
+          });
         }
         if (entry.ttl_ms) {
-          pipeline.pexpire(entry.key, entry.ttl_ms);
+          queue(() => {
+            pipeline.pexpire(entry.key, entry.ttl_ms!);
+          });
+        }
+      } else {
+        for (const item of entry.value) {
+          queue(() => {
+            pipeline.call("XADD", entry.key, item.id, ...item.fields);
+          });
+          if (batchedCommands >= PIPELINE_BATCH_SIZE) {
+            await flush();
+          }
+        }
+        if (entry.ttl_ms) {
+          queue(() => {
+            pipeline.pexpire(entry.key, entry.ttl_ms!);
+          });
         }
       }
 
-      batchedKeys += 1;
-      if (batchedKeys >= PIPELINE_BATCH_SIZE) {
+      if (batchedCommands >= PIPELINE_BATCH_SIZE) {
         await flush();
       }
     }

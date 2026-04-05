@@ -384,6 +384,39 @@ export const executeAcmeApplicationJob = async (options: {
           ? "已同步已关联的证书库条目，并刷新网关证书列表"
           : "已更新已关联的证书库条目",
       );
+    } else if (saved) {
+      try {
+        const currentConfig = await configManager.getConfig();
+        await configManager.saveAcmeCertificateToLibraryByApplication(
+          application.id,
+          {
+            label:
+              latestApplication?.name ||
+              application.name ||
+              application.primaryDomain,
+          },
+        );
+
+        if (currentConfig.ssl.deployment_mode === "multi_sni") {
+          await syncSSLDeploymentToGateway(currentConfig);
+          await configManager.appendAcmeLog(
+            jobId,
+            "证书签发成功后已自动加入证书库，并刷新网关证书列表",
+          );
+        } else {
+          await configManager.appendAcmeLog(
+            jobId,
+            "证书签发成功后已自动加入证书库",
+          );
+        }
+      } catch (error: any) {
+        await configManager.appendAcmeLog(
+          jobId,
+          `证书已签发并保存，但自动加入证书库失败: ${
+            error?.message || String(error)
+          }`,
+        );
+      }
     }
 
     await persistJobPatch({
