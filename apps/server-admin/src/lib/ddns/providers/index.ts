@@ -5,6 +5,8 @@ import { cloudflareProvider, cloudflareUpdate } from "./cloudflare";
 import { dnspodProvider, dnspodUpdate } from "./dnspod";
 import { duckdnsProvider, duckdnsUpdate } from "./duckdns";
 import { dynv6Provider, dynv6Update } from "./dynv6";
+import { edgeoneCnameProvider, edgeoneCnameUpdate } from "./edgeone-cname";
+import { edgeoneProvider, edgeoneUpdate } from "./edgeone";
 import { esaProvider, esaUpdate } from "./esa";
 import { godaddyProvider, godaddyUpdate } from "./godaddy";
 import { huaweiProvider, huaweiUpdate } from "./huawei";
@@ -19,6 +21,8 @@ export const providerDefinitions: DDNSProviderDefinition[] = [
   dnspodProvider,
   duckdnsProvider,
   dynv6Provider,
+  edgeoneCnameProvider,
+  edgeoneProvider,
   esaProvider,
   godaddyProvider,
   huaweiProvider,
@@ -34,6 +38,8 @@ export const providerUpdaters: Record<string, DDNSProviderUpdater> = {
   dnspod: dnspodUpdate,
   duckdns: duckdnsUpdate,
   dynv6: dynv6Update,
+  edgeone_cname: edgeoneCnameUpdate,
+  edgeone: edgeoneUpdate,
   esa: esaUpdate,
   godaddy: godaddyUpdate,
   huaweicloud: huaweiUpdate,

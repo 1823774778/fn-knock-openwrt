@@ -64,10 +64,12 @@ export type SessionFnosAttachment = {
   expiresAt: string | null;
 };
 
+type MobilityAppBinding = "fnos-app" | "trim-media-app";
+
 type RequestIdentity = {
   sessionId: string | null;
   fnosToken: string | null;
-  isFnosApp: boolean;
+  appBinding: MobilityAppBinding | null;
 };
 
 type DriftRestoreResult = {
@@ -129,8 +131,11 @@ const normalizeForwardedPathname = (rawPath: string | null): string => {
   }
 };
 
-const isFNAppUserAgent = (userAgent: string): boolean => {
-  const normalized = userAgent.trim().toLowerCase();
+const normalizeUserAgent = (userAgent: string): string =>
+  userAgent.trim().toLowerCase();
+
+const isFnosAppUserAgent = (userAgent: string): boolean => {
+  const normalized = normalizeUserAgent(userAgent);
   if (!normalized) return false;
 
   return (
@@ -140,11 +145,33 @@ const isFNAppUserAgent = (userAgent: string): boolean => {
   );
 };
 
+const isTrimMediaAppUserAgent = (userAgent: string): boolean =>
+  normalizeUserAgent(userAgent).includes("com.trim.media");
+
 const isFNAppForwardedPath = (pathname: string): boolean =>
   pathname === "/trimcon" || pathname === "/websocket";
 
 const hasFNAppRelayCookie = (cookieHeader: string): boolean =>
   cookieHeader.toLowerCase().includes("mode=relay");
+
+const resolveAppBinding = (args: {
+  userAgent: string;
+  forwardedPathname: string;
+  cookieHeader: string;
+  fnosToken: string | null;
+}): MobilityAppBinding | null => {
+  if (isTrimMediaAppUserAgent(args.userAgent)) {
+    return "trim-media-app";
+  }
+
+  const isFnosAppRequest =
+    isFNAppForwardedPath(args.forwardedPathname) &&
+    (isFnosAppUserAgent(args.userAgent) ||
+      hasFNAppRelayCookie(args.cookieHeader) ||
+      !!args.fnosToken);
+
+  return isFnosAppRequest ? "fnos-app" : null;
+};
 
 export class AuthMobilitySessionManager {
   private readonly r: Redis;
@@ -163,16 +190,17 @@ export class AuthMobilitySessionManager {
     const forwardedPathname = normalizeForwardedPathname(
       request.headers.get("x-forwarded-path"),
     );
-    const isFnosAppRequest =
-      isFNAppForwardedPath(forwardedPathname) &&
-      (isFNAppUserAgent(request.headers.get("user-agent") || "") ||
-        hasFNAppRelayCookie(cookieHeader) ||
-        !!fnosToken);
+    const appBinding = resolveAppBinding({
+      userAgent: request.headers.get("user-agent") || "",
+      forwardedPathname,
+      cookieHeader,
+      fnosToken,
+    });
 
     return {
       sessionId,
       fnosToken,
-      isFnosApp: isFnosAppRequest,
+      appBinding,
     };
   }
 
@@ -268,12 +296,23 @@ export class AuthMobilitySessionManager {
       }
     }
 
-    if (identity.isFnosApp) {
+    if (identity.appBinding === "fnos-app") {
       const restored = await this.restoreAnonymousFnosApp(clientIp);
       if (restored) {
         return {
           success: true,
           message: "Authorized by fnos app bootstrap session",
+          grantType: "fnos_fingerprint_session",
+        };
+      }
+    }
+
+    if (identity.appBinding === "trim-media-app") {
+      const restored = await this.restoreTrimMediaApp(clientIp);
+      if (restored) {
+        return {
+          success: true,
+          message: "Authorized by trim media app binding",
           grantType: "fnos_fingerprint_session",
         };
       }
@@ -296,12 +335,12 @@ export class AuthMobilitySessionManager {
     return { success: false };
   }
 
-  async hasResolvableFnosSession(
+  async hasResolvableMobilityAccess(
     request: Request,
     clientIp: string,
   ): Promise<boolean> {
     const identity = this.inspectRequest(request);
-    if (!identity.fnosToken && !identity.isFnosApp) return false;
+    if (!identity.fnosToken && !identity.appBinding) return false;
 
     if (identity.fnosToken) {
       const binding = await this.getBinding("fnos-token", identity.fnosToken);
@@ -313,7 +352,15 @@ export class AuthMobilitySessionManager {
       }
     }
 
-    return !!(await this.resolveBootstrapOwner(clientIp));
+    if (identity.appBinding === "trim-media-app") {
+      return this.hasActiveSessionAtIp(clientIp);
+    }
+
+    if (identity.appBinding === "fnos-app") {
+      return !!(await this.resolveBootstrapOwner(clientIp));
+    }
+
+    return false;
   }
 
   async destroySession(sessionId: string): Promise<void> {
@@ -686,21 +733,32 @@ export class AuthMobilitySessionManager {
     }
   }
 
+  private async listActiveSessionsByIp(
+    clientIp: string,
+  ): Promise<BootstrapOwnerResolution[]> {
+    return (await configManager.listSessions())
+      .filter((session) => session.data.ip === clientIp)
+      .map((session) => ({
+        ownerSessionId: session.id,
+        ownerSession: session.data,
+      }));
+  }
+
+  private async hasActiveSessionAtIp(clientIp: string): Promise<boolean> {
+    const sessions = await this.listActiveSessionsByIp(clientIp);
+    return sessions.length > 0;
+  }
+
   private async resolveBootstrapOwner(
     clientIp: string,
   ): Promise<BootstrapOwnerResolution | null> {
-    const candidateSessions = (await configManager.listSessions()).filter(
-      (session) => session.data.ip === clientIp,
-    );
+    const candidateSessions = await this.listActiveSessionsByIp(clientIp);
     if (candidateSessions.length !== 1) return null;
 
     const [candidate] = candidateSessions;
     if (!candidate) return null;
 
-    return {
-      ownerSessionId: candidate.id,
-      ownerSession: candidate.data,
-    };
+    return candidate;
   }
 
   private async resolveSessionOwner(
@@ -836,6 +894,24 @@ export class AuthMobilitySessionManager {
       ipLocationRefs.session(bootstrap.ownerSessionId),
       ipLocationRefs.sessionTimeline(bootstrap.ownerSessionId),
     ]);
+
+    return true;
+  }
+
+  private async restoreTrimMediaApp(clientIp: string): Promise<boolean> {
+    const sessions = await this.listActiveSessionsByIp(clientIp);
+    if (sessions.length === 0) return false;
+
+    const usageRefs = [
+      ...new Set(
+        sessions.flatMap((session) => [
+          ipLocationRefs.session(session.ownerSessionId),
+          ipLocationRefs.sessionTimeline(session.ownerSessionId),
+        ]),
+      ),
+    ];
+
+    await ipLocationService.registerUsage(clientIp, usageRefs);
 
     return true;
   }

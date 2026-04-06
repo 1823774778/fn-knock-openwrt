@@ -85,6 +85,34 @@ const dnsCredentialBridgeDefinitions: DnsCredentialBridgeDefinition[] = [
     ],
   },
   {
+    id: "edgeone",
+    label: "腾讯云 EdgeOne",
+    acmeDnsType: "dns_tencent",
+    ddnsProvider: "edgeone",
+    acmeToDdns: [
+      { from: "Tencent_SecretId", to: "secret_id" },
+      { from: "Tencent_SecretKey", to: "secret_key" },
+    ],
+    ddnsToAcme: [
+      { from: "secret_id", to: "Tencent_SecretId" },
+      { from: "secret_key", to: "Tencent_SecretKey" },
+    ],
+  },
+  {
+    id: "edgeone_cname",
+    label: "腾讯云 EdgeOne（CNAME 接入）",
+    acmeDnsType: "dns_tencent",
+    ddnsProvider: "edgeone_cname",
+    acmeToDdns: [
+      { from: "Tencent_SecretId", to: "secret_id" },
+      { from: "Tencent_SecretKey", to: "secret_key" },
+    ],
+    ddnsToAcme: [
+      { from: "secret_id", to: "Tencent_SecretId" },
+      { from: "secret_key", to: "Tencent_SecretKey" },
+    ],
+  },
+  {
     id: "godaddy",
     label: "GoDaddy",
     acmeDnsType: "dns_gd",
@@ -122,7 +150,8 @@ const dnsCredentialBridgeDefinitions: DnsCredentialBridgeDefinition[] = [
   },
 ];
 
-const normalizeValue = (value: string | null | undefined) => value?.trim() || "";
+const normalizeValue = (value: string | null | undefined) =>
+  value?.trim() || "";
 
 export const resolveDnsCredentialBridge = (
   target: DnsCredentialTarget,

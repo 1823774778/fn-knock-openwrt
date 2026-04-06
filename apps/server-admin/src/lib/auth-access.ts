@@ -82,8 +82,8 @@ export const hasNormalAccessContext = async (
     }
   }
 
-  if (identity.isFnosApp) {
-    return authMobilitySessionManager.hasResolvableFnosSession(
+  if (identity.fnosToken || identity.appBinding) {
+    return authMobilitySessionManager.hasResolvableMobilityAccess(
       request,
       clientIp,
     );
