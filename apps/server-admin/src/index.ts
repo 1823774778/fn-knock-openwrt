@@ -58,6 +58,7 @@ import { syncSSLDeploymentToGateway } from "./lib/ssl-gateway";
 import { syncSmartConnectOnBoot } from "./lib/smart-connect";
 import { terminalRoutes } from "./routes/terminal";
 import { terminalManager } from "./lib/terminal-manager";
+import { applyNoStoreHeaders } from "./lib/auth-access";
 import { cidrRoutes } from "./routes/cidr";
 import { ipLocationRoutes } from "./routes/ip-location";
 import { internalSystemEventRoutes } from "./routes/internal-system-events";
@@ -214,6 +215,17 @@ const serveInjectedIndex = (rootPath: string) => {
   });
 };
 
+const buildRuntimeHmacSecretResponse = (
+  set: { status?: number; headers: Record<string, string | number> },
+) => {
+  applyNoStoreHeaders(set.headers);
+  if (!EXPOSE_RUNTIME_HMAC_SECRET) {
+    set.status = 404;
+    return { success: false, message: "Not found" };
+  }
+  return { success: true, data: { hmacSecret: RUNTIME_HMAC_SECRET } };
+};
+
 const app = new Elysia();
 
 const authApp = new Elysia();
@@ -301,11 +313,7 @@ app.use(terminalRoutes);
 app.use(cidrRoutes);
 
 app.get("/__fn-knock/runtime-hmac-secret", ({ set }) => {
-  if (!EXPOSE_RUNTIME_HMAC_SECRET) {
-    set.status = 404;
-    return { success: false, message: "Not found" };
-  }
-  return { success: true, data: { hmacSecret: RUNTIME_HMAC_SECRET } };
+  return buildRuntimeHmacSecretResponse(set);
 });
 
 app.use(
@@ -394,25 +402,13 @@ authApp.get("/__auth__", () => serveInjectedIndex(AUTH_STATIC_PATH));
 authApp.get("/__auth__/", () => serveInjectedIndex(AUTH_STATIC_PATH));
 authApp.get("/__auth__/index.html", () => serveInjectedIndex(AUTH_STATIC_PATH));
 authApp.get("/__fn-knock/runtime-hmac-secret", ({ set }) => {
-  if (!EXPOSE_RUNTIME_HMAC_SECRET) {
-    set.status = 404;
-    return { success: false, message: "Not found" };
-  }
-  return { success: true, data: { hmacSecret: RUNTIME_HMAC_SECRET } };
+  return buildRuntimeHmacSecretResponse(set);
 });
 authApp.get("/auth/__fn-knock/runtime-hmac-secret", ({ set }) => {
-  if (!EXPOSE_RUNTIME_HMAC_SECRET) {
-    set.status = 404;
-    return { success: false, message: "Not found" };
-  }
-  return { success: true, data: { hmacSecret: RUNTIME_HMAC_SECRET } };
+  return buildRuntimeHmacSecretResponse(set);
 });
 authApp.get("/__auth__/__fn-knock/runtime-hmac-secret", ({ set }) => {
-  if (!EXPOSE_RUNTIME_HMAC_SECRET) {
-    set.status = 404;
-    return { success: false, message: "Not found" };
-  }
-  return { success: true, data: { hmacSecret: RUNTIME_HMAC_SECRET } };
+  return buildRuntimeHmacSecretResponse(set);
 });
 authApp.use(
   createStaticFilesPlugin({

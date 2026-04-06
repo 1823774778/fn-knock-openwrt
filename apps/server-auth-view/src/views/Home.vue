@@ -347,7 +347,13 @@ async function handleLogout() {
 }
 
 async function handlePasskeyBind() {
-  if (!isPasskeySupported.value || isPasskeyAvailable.value) return;
+  if (
+    isPasskeyBinding.value ||
+    !isPasskeySupported.value ||
+    isPasskeyAvailable.value
+  ) {
+    return;
+  }
   isPasskeyBinding.value = true;
   passkeyError.value = "";
   try {

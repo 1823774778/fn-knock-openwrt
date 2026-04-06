@@ -7,6 +7,7 @@ import {
   handleLoginSuccess,
 } from "../lib/auth-utils";
 import {
+  applyNoStoreHeaders,
   applyAuthResponseHeaders,
   hasWhitelistAccess,
   hasNormalAccessContext,
@@ -112,6 +113,9 @@ const buildPostLogoutLocation = (request: Request): string => {
 };
 
 export const authRoutes = new Elysia({ prefix: "/api/auth" })
+  .onBeforeHandle(({ set }) => {
+    applyNoStoreHeaders(set.headers);
+  })
   .get("/bootstrap", async ({ request, set }) => {
     const clientIp = getClientIp(request);
     const config = await configManager.getConfig();
@@ -198,7 +202,7 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
       },
     };
   })
-  .get("/captcha/config", async () => {
+  .get("/captcha/config", async ({ set }) => {
     const settings = await captchaService.getPublicSettings();
     return { success: true, data: settings };
   })
@@ -213,7 +217,7 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
       };
     }
   })
-  .get("/ip", async ({ request }) => {
+  .get("/ip", async ({ request, set }) => {
     const clientIp = getClientIp(request);
     const client = buildClientInfo(clientIp);
 
@@ -224,7 +228,7 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
       },
     };
   })
-  .get("/ip/location", async ({ request }) => {
+  .get("/ip/location", async ({ request, set }) => {
     const clientIp = getClientIp(request);
     const snapshot = await ipLocationService.ensureEnqueued(clientIp);
 
@@ -395,6 +399,7 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
     const headers = new Headers({
       Location: buildPostLogoutLocation(request),
     });
+    applyNoStoreHeaders(headers);
     headers.append(
       "Set-Cookie",
       buildSessionClearCookie({ domain: cookieDomain }),
@@ -412,6 +417,7 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
     const clientIp = getClientIp(request);
     const forwardedPath = request.headers.get("x-forwarded-path") || "";
     const headers = new Headers();
+    applyNoStoreHeaders(headers);
     const accessMode = resolveRequestedAccessMode(request);
     let config: Awaited<ReturnType<typeof configManager.getConfig>> | null =
       null;

@@ -109,20 +109,19 @@
               class="flex items-start justify-between gap-4 rounded-lg border px-4 py-3"
             >
               <div class="space-y-1">
-                <Label for="aliyun-esa-enabled">阿里云 ESA 支持</Label>
+                <Label for="aliyun-esa-enabled">阿里云ESA / 腾讯云Edge One支持</Label>
                 <p class="text-xs text-muted-foreground">仅对子域模式生效</p>
                 <p class="text-xs text-muted-foreground">
-                  启用后，公开鉴权地址不再自动补访问端口，并优先使用 ESA 注入的
-                  ali-real-client-ip 识别客户端真实 IP。
+                  启用后，公开鉴权地址不再自动补访问端口，并优先使用ESA/Edge One提供的客户端真实 IP 功能
                 </p>
                 <p class="text-xs text-muted-foreground">
-                  请确保 ESA 站点已开启托管转换中的“添加真实客户端 IP 标头”。
+                  如果使用ESA，请确保 ESA 站点已开启托管转换中的“添加真实客户端 IP 标头”。
                 </p>
                 <p
                   v-if="!isAliyunESAModeEditable"
                   class="text-xs text-amber-600"
                 >
-                  当前运行模式不是子域模式（run_type=3），这个开关暂时不会生效。
+                  当前运行模式不是子域模式，这个开关暂时不会生效。
                 </p>
               </div>
               <Switch

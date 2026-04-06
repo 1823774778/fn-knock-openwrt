@@ -31,6 +31,27 @@ export type AuthAccessDecision = {
   responseHeaders: Record<string, string>;
 };
 
+const NO_STORE_RESPONSE_HEADERS = {
+  "Cache-Control":
+    "private, no-store, no-cache, max-age=0, must-revalidate",
+  Pragma: "no-cache",
+  Expires: "0",
+  "CDN-Cache-Control": "private, no-store",
+  "Surrogate-Control": "no-store",
+} as const;
+
+export const applyNoStoreHeaders = (
+  headers: Headers | Record<string, string | number>,
+) => {
+  for (const [key, value] of Object.entries(NO_STORE_RESPONSE_HEADERS)) {
+    if (headers instanceof Headers) {
+      headers.set(key, value);
+      continue;
+    }
+    headers[key] = value;
+  }
+};
+
 export const resolveRequestedAccessMode = (
   request: Request,
 ): RequestedAccessMode => {

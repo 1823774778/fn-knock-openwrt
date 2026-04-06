@@ -12,6 +12,7 @@ import {
   normalizeAuthFailureTrackingIp,
   registerAuthFailure,
 } from "../../lib/auth-failure";
+import { applyNoStoreHeaders } from "../../lib/auth-access";
 import { loginBackoffService } from "../../lib/login-backoff";
 import { resolveSafeRedirectUri } from "../../lib/subdomain-mode";
 
@@ -49,7 +50,10 @@ const parseCookieValue = (
 };
 
 export const passkeyRoutes = new Elysia({ prefix: "/passkey" })
-  .get("/status", async ({ request }) => {
+  .onBeforeHandle(({ set }) => {
+    applyNoStoreHeaders(set.headers);
+  })
+  .get("/status", async ({ request, set }) => {
     const passkeys = await configManager.getPasskeys();
     const rpInfo = await getRpInfo(request);
     return {

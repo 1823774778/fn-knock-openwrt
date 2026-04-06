@@ -32,6 +32,7 @@
               <altcha-widget
                 ref="powWidgetRef"
                 :challengeurl="powChallengeUrl"
+                :customfetch.prop="powChallengeFetch"
                 @statechange="onPowStateChange"
                 hidefooter
                 hidelogo
@@ -201,7 +202,9 @@
                 <div v-if="passkeyBindError" class="text-sm text-destructive">
                   {{ passkeyBindError }}
                 </div>
-                <div class="flex items-center space-x-3 rounded-lg border bg-muted/40 px-3 py-2">
+                <div
+                  class="flex items-center space-x-3 rounded-lg border bg-muted/40 px-3 py-2"
+                >
                   <Checkbox
                     id="skipPasskeyBindPrompt"
                     v-model="skipPasskeyBindPrompt"
@@ -293,7 +296,13 @@ import type {
   CaptchaPublicSettings,
   CaptchaSubmission,
 } from "@frontend-core/captcha/types";
-import { apiClient, AuthAPI, buildAuthApiPath, CaptchaAPI } from "@/lib/api";
+import {
+  apiClient,
+  AuthAPI,
+  buildAuthApiPath,
+  CaptchaAPI,
+  fetchNoStore,
+} from "@/lib/api";
 import { useClientIpLocation } from "@/lib/client-ip-location";
 import {
   buildPowSubmission,
@@ -343,6 +352,8 @@ const isPowFallbackLoading = ref(false);
 const isCaptchaConfigLoading = ref(true);
 
 const powChallengeUrl = buildAuthApiPath("/challenge");
+const powChallengeFetch = (input: string | URL, init?: RequestInit) =>
+  fetchNoStore(input, init);
 const activeCaptchaProvider = computed(
   () => captchaConfig.value?.provider ?? null,
 );
@@ -592,7 +603,13 @@ function handlePasskeyBindDialogOpenChange(open: boolean) {
 }
 
 async function handleLogin() {
-  if (isLoading.value || isLoginCoolingDown.value) {
+  if (
+    isLoading.value ||
+    isLoginCoolingDown.value ||
+    showPasskeyBindDialog.value ||
+    pendingRunType.value !== null ||
+    isBindingPasskey.value
+  ) {
     return;
   }
   if (token.value.length !== 6) {
@@ -690,7 +707,8 @@ async function handlePasskeyLogin() {
   if (
     !isPasskeySupported.value ||
     !isPasskeyAvailable.value ||
-    isLoginCoolingDown.value
+    isLoginCoolingDown.value ||
+    isPasskeyLoading.value
   ) {
     return;
   }
@@ -731,11 +749,10 @@ async function handlePasskeyLogin() {
     );
   } catch (e: any) {
     const retryAfter = startLoginCooldown(extractRetryAfterSeconds(e));
-    errorMessage.value =
-      resolveRetryAfterMessage(
-        e?.response?.data?.message || e?.message || "Passkey 登录失败，请重试",
-        retryAfter,
-      );
+    errorMessage.value = resolveRetryAfterMessage(
+      e?.response?.data?.message || e?.message || "Passkey 登录失败，请重试",
+      retryAfter,
+    );
     showErrorDialog.value = true;
   } finally {
     isPasskeyLoading.value = false;
@@ -743,6 +760,9 @@ async function handlePasskeyLogin() {
 }
 
 async function handlePasskeyBind() {
+  if (isBindingPasskey.value) {
+    return;
+  }
   if (!passkeyBindToken.value) {
     passkeyBindError.value = "绑定凭证无效，请重新登录";
     return;

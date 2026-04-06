@@ -5,7 +5,7 @@
 			"label": "task: server-admin",
 			"type": "shell",
 			"isBackground": true,
-			"command": "npm run dev --workspace server-admin",
+			"command": "source ~/.zshrc && npm run dev --workspace server-admin",
 			"options": {
 				"env": {
 					"BACKEND_PORT": "7998",
@@ -26,7 +26,7 @@
 			"label": "task: server-admin-view",
 			"type": "shell",
 			"isBackground": true,
-			"command": "npm run dev --workspace server-admin-view -- --port 5173",
+			"command": "source ~/.zshrc && npm run dev --workspace server-admin-view -- --port 5173",
 			"presentation": {
 				"group": "output",
 				"panel": "new"
@@ -36,7 +36,7 @@
 			"label": "task: server-auth-view",
 			"type": "shell",
 			"isBackground": true,
-			"command": "npm run dev --workspace server-auth-view -- --port 5174",
+			"command": "source ~/.zshrc && npm run dev --workspace server-auth-view -- --port 5174",
 			"presentation": {
 				"group": "output"
 			}
