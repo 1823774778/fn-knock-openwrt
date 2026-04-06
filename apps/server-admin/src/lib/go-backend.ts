@@ -14,6 +14,7 @@ export interface AuthConfig {
   preflight_url?: string;
   auth_cache_ttl_seconds?: number;
   auth_cache_unauthorized_ttl_seconds?: number;
+  aliyun_esa_enabled?: boolean;
   public_auth_base_url?: string;
   public_http_port?: number;
   public_https_port?: number;
@@ -170,6 +171,7 @@ export interface GatewayLogEntry {
   bytes_out: number;
   tls: boolean;
   websocket: boolean;
+  ali_real_client_ip?: string;
   x_forwarded_for?: string;
   x_real_ip?: string;
 }

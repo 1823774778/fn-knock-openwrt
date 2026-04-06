@@ -454,8 +454,21 @@ const getEntryIpLocationText = (entry: GatewayLogEntry) => {
   return "";
 };
 
-const getForwardedIpText = (entry: GatewayLogEntry) =>
-  entry.x_forwarded_for || entry.x_real_ip || "";
+const getForwardedHeaderLines = (entry: GatewayLogEntry) => {
+  const lines: string[] = [];
+
+  if (entry.ali_real_client_ip) {
+    lines.push(`Ali-Real-Client-IP: ${entry.ali_real_client_ip}`);
+  }
+  if (entry.x_forwarded_for) {
+    lines.push(`X-Forwarded-For: ${entry.x_forwarded_for}`);
+  }
+  if (entry.x_real_ip) {
+    lines.push(`X-Real-IP: ${entry.x_real_ip}`);
+  }
+
+  return lines;
+};
 
 const displayedEntries = computed(() =>
   entries.value.map((entry) => ({
@@ -501,6 +514,7 @@ const detailFields = [
   { key: "bytes_out", label: "响应字节" },
   { key: "tls", label: "TLS" },
   { key: "websocket", label: "WebSocket" },
+  { key: "ali_real_client_ip", label: "Ali-Real-Client-IP" },
   { key: "x_forwarded_for", label: "X-Forwarded-For" },
   { key: "x_real_ip", label: "X-Real-IP" },
 ] as const;
@@ -858,10 +872,11 @@ onBeforeUnmount(() => {
                     {{ getEntryIpLocationText(entry) }}
                   </div>
                   <div
-                    v-if="getForwardedIpText(entry)"
+                    v-for="headerLine in getForwardedHeaderLines(entry)"
+                    :key="headerLine"
                     class="break-all text-[10px] text-muted-foreground/75"
                   >
-                    转发: {{ getForwardedIpText(entry) }}
+                    {{ headerLine }}
                   </div>
                 </TableCell>
                 <TableCell class="min-w-[110px] py-2.5">

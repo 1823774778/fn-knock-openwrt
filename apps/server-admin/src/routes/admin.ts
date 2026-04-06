@@ -1562,6 +1562,7 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
         auth_host: t.Optional(t.String()),
         auth_target: t.Optional(t.String()),
         cookie_domain: t.Optional(t.String()),
+        aliyun_esa_enabled: t.Optional(t.Boolean()),
         public_auth_base_url: t.Optional(t.String()),
         public_http_port: t.Optional(t.Number()),
         public_https_port: t.Optional(t.Number()),
@@ -1867,15 +1868,10 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
       const events = await systemEventManager.listByRange({
         fromMs,
         toMs: nowMs,
-        types: [
-          FN_EVENT_AUTH_LOGIN_FAILURE,
-          FN_EVENT_SECURITY_SCANNER_BLOCKED,
-        ],
+        types: [FN_EVENT_AUTH_LOGIN_FAILURE, FN_EVENT_SECURITY_SCANNER_BLOCKED],
       });
       const failedTimestamps = events
-        .filter(
-          (item) => item.event.type === FN_EVENT_AUTH_LOGIN_FAILURE,
-        )
+        .filter((item) => item.event.type === FN_EVENT_AUTH_LOGIN_FAILURE)
         .map((item) => item.timestamp);
       const blockedTimestamps = events
         .filter((item) => item.event.type === FN_EVENT_SECURITY_SCANNER_BLOCKED)

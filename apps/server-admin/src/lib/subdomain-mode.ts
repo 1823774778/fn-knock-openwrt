@@ -94,15 +94,24 @@ const parseExplicitUrlPort = (
   }
 };
 
+const shouldOmitDerivedGatewayPort = (
+  config?: Pick<AppConfig, "run_type" | "subdomain_mode"> | null,
+): boolean =>
+  config?.run_type === 3 && config.subdomain_mode?.aliyun_esa_enabled === true;
+
 const formatDerivedPublicAuthBaseUrl = (
   host: string,
   config?: Partial<
-    Pick<AppConfig, "run_type" | "reverse_proxy_submode">
+    Pick<AppConfig, "run_type" | "reverse_proxy_submode" | "subdomain_mode">
   > | null,
   scheme: "http" | "https" = "https",
 ): string => {
   const normalizedHost = host.trim().toLowerCase();
   if (!normalizedHost) return "";
+
+  if (shouldOmitDerivedGatewayPort(config)) {
+    return `${scheme}://${normalizedHost}`;
+  }
 
   const port = resolvePublicGatewayPort(config);
   if (!port) return `${scheme}://${normalizedHost}`;
@@ -712,7 +721,11 @@ export const resolveCookieDomain = (
 
   if (isAnySubdomainRoutingMode(config)) {
     const rootDomain = normalizeDomainName(config?.subdomain_mode?.root_domain);
-    if (rootDomain && requestHost && isHostWithinDomain(requestHost, rootDomain)) {
+    if (
+      rootDomain &&
+      requestHost &&
+      isHostWithinDomain(requestHost, rootDomain)
+    ) {
       return rootDomain;
     }
   }
@@ -914,13 +927,15 @@ export const buildGatewayAuthConfig = (
   const publicAuthBaseUrl = isSubdomainModeActive
     ? explicitPublicAuthBaseUrl || resolvePublicAuthBaseUrl(config)
     : "";
+  const aliyunESAEnabled =
+    config.run_type === 3 && config.subdomain_mode?.aliyun_esa_enabled === true;
   const publicHttpPort = isSubdomainModeActive
     ? (configuredPublicHttpPort ?? 0)
     : 0;
   const publicHttpsPort = isSubdomainModeActive
     ? (configuredPublicHttpsPort ??
       parseExplicitUrlPort(publicAuthBaseUrl, "https") ??
-      (!explicitPublicAuthBaseUrl
+      (!explicitPublicAuthBaseUrl && !aliyunESAEnabled
         ? (resolvePublicGatewayPort(config) ?? 0)
         : 0))
     : 0;
@@ -939,7 +954,8 @@ export const buildGatewayAuthConfig = (
     auth_cache_ttl_seconds: config.subdomain_mode?.auth_cache_ttl_seconds ?? 1,
     auth_cache_unauthorized_ttl_seconds:
       config.subdomain_mode?.auth_cache_unauthorized_ttl_seconds ?? 1,
-    public_auth_base_url: "",
+    aliyun_esa_enabled: aliyunESAEnabled,
+    public_auth_base_url: publicAuthBaseUrl,
     public_http_port: publicHttpPort,
     public_https_port: publicHttpsPort,
     auth_host: authHost,

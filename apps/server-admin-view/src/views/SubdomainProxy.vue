@@ -54,17 +54,19 @@
                   <div class="text-sm">
                     <template v-if="authServiceMapping">
                       <div class="break-all font-medium">
-                        {{ authServiceMapping.host }}:{{
-                          displayAccessEntryPort
+                        {{
+                          formatHostWithAccessEntryPort(authServiceMapping.host)
                         }}
                       </div>
                       <div class="mt-1 text-xs text-muted-foreground">
                         在尚未登录时，会自动跳转到
-                        <code
-                          >https://{{ authServiceMapping.host }}:{{
-                            displayAccessEntryPort
-                          }}</code
-                        >
+                        <code>
+                          https://{{
+                            formatHostWithAccessEntryPort(
+                              authServiceMapping.host,
+                            )
+                          }}
+                        </code>
                         完成登录。
                       </div>
                     </template>
@@ -102,6 +104,32 @@
                   </ConfirmDangerPopover>
                 </div>
               </div>
+            </div>
+            <div
+              class="flex items-start justify-between gap-4 rounded-lg border px-4 py-3"
+            >
+              <div class="space-y-1">
+                <Label for="aliyun-esa-enabled">阿里云 ESA 支持</Label>
+                <p class="text-xs text-muted-foreground">仅对子域模式生效</p>
+                <p class="text-xs text-muted-foreground">
+                  启用后，公开鉴权地址不再自动补访问端口，并优先使用 ESA 注入的
+                  ali-real-client-ip 识别客户端真实 IP。
+                </p>
+                <p class="text-xs text-muted-foreground">
+                  请确保 ESA 站点已开启托管转换中的“添加真实客户端 IP 标头”。
+                </p>
+                <p
+                  v-if="!isAliyunESAModeEditable"
+                  class="text-xs text-amber-600"
+                >
+                  当前运行模式不是子域模式（run_type=3），这个开关暂时不会生效。
+                </p>
+              </div>
+              <Switch
+                id="aliyun-esa-enabled"
+                v-model="modeForm.aliyun_esa_enabled"
+                :disabled="!isAliyunESAModeEditable"
+              />
             </div>
           </div>
         </div>
@@ -337,9 +365,7 @@
                             ),
                           }"
                           :aria-label="`${formatHostWithAccessEntryPort(mapping.host)} 的 Home Assistant 需要关闭协议头`"
-                          @mouseenter="
-                            openProtocolHeadersWarning(mapping.host)
-                          "
+                          @mouseenter="openProtocolHeadersWarning(mapping.host)"
                           @mouseleave="
                             scheduleCloseProtocolHeadersWarning(mapping.host)
                           "
@@ -1007,6 +1033,7 @@ const createDefaultModeForm = (): SubdomainModeConfig => ({
   auth_host: "",
   auth_target: "http://localhost:7997",
   cookie_domain: "",
+  aliyun_esa_enabled: false,
   public_auth_base_url: "",
   auth_cache_ttl_seconds: 1,
   auth_cache_unauthorized_ttl_seconds: 1,
@@ -1220,7 +1247,13 @@ const composedPreviewHost = computed(() => {
 const displayAccessEntryPort = computed(
   () => accessEntryPort.value.trim() || "7999",
 );
+const isAliyunESAModeEditable = computed(
+  () => configStore.config?.run_type === 3,
+);
 const shouldOmitAccessEntryPort = computed(() => {
+  if (isAliyunESAModeEditable.value && modeForm.aliyun_esa_enabled) {
+    return true;
+  }
   const parsedPort = Number.parseInt(displayAccessEntryPort.value, 10);
   return parsedPort === 80 || parsedPort === 443;
 });
@@ -1483,6 +1516,7 @@ const applyModeForm = (next: SubdomainModeConfig) => {
   modeForm.auth_host = next.auth_host;
   modeForm.auth_target = next.auth_target;
   modeForm.cookie_domain = next.cookie_domain;
+  modeForm.aliyun_esa_enabled = next.aliyun_esa_enabled;
   modeForm.public_auth_base_url = next.public_auth_base_url;
   modeForm.auth_cache_ttl_seconds = next.auth_cache_ttl_seconds;
   modeForm.auth_cache_unauthorized_ttl_seconds =
@@ -1672,6 +1706,7 @@ async function saveMode() {
       auth_host: modeForm.auth_host.trim().toLowerCase(),
       auth_target: modeForm.auth_target.trim(),
       cookie_domain: modeForm.cookie_domain.trim(),
+      aliyun_esa_enabled: modeForm.aliyun_esa_enabled,
       public_auth_base_url: modeForm.public_auth_base_url.trim(),
       auth_cache_ttl_seconds: Math.max(
         0,

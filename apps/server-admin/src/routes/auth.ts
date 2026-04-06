@@ -413,9 +413,11 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
     const forwardedPath = request.headers.get("x-forwarded-path") || "";
     const headers = new Headers();
     const accessMode = resolveRequestedAccessMode(request);
+    let config: Awaited<ReturnType<typeof configManager.getConfig>> | null =
+      null;
 
     try {
-      const config = await configManager.getConfig();
+      config = await configManager.getConfig();
       let shareDecision: Awaited<
         ReturnType<typeof fnosShareBypassService.resolvePreflight>
       > | null = null;
@@ -463,6 +465,10 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
         error,
         clientIp,
         forwardedPath,
+        aliyunESAEnabled:
+          config?.run_type === 3 &&
+          config.subdomain_mode?.aliyun_esa_enabled === true,
+        aliRealClientIp: request.headers.get("ali-real-client-ip"),
         xForwardedFor: request.headers.get("x-forwarded-for"),
         xRealIp: request.headers.get("x-real-ip"),
       });

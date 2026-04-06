@@ -100,6 +100,7 @@ export interface SubdomainModeConfig {
   auth_host: string;
   auth_target: string;
   cookie_domain: string;
+  aliyun_esa_enabled: boolean;
   public_auth_base_url: string;
   public_http_port?: number;
   public_https_port?: number;
@@ -603,6 +604,7 @@ const DEFAULT_CONFIG: AppConfig = {
     auth_host: "",
     auth_target: `http://localhost:${process.env.AUTH_PORT || "7997"}`,
     cookie_domain: "",
+    aliyun_esa_enabled: false,
     public_auth_base_url: "",
     public_http_port: 0,
     public_https_port: 0,
@@ -1650,6 +1652,7 @@ const normalizeSubdomainModeConfig = (
         : DEFAULT_CONFIG.subdomain_mode.auth_target,
     cookie_domain:
       typeof raw.cookie_domain === "string" ? raw.cookie_domain.trim() : "",
+    aliyun_esa_enabled: raw.aliyun_esa_enabled === true,
     public_auth_base_url:
       typeof raw.public_auth_base_url === "string"
         ? raw.public_auth_base_url.trim().replace(/\/+$/, "")
@@ -3625,7 +3628,11 @@ return actual
 
         const installVariants =
           existingCandidates.length > 0
-            ? [...new Set(existingCandidates.map((candidate) => candidate.useEcc))]
+            ? [
+                ...new Set(
+                  existingCandidates.map((candidate) => candidate.useEcc),
+                ),
+              ]
             : [true, false];
 
         let installSucceeded = false;

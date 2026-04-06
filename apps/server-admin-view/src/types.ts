@@ -54,6 +54,7 @@ export interface SubdomainModeConfig {
   auth_host: string;
   auth_target: string;
   cookie_domain: string;
+  aliyun_esa_enabled: boolean;
   public_auth_base_url: string;
   auth_cache_ttl_seconds: number;
   auth_cache_unauthorized_ttl_seconds: number;
@@ -290,6 +291,7 @@ export interface GatewayLogEntry {
   bytes_out: number;
   tls: boolean;
   websocket: boolean;
+  ali_real_client_ip?: string;
   x_forwarded_for?: string;
   x_real_ip?: string;
   ipLocation?: string;

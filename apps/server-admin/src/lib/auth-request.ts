@@ -5,6 +5,9 @@ export type AuthClientInfo = {
 };
 
 export const getClientIp = (request: Request): string => {
+  const aliyunRealIp = normalizeIp(request.headers.get("ali-real-client-ip"));
+  if (aliyunRealIp) return aliyunRealIp;
+
   const forwarded = request.headers.get("x-forwarded-for");
   const forwardedIp = normalizeIp(forwarded?.split(",")[0]?.trim());
   if (forwardedIp) return forwardedIp;
