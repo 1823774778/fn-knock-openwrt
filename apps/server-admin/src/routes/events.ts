@@ -6,13 +6,17 @@ import {
 } from "../lib/system-events/constants";
 import { hydrateSystemEventIpLocations } from "../lib/system-events/ip-locations";
 import { systemEventManager } from "../lib/system-events/manager";
+import { withRouteDoc } from "../lib/openapi";
 
 const parsePositiveInt = (value: string | undefined, fallback: number) => {
   const parsed = Number.parseInt(String(value ?? ""), 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
 
-export const eventRoutes = new Elysia({ prefix: "/api/admin/events" })
+export const eventRoutes = new Elysia({
+  prefix: "/api/admin/events",
+  tags: ["Events"],
+})
   .get(
     "/",
     async ({ query, set }) => {
@@ -20,8 +24,7 @@ export const eventRoutes = new Elysia({ prefix: "/api/admin/events" })
       const level = query.level?.trim();
       const source = query.source?.trim();
       const eventType = type && isSystemEventType(type) ? type : undefined;
-      const eventLevel =
-        level && isSystemEventLevel(level) ? level : undefined;
+      const eventLevel = level && isSystemEventLevel(level) ? level : undefined;
       const eventSource =
         source && isSystemEventSource(source) ? source : undefined;
 
@@ -50,7 +53,7 @@ export const eventRoutes = new Elysia({ prefix: "/api/admin/events" })
 
       return { success: true, data: result };
     },
-    {
+    withRouteDoc("分页查询系统事件", {
       query: t.Object({
         page: t.Optional(t.String()),
         limit: t.Optional(t.String()),
@@ -59,7 +62,7 @@ export const eventRoutes = new Elysia({ prefix: "/api/admin/events" })
         level: t.Optional(t.String()),
         source: t.Optional(t.String()),
       }),
-    },
+    }),
   )
   .delete(
     "/",
@@ -67,9 +70,9 @@ export const eventRoutes = new Elysia({ prefix: "/api/admin/events" })
       await systemEventManager.deleteMany(body.ids);
       return { success: true };
     },
-    {
+    withRouteDoc("批量删除系统事件", {
       body: t.Object({
         ids: t.Array(t.String()),
       }),
-    },
+    }),
   );

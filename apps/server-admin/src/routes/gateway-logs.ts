@@ -5,6 +5,7 @@ import {
   syncGatewayLoggingToGateway,
 } from "../lib/gateway-logging";
 import { configManager } from "../lib/redis";
+import { routeDoc, withRouteDoc } from "../lib/openapi";
 
 const toFailure = (
   set: { status?: number | string },
@@ -20,14 +21,19 @@ const toFailure = (
 
 export const gatewayLogsRoutes = new Elysia({
   prefix: "/api/admin/gateway-logs",
+  tags: ["Gateway Logs"],
 })
-  .get("/config", async () => {
-    const settings = await configManager.getGatewayLoggingConfig();
-    return {
-      success: true,
-      data: await getGatewayLoggingConfigForResponse(settings),
-    };
-  })
+  .get(
+    "/config",
+    async () => {
+      const settings = await configManager.getGatewayLoggingConfig();
+      return {
+        success: true,
+        data: await getGatewayLoggingConfigForResponse(settings),
+      };
+    },
+    routeDoc("获取网关请求日志配置"),
+  )
   .post(
     "/config",
     async ({ body, set }) => {
@@ -46,27 +52,35 @@ export const gatewayLogsRoutes = new Elysia({
         );
       }
     },
-    {
+    withRouteDoc("更新网关请求日志配置", {
       body: t.Object({
         enabled: t.Boolean(),
         max_days: t.Number(),
       }),
-    },
+    }),
   )
-  .get("/directory", async ({ set }) => {
-    const response = await goBackend.getGatewayLoggingDirectory();
-    if (!response.success || !response.data) {
-      return toFailure(set, response.message || "读取日志目录失败");
-    }
-    return { success: true, data: response.data };
-  })
-  .get("/dates", async ({ set }) => {
-    const response = await goBackend.getGatewayLogDates();
-    if (!response.success || !response.data) {
-      return toFailure(set, response.message || "读取日志日期失败");
-    }
-    return { success: true, data: response.data };
-  })
+  .get(
+    "/directory",
+    async ({ set }) => {
+      const response = await goBackend.getGatewayLoggingDirectory();
+      if (!response.success || !response.data) {
+        return toFailure(set, response.message || "读取日志目录失败");
+      }
+      return { success: true, data: response.data };
+    },
+    routeDoc("获取网关日志目录"),
+  )
+  .get(
+    "/dates",
+    async ({ set }) => {
+      const response = await goBackend.getGatewayLogDates();
+      if (!response.success || !response.data) {
+        return toFailure(set, response.message || "读取日志日期失败");
+      }
+      return { success: true, data: response.data };
+    },
+    routeDoc("获取可查询的日志日期"),
+  )
   .get(
     "/entries",
     async ({ query, set }) => {
@@ -76,7 +90,7 @@ export const gatewayLogsRoutes = new Elysia({
       }
       return { success: true, data: response.data };
     },
-    {
+    withRouteDoc("分页查询网关请求日志", {
       query: t.Object({
         date: t.Optional(t.String()),
         pagination: t.Optional(t.String()),
@@ -87,7 +101,7 @@ export const gatewayLogsRoutes = new Elysia({
         status: t.Optional(t.String()),
         logged_in: t.Optional(t.String()),
       }),
-    },
+    }),
   )
   .delete(
     "/entries",
@@ -98,9 +112,9 @@ export const gatewayLogsRoutes = new Elysia({
       }
       return { success: true, data: response.data };
     },
-    {
+    withRouteDoc("按日期删除网关请求日志", {
       body: t.Object({
         date: t.String(),
       }),
-    },
+    }),
   );

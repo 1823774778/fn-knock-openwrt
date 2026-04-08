@@ -15,6 +15,7 @@ import {
   buildSubdomainCertificateCoverage,
   buildSubdomainCertificateInventoryCoverage,
 } from "../lib/subdomain-mode";
+import { routeDoc, withRouteDoc } from "../lib/openapi";
 
 function crc32(buf: Uint8Array) {
   let c = ~0 >>> 0;
@@ -183,17 +184,28 @@ async function buildSSLStatusPayload() {
   };
 }
 
-export const sslRoutes = new Elysia({ prefix: "/api/admin/ssl" })
-  .get("/status", async () => {
-    return {
-      success: true,
-      data: await buildSSLStatusPayload(),
-    };
-  })
-  .get("/shared-files", async () => {
-    const files = await listSSLSharedFiles();
-    return { success: true, data: files };
-  })
+export const sslRoutes = new Elysia({
+  prefix: "/api/admin/ssl",
+  tags: ["SSL"],
+})
+  .get(
+    "/status",
+    async () => {
+      return {
+        success: true,
+        data: await buildSSLStatusPayload(),
+      };
+    },
+    routeDoc("获取 SSL 状态"),
+  )
+  .get(
+    "/shared-files",
+    async () => {
+      const files = await listSSLSharedFiles();
+      return { success: true, data: files };
+    },
+    routeDoc("获取共享目录中的 SSL 文件"),
+  )
   .get(
     "/shared-files/content",
     async ({ query, set }) => {
@@ -212,78 +224,102 @@ export const sslRoutes = new Elysia({ prefix: "/api/admin/ssl" })
         return { success: false, message };
       }
     },
-    {
+    withRouteDoc("读取共享目录中的 SSL 文件内容", {
       query: t.Object({
         path: t.String(),
       }),
-    },
+    }),
   )
-  .get("/ca/status", async () => {
-    const initialized = await existsCA();
-    if (!initialized) return { success: true, data: { initialized: false } };
-    const info = await getCAInfo();
-    return { success: true, data: { initialized: true, info } };
-  })
-  .post("/ca/init", async () => {
-    const info = await initRootCA({
-      commonName: "KCI-LNK Root Certificate Authority",
-      organization: "KCI-LNK Corporation",
-      organizationalUnit: "Information Security Department",
-      country: "TW",
-      state: "Taiwan",
-      locality: "Taipei",
-      validityYears: 20,
-      keySize: 2048,
-    });
-    return { success: true, data: info };
-  })
-  .delete("/ca", async () => {
-    await clearCA();
-    return { success: true };
-  })
-  .get("/ca/cert.pem", async ({ set }) => {
-    const pem = await readCACert();
-    set.headers["content-type"] = "application/x-pem-file; charset=utf-8";
-    set.headers["content-disposition"] =
-      'attachment; filename="KCI-LNK-Root-CA.pem"';
-    return pem;
-  })
-  .get("/ca/server-cert.zip", async ({ set }) => {
-    try {
-      const hosts = await configManager.getCAHosts();
-      if (!hosts.length) {
-        set.status = 400;
-        return { success: false, message: "域名列表为空，请先添加域名或 IP" };
-      }
-      const { certPem, keyPem } = await issueServerCert(hosts, 20);
-      const validation = configManager.validateSSLCert(certPem, keyPem);
-      if (!validation.valid) {
-        set.status = 400;
-        return {
-          success: false,
-          message: validation.error || "证书或私钥无效",
-        };
-      }
-      const entries = [
-        { name: `server-cert.pem`, data: new TextEncoder().encode(certPem) },
-        { name: `server-key.pem`, data: new TextEncoder().encode(keyPem) },
-      ];
-      const zipData = createZip(entries);
-      return new Response(zipData, {
-        headers: {
-          "content-type": "application/zip",
-          "content-disposition": `attachment; filename="server-cert.zip"`,
-        },
+  .get(
+    "/ca/status",
+    async () => {
+      const initialized = await existsCA();
+      if (!initialized) return { success: true, data: { initialized: false } };
+      const info = await getCAInfo();
+      return { success: true, data: { initialized: true, info } };
+    },
+    routeDoc("获取本地 CA 状态"),
+  )
+  .post(
+    "/ca/init",
+    async () => {
+      const info = await initRootCA({
+        commonName: "KCI-LNK Root Certificate Authority",
+        organization: "KCI-LNK Corporation",
+        organizationalUnit: "Information Security Department",
+        country: "TW",
+        state: "Taiwan",
+        locality: "Taipei",
+        validityYears: 20,
+        keySize: 2048,
       });
-    } catch (e: any) {
-      set.status = 500;
-      return { success: false, message: e?.message ?? String(e) };
-    }
-  })
-  .get("/ca/hosts", async () => {
-    const hosts = await configManager.getCAHosts();
-    return { success: true, data: hosts };
-  })
+      return { success: true, data: info };
+    },
+    routeDoc("初始化本地 CA"),
+  )
+  .delete(
+    "/ca",
+    async () => {
+      await clearCA();
+      return { success: true };
+    },
+    routeDoc("删除本地 CA"),
+  )
+  .get(
+    "/ca/cert.pem",
+    async ({ set }) => {
+      const pem = await readCACert();
+      set.headers["content-type"] = "application/x-pem-file; charset=utf-8";
+      set.headers["content-disposition"] =
+        'attachment; filename="KCI-LNK-Root-CA.pem"';
+      return pem;
+    },
+    routeDoc("下载本地 CA 证书"),
+  )
+  .get(
+    "/ca/server-cert.zip",
+    async ({ set }) => {
+      try {
+        const hosts = await configManager.getCAHosts();
+        if (!hosts.length) {
+          set.status = 400;
+          return { success: false, message: "域名列表为空，请先添加域名或 IP" };
+        }
+        const { certPem, keyPem } = await issueServerCert(hosts, 20);
+        const validation = configManager.validateSSLCert(certPem, keyPem);
+        if (!validation.valid) {
+          set.status = 400;
+          return {
+            success: false,
+            message: validation.error || "证书或私钥无效",
+          };
+        }
+        const entries = [
+          { name: `server-cert.pem`, data: new TextEncoder().encode(certPem) },
+          { name: `server-key.pem`, data: new TextEncoder().encode(keyPem) },
+        ];
+        const zipData = createZip(entries);
+        return new Response(zipData, {
+          headers: {
+            "content-type": "application/zip",
+            "content-disposition": `attachment; filename="server-cert.zip"`,
+          },
+        });
+      } catch (e: any) {
+        set.status = 500;
+        return { success: false, message: e?.message ?? String(e) };
+      }
+    },
+    routeDoc("下载本地 CA 签发的服务端证书压缩包"),
+  )
+  .get(
+    "/ca/hosts",
+    async () => {
+      const hosts = await configManager.getCAHosts();
+      return { success: true, data: hosts };
+    },
+    routeDoc("获取本地 CA Host 列表"),
+  )
   .post(
     "/ca/hosts",
     async ({ body, set }) => {
@@ -295,11 +331,11 @@ export const sslRoutes = new Elysia({ prefix: "/api/admin/ssl" })
       const hosts = await configManager.addCAHost(value);
       return { success: true, data: hosts };
     },
-    {
+    withRouteDoc("新增本地 CA Host", {
       body: t.Object({
         value: t.String(),
       }),
-    },
+    }),
   )
   .delete(
     "/ca/hosts",
@@ -313,87 +349,99 @@ export const sslRoutes = new Elysia({ prefix: "/api/admin/ssl" })
       const hosts = await configManager.removeCAHost(value);
       return { success: true, data: hosts };
     },
-    {
+    withRouteDoc("删除本地 CA Host", {
       body: t.Optional(
         t.Object({
           value: t.Optional(t.String()),
           all: t.Optional(t.Boolean()),
         }),
       ),
-    },
+    }),
   )
-  .post("/ca/issue", async ({ set }) => {
-    try {
-      const hosts = await configManager.getCAHosts();
-      if (!hosts.length) {
-        set.status = 400;
-        return { success: false, message: "域名列表为空，请先添加域名或 IP" };
-      }
-      const { certPem, keyPem } = await issueServerCert(hosts, 20);
-      const validation = configManager.validateSSLCert(certPem, keyPem);
-      if (!validation.valid) {
-        set.status = 400;
-        return {
-          success: false,
-          message: validation.error || "证书或私钥无效",
-        };
-      }
-      await configManager.saveSSLCertificate({
-        label: hosts[0] || "本地 CA 证书",
-        source: "ca",
-        cert: certPem,
-        key: keyPem,
-        activate: true,
-        matchBy: {
+  .post(
+    "/ca/issue",
+    async ({ set }) => {
+      try {
+        const hosts = await configManager.getCAHosts();
+        if (!hosts.length) {
+          set.status = 400;
+          return { success: false, message: "域名列表为空，请先添加域名或 IP" };
+        }
+        const { certPem, keyPem } = await issueServerCert(hosts, 20);
+        const validation = configManager.validateSSLCert(certPem, keyPem);
+        if (!validation.valid) {
+          set.status = 400;
+          return {
+            success: false,
+            message: validation.error || "证书或私钥无效",
+          };
+        }
+        await configManager.saveSSLCertificate({
+          label: hosts[0] || "本地 CA 证书",
+          source: "ca",
           cert: certPem,
           key: keyPem,
+          activate: true,
+          matchBy: {
+            cert: certPem,
+            key: keyPem,
+          },
+        });
+        console.info(
+          `[SSL] Issued and stored server certificate for ${hosts.length} host(s).`,
+        );
+        await syncSSLDeploymentToGateway();
+        return { success: true, message: "成功" };
+      } catch (e: any) {
+        set.status = 500;
+        return { success: false, message: e?.message ?? String(e) };
+      }
+    },
+    routeDoc("签发并激活本地 CA 证书"),
+  )
+  .get(
+    "/cert.pem",
+    async ({ set }) => {
+      const config = await configManager.getConfig();
+      if (!config.ssl?.cert) {
+        set.status = 404;
+        return { success: false, message: "未安装证书" };
+      }
+      set.headers["content-type"] = "application/x-pem-file; charset=utf-8";
+      set.headers["content-disposition"] =
+        'attachment; filename=\"server-cert.pem\"';
+      return config.ssl.cert;
+    },
+    routeDoc("下载当前激活证书 PEM"),
+  )
+  .get(
+    "/cert.zip",
+    async ({ set }) => {
+      const config = await configManager.getConfig();
+      if (!config.ssl?.cert || !config.ssl?.key) {
+        set.status = 404;
+        return { success: false, message: "未安装证书" };
+      }
+      const entries = [
+        {
+          name: `server-cert.pem`,
+          data: new TextEncoder().encode(config.ssl.cert),
+        },
+        {
+          name: `server-key.pem`,
+          data: new TextEncoder().encode(config.ssl.key),
+        },
+      ];
+      const zipData = createZip(entries);
+      return new Response(zipData, {
+        headers: {
+          "content-type": "application/zip",
+          "content-disposition": `attachment; filename="server-cert.zip"`,
         },
       });
-      console.info(
-        `[SSL] Issued and stored server certificate for ${hosts.length} host(s).`,
-      );
-      await syncSSLDeploymentToGateway();
-      return { success: true, message: "成功" };
-    } catch (e: any) {
-      set.status = 500;
-      return { success: false, message: e?.message ?? String(e) };
-    }
-  })
-  .get("/cert.pem", async ({ set }) => {
-    const config = await configManager.getConfig();
-    if (!config.ssl?.cert) {
-      set.status = 404;
-      return { success: false, message: "未安装证书" };
-    }
-    set.headers["content-type"] = "application/x-pem-file; charset=utf-8";
-    set.headers["content-disposition"] =
-      'attachment; filename=\"server-cert.pem\"';
-    return config.ssl.cert;
-  })
-  .get("/cert.zip", async ({ set }) => {
-    const config = await configManager.getConfig();
-    if (!config.ssl?.cert || !config.ssl?.key) {
-      set.status = 404;
-      return { success: false, message: "未安装证书" };
-    }
-    const entries = [
-      {
-        name: `server-cert.pem`,
-        data: new TextEncoder().encode(config.ssl.cert),
-      },
-      {
-        name: `server-key.pem`,
-        data: new TextEncoder().encode(config.ssl.key),
-      },
-    ];
-    const zipData = createZip(entries);
-    return new Response(zipData, {
-      headers: {
-        "content-type": "application/zip",
-        "content-disposition": `attachment; filename="server-cert.zip"`,
-      },
-    });
-  })
+    },
+    routeDoc("下载当前激活证书与私钥压缩包"),
+  )
   .post(
     "/certificates",
     async ({ body, set }) => {
@@ -429,7 +477,7 @@ export const sslRoutes = new Elysia({ prefix: "/api/admin/ssl" })
 
       return { success: true, data: { id: saved.id } };
     },
-    {
+    withRouteDoc("保存证书到证书库", {
       body: t.Object({
         id: t.Optional(t.String()),
         label: t.Optional(t.String()),
@@ -442,7 +490,7 @@ export const sslRoutes = new Elysia({ prefix: "/api/admin/ssl" })
         key: t.String(),
         activate: t.Optional(t.Boolean()),
       }),
-    },
+    }),
   )
   .post(
     "/",
@@ -468,14 +516,14 @@ export const sslRoutes = new Elysia({ prefix: "/api/admin/ssl" })
       await syncSSLDeploymentToGateway();
       return { success: true };
     },
-    {
+    withRouteDoc("上传并激活单张 SSL 证书", {
       body: t.Object({
         ssl: t.Object({
           cert: t.String(),
           key: t.String(),
         }),
       }),
-    },
+    }),
   )
   .post(
     "/activate",
@@ -489,11 +537,11 @@ export const sslRoutes = new Elysia({ prefix: "/api/admin/ssl" })
       await syncSSLDeploymentToGateway();
       return { success: true };
     },
-    {
+    withRouteDoc("激活指定证书", {
       body: t.Object({
         id: t.String(),
       }),
-    },
+    }),
   )
   .post(
     "/deployment-mode",
@@ -532,39 +580,51 @@ export const sslRoutes = new Elysia({ prefix: "/api/admin/ssl" })
         data: await buildSSLStatusPayload(),
       };
     },
-    {
+    withRouteDoc("切换 SSL 部署模式", {
       body: t.Object({
         deployment_mode: t.Union([
           t.Literal("single_active"),
           t.Literal("multi_sni"),
         ]),
       }),
-    },
+    }),
   )
-  .delete("/certificates/:id", async ({ params, set }) => {
-    const result = await configManager.deleteSSLCertificate(params.id);
-    if (!result.removed) {
-      set.status = 404;
-      return { success: false, message: "证书不存在" };
-    }
+  .delete(
+    "/certificates/:id",
+    async ({ params, set }) => {
+      const result = await configManager.deleteSSLCertificate(params.id);
+      if (!result.removed) {
+        set.status = 404;
+        return { success: false, message: "证书不存在" };
+      }
 
-    const currentConfig = await configManager.getConfig();
-    if (
-      result.removedActive ||
-      currentConfig.ssl.deployment_mode === "multi_sni"
-    ) {
-      await syncSSLDeploymentToGateway(currentConfig);
-    }
+      const currentConfig = await configManager.getConfig();
+      if (
+        result.removedActive ||
+        currentConfig.ssl.deployment_mode === "multi_sni"
+      ) {
+        await syncSSLDeploymentToGateway(currentConfig);
+      }
 
-    return { success: true };
-  })
-  .delete("/certificates", async () => {
-    await configManager.clearSSLCertificateLibrary();
-    await syncSSLDeploymentToGateway();
-    return { success: true };
-  })
-  .delete("/", async () => {
-    await configManager.clearSSL();
-    await syncSSLDeploymentToGateway();
-    return { success: true };
-  });
+      return { success: true };
+    },
+    routeDoc("删除指定证书"),
+  )
+  .delete(
+    "/certificates",
+    async () => {
+      await configManager.clearSSLCertificateLibrary();
+      await syncSSLDeploymentToGateway();
+      return { success: true };
+    },
+    routeDoc("清空证书库"),
+  )
+  .delete(
+    "/",
+    async () => {
+      await configManager.clearSSL();
+      await syncSSLDeploymentToGateway();
+      return { success: true };
+    },
+    routeDoc("清空当前 SSL 配置"),
+  );

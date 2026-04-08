@@ -1,5 +1,6 @@
 import { Elysia, t } from "elysia";
 import { cors } from "@elysiajs/cors";
+import { openapi } from "@elysiajs/openapi";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync, readFileSync } from "node:fs";
@@ -67,6 +68,8 @@ import { eventRoutes } from "./routes/events";
 import { notificationRoutes } from "./routes/notifications";
 import { systemNotificationRuntime } from "./lib/system-notifications/runtime";
 import { systemClockManager } from "./lib/system-clock-manager";
+import { adminOpenApiTags, hideFromDocs } from "./lib/openapi";
+import { APP_LOCAL_VERSION } from "./lib/app-version";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -291,6 +294,34 @@ app.use(ipDetectorPlugin);
 app.use(updatePlugin);
 
 app.use(cors());
+app.use(
+  openapi({
+    path: "/docs",
+    specPath: "/docs/json",
+    provider: "swagger-ui",
+    documentation: {
+      info: {
+        title: "fn-knock server-admin API",
+        version: APP_LOCAL_VERSION,
+        description: "server-admin 7998 端口提供的管理端接口文档。",
+      },
+      servers: [
+        {
+          url: "/",
+          description: "server-admin (port 7998)",
+        },
+      ],
+      tags: [...adminOpenApiTags],
+    },
+    swagger: {
+      version: "5.32.2",
+      docExpansion: "list",
+      deepLinking: true,
+      persistAuthorization: true,
+      displayRequestDuration: true,
+    },
+  }),
+);
 
 app.use(internalSystemEventRoutes);
 app.use(portScannerPlugin);
@@ -378,8 +409,8 @@ void updateManager.prepareOnBoot();
 void updateManager.checkNow("startup");
 systemClockManager.prepareOnBoot();
 
-app.get("/", () => serveIndexHtml(STATIC_PATH));
-app.get("/index.html", () => serveIndexHtml(STATIC_PATH));
+app.get("/", () => serveIndexHtml(STATIC_PATH), hideFromDocs);
+app.get("/index.html", () => serveIndexHtml(STATIC_PATH), hideFromDocs);
 
 app.use(
   createStaticFilesPlugin({
@@ -387,10 +418,14 @@ app.use(
   }),
 );
 
-app.get("*", ({ path }) => {
-  if (path.startsWith("/api")) return;
-  return serveIndexHtml(STATIC_PATH);
-});
+app.get(
+  "*",
+  ({ path }) => {
+    if (path.startsWith("/api")) return;
+    return serveIndexHtml(STATIC_PATH);
+  },
+  hideFromDocs,
+);
 
 authApp.get("/", () => serveIndexHtml(AUTH_STATIC_PATH, true));
 authApp.get("/index.html", () => serveIndexHtml(AUTH_STATIC_PATH, true));

@@ -1,12 +1,20 @@
 import { Elysia, t } from "elysia";
+import { routeDoc, withRouteDoc } from "../lib/openapi";
 import { redis } from "../lib/redis";
 import { cloudflaredManager } from "../lib/cloudflared-manager";
 import path from "node:path";
 import fs from "node:fs";
 import { spawn } from "node:child_process";
-import { dataPath } from '../lib/AppDirManager';
-import { markTunnelRunning, markTunnelStopped, shouldResumeTunnel } from "../lib/tunnel-runtime-state";
-import { DEFAULT_REDIS_LOG_BUFFER_MAX_LEN, RedisLogBuffer } from "../lib/redis-log-buffer";
+import { dataPath } from "../lib/AppDirManager";
+import {
+  markTunnelRunning,
+  markTunnelStopped,
+  shouldResumeTunnel,
+} from "../lib/tunnel-runtime-state";
+import {
+  DEFAULT_REDIS_LOG_BUFFER_MAX_LEN,
+  RedisLogBuffer,
+} from "../lib/redis-log-buffer";
 import { waitForProcessExit } from "../lib/runtime";
 import { emitTunnelConnectivityEvent } from "../lib/system-events/helpers";
 
@@ -70,7 +78,10 @@ const emitCloudflaredConnectivity = async (
   await emitTunnelConnectivityEvent({
     tunnel: "cloudflared",
     connected,
-    pid: typeof pid === "number" && Number.isFinite(pid) ? pid : runState.pid ?? null,
+    pid:
+      typeof pid === "number" && Number.isFinite(pid)
+        ? pid
+        : (runState.pid ?? null),
     ...(message ? { message } : {}),
   });
 };
@@ -85,7 +96,9 @@ const handleCloudflaredRuntimeSignals = async (lines: string[]) => {
       continue;
     }
 
-    if (CLOUDFLARED_DISCONNECTED_PATTERNS.some((pattern) => pattern.test(line))) {
+    if (
+      CLOUDFLARED_DISCONNECTED_PATTERNS.some((pattern) => pattern.test(line))
+    ) {
       await emitCloudflaredConnectivity(false, line);
     }
   }
@@ -107,40 +120,59 @@ const CLOUDFLARED_DIR = path.join(dataPath, "cloudflared");
 const CLOUDFLARED_JSON = path.join(CLOUDFLARED_DIR, "cloudflared.json");
 
 async function readConfig(): Promise<string> {
-  if (!fs.existsSync(CLOUDFLARED_DIR)) fs.mkdirSync(CLOUDFLARED_DIR, { recursive: true });
+  if (!fs.existsSync(CLOUDFLARED_DIR))
+    fs.mkdirSync(CLOUDFLARED_DIR, { recursive: true });
   if (!fs.existsSync(CLOUDFLARED_JSON)) {
     const defaultTemplate = { token: "" };
-    fs.writeFileSync(CLOUDFLARED_JSON, JSON.stringify(defaultTemplate, null, 2), "utf-8");
+    fs.writeFileSync(
+      CLOUDFLARED_JSON,
+      JSON.stringify(defaultTemplate, null, 2),
+      "utf-8",
+    );
     return defaultTemplate.token;
   }
   try {
-      const data = JSON.parse(fs.readFileSync(CLOUDFLARED_JSON, "utf-8"));
-      return data.token || "";
+    const data = JSON.parse(fs.readFileSync(CLOUDFLARED_JSON, "utf-8"));
+    return data.token || "";
   } catch {
-      return "";
+    return "";
   }
 }
 
 async function writeConfig(token: string): Promise<void> {
-  if (!fs.existsSync(CLOUDFLARED_DIR)) fs.mkdirSync(CLOUDFLARED_DIR, { recursive: true });
-  fs.writeFileSync(CLOUDFLARED_JSON, JSON.stringify({ token }, null, 2), "utf-8");
+  if (!fs.existsSync(CLOUDFLARED_DIR))
+    fs.mkdirSync(CLOUDFLARED_DIR, { recursive: true });
+  fs.writeFileSync(
+    CLOUDFLARED_JSON,
+    JSON.stringify({ token }, null, 2),
+    "utf-8",
+  );
 }
 
 async function startCloudflared(): Promise<{ pid: number }> {
-  if (runState.running && runState.proc && runState.proc.exitCode === null && !runState.proc.killed) {
+  if (
+    runState.running &&
+    runState.proc &&
+    runState.proc.exitCode === null &&
+    !runState.proc.killed
+  ) {
     return { pid: runState.proc.pid ?? 0 };
   }
   connectionState.stopRequested = false;
   const token = await readConfig();
   if (!token) {
-      throw new Error("请先配置 Cloudflare Token");
+    throw new Error("请先配置 Cloudflare Token");
   }
 
   const bin = cloudflaredManager.getExecutable();
-  const proc = spawn(bin, ["tunnel", "--no-autoupdate", "run", "--token", token], {
-    cwd: CLOUDFLARED_DIR,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  const proc = spawn(
+    bin,
+    ["tunnel", "--no-autoupdate", "run", "--token", token],
+    {
+      cwd: CLOUDFLARED_DIR,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
   const exitPromise = waitForProcessExit(proc);
   if (!proc.pid) {
     let detail = "spawn failed";
@@ -200,7 +232,9 @@ async function startCloudflared(): Promise<{ pid: number }> {
       await appendLogs([`cloudflared exited with code ${code}`]);
     } catch (e: any) {
       exitMessage = `cloudflared 进程异常退出：${e?.message || String(e)}`;
-      await appendLogs([`cloudflared process error: ${e?.message || String(e)}`]);
+      await appendLogs([
+        `cloudflared process error: ${e?.message || String(e)}`,
+      ]);
     }
 
     const expectedStop = connectionState.stopRequested;
@@ -247,7 +281,9 @@ export async function restoreCloudflaredOnBoot(): Promise<void> {
   const shouldResume = await shouldResumeTunnel("cloudflared");
   if (!shouldResume) return;
   try {
-    await appendLogs(["resume: 检测到 Cloudflared 上次为开启状态，正在自动恢复..."]);
+    await appendLogs([
+      "resume: 检测到 Cloudflared 上次为开启状态，正在自动恢复...",
+    ]);
     await startCloudflared();
   } catch (e: any) {
     const msg = e?.message || String(e) || "未知错误";
@@ -255,72 +291,113 @@ export async function restoreCloudflaredOnBoot(): Promise<void> {
   }
 }
 
-export const cloudflaredRoutes = new Elysia({ prefix: "/api/admin/cloudflared" })
-  .get("/status", async () => {
-    const st = cloudflaredManager.getStatus();
-    return {
-      success: true,
-      data: {
-        initialized: st.downloaded,
-        platform: st.platform,
-        running: runState.running,
-        pid: runState.pid || null
-      }
-    };
-  })
-  .get("/config", async () => {
-    const token = await readConfig();
-    return { success: true, data: { token } };
-  })
-  .post("/config", async ({ body }) => {
-    await writeConfig(body.token);
-    return { success: true };
-  }, {
-    body: t.Object({ token: t.String() })
-  })
-  .post("/start", async ({ set }) => {
-    const st = cloudflaredManager.getStatus();
-    if (!st.downloaded) {
-      set.status = 400;
-      return { success: false, message: "Cloudflared 未初始化" };
-    }
-    try {
-      const { pid } = await startCloudflared();
-      return { success: true, data: { pid } };
-    } catch (e: any) {
-      const msg = e?.message || "启动失败";
-      await appendLogs([`start error: ${msg}`]);
-      set.status = 500;
-      return { success: false, message: msg };
-    }
-  })
-  .post("/stop", async () => {
-    await stopCloudflared();
-    return { success: true };
-  })
-  .get("/logs", async ({ query }) => {
-    const limit = Math.max(1, Math.min(parseInt((query.limit as any) || "200", 10), logBuffer.getMaxLen()));
-    const logs = await logBuffer.list(limit);
-    return { success: true, data: logs };
-  })
-  .delete("/logs", async () => {
-    await logBuffer.clear();
-    return { success: true };
-  })
-  .get("/poll", async ({ query }) => {
-    const { cursor, reset, items: logs } = await logBuffer.poll(query.cursor);
-
-    return {
-      success: true,
-      data: {
-        cursor,
-        reset,
-        logs,
-        status: buildCloudflaredStatus(),
-      },
-    };
-  }, {
-    query: t.Object({
-      cursor: t.Optional(t.String()),
+export const cloudflaredRoutes = new Elysia({
+  prefix: "/api/admin/cloudflared",
+  tags: ["Tunnel - Cloudflared"],
+})
+  .get(
+    "/status",
+    async () => {
+      const st = cloudflaredManager.getStatus();
+      return {
+        success: true,
+        data: {
+          initialized: st.downloaded,
+          platform: st.platform,
+          running: runState.running,
+          pid: runState.pid || null,
+        },
+      };
+    },
+    routeDoc("获取 Cloudflared 运行状态"),
+  )
+  .get(
+    "/config",
+    async () => {
+      const token = await readConfig();
+      return { success: true, data: { token } };
+    },
+    routeDoc("获取 Cloudflared 配置"),
+  )
+  .post(
+    "/config",
+    async ({ body }) => {
+      await writeConfig(body.token);
+      return { success: true };
+    },
+    withRouteDoc("保存 Cloudflared 配置", {
+      body: t.Object({ token: t.String() }),
     }),
-  });
+  )
+  .post(
+    "/start",
+    async ({ set }) => {
+      const st = cloudflaredManager.getStatus();
+      if (!st.downloaded) {
+        set.status = 400;
+        return { success: false, message: "Cloudflared 未初始化" };
+      }
+      try {
+        const { pid } = await startCloudflared();
+        return { success: true, data: { pid } };
+      } catch (e: any) {
+        const msg = e?.message || "启动失败";
+        await appendLogs([`start error: ${msg}`]);
+        set.status = 500;
+        return { success: false, message: msg };
+      }
+    },
+    routeDoc("启动 Cloudflared"),
+  )
+  .post(
+    "/stop",
+    async () => {
+      await stopCloudflared();
+      return { success: true };
+    },
+    routeDoc("停止 Cloudflared"),
+  )
+  .get(
+    "/logs",
+    async ({ query }) => {
+      const limit = Math.max(
+        1,
+        Math.min(
+          parseInt((query.limit as any) || "200", 10),
+          logBuffer.getMaxLen(),
+        ),
+      );
+      const logs = await logBuffer.list(limit);
+      return { success: true, data: logs };
+    },
+    routeDoc("获取 Cloudflared 日志"),
+  )
+  .delete(
+    "/logs",
+    async () => {
+      await logBuffer.clear();
+      return { success: true };
+    },
+    routeDoc("清空 Cloudflared 日志"),
+  )
+  .get(
+    "/poll",
+    async ({ query }) => {
+      const { cursor, reset, items: logs } = await logBuffer.poll(query.cursor);
+
+      return {
+        success: true,
+        data: {
+          cursor,
+          reset,
+          logs,
+          status: buildCloudflaredStatus(),
+        },
+      };
+    },
+    withRouteDoc("轮询 Cloudflared 日志与状态", {
+      query: t.Object({
+        cursor: t.Optional(t.String()),
+      }),
+    }),
+  );

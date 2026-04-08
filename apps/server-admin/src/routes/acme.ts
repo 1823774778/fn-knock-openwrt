@@ -14,6 +14,7 @@ import {
   runReservedAcmeApplicationJob,
   startAcmeApplicationJob,
 } from "../lib/acme-job-runner";
+import { routeDoc, withRouteDoc } from "../lib/openapi";
 
 type DnsProvider = {
   dnsType: string;
@@ -832,107 +833,147 @@ const buildApplicationOverview = async () => {
   });
 };
 
-export const acmeRoutes = new Elysia({ prefix: "/api/admin/acme" })
+export const acmeRoutes = new Elysia({
+  prefix: "/api/admin/acme",
+  tags: ["ACME"],
+})
   .use(acmePlugin)
-  .get("/status", async ({ acme }) => {
-    await acme.checkInstalled();
-    const state = acme.getState();
-    const clientSettings = await configManager.ensureAcmeClientSettings(
-      await acme.getDefaultCertificateAuthority(),
-    );
-    return {
-      success: true,
-      data: {
-        ...state,
-        acmeCert: await getStatusCertificate(),
-        certificateAuthority: clientSettings.certificateAuthority,
-        certificateAuthorityUpdatedAt: clientSettings.updatedAt,
-      },
-    };
-  })
-  .get("/overview", async ({ acme }) => {
-    await acme.checkInstalled();
-    const [clientSettings, lock, applications, runningJob] = await Promise.all([
-      configManager.ensureAcmeClientSettings(
-        await acme.getDefaultCertificateAuthority(),
-      ),
-      configManager.getActiveAcmeRuntimeLock(),
-      buildApplicationOverview(),
-      configManager.getActiveAcmeJobFromLock(),
-    ]);
-
-    return {
-      success: true,
-      data: {
-        acmeState: acme.getState(),
-        clientSettings,
-        lock,
-        applications,
-        runningJob: runningJob
-          ? {
-              id: runningJob.id,
-              applicationId: runningJob.applicationId,
-              status: runningJob.status,
-              progress: runningJob.progress,
-            }
-          : null,
-      },
-    };
-  })
-  .get("/config", async () => {
-    const cfg = await configManager.getAcmeSettings();
-    return { success: true, data: cfg };
-  })
-  .get("/applications", async () => {
-    const applications = await configManager.listAcmeApplications();
-    return { success: true, data: applications };
-  })
-  .get("/applications/:id", async ({ params, set }) => {
-    const application = await configManager.getAcmeApplication(params.id);
-    if (!application) {
-      set.status = 404;
-      return { success: false, message: "not found" };
-    }
-    return { success: true, data: application };
-  })
-  .get("/subdomain-recommendation", async () => {
-    const config = await configManager.getConfig();
-    return {
-      success: true,
-      data: buildSubdomainCertificateRecommendation(config),
-    };
-  })
-  .get("/dns-providers", () => {
-    return { success: true, data: dnsProviders };
-  })
-  .delete("/", async ({ acme, set }) => {
-    try {
-      const st = acme.getState();
-      if (st.status === "installing") {
-        set.status = 409;
-        return { success: false, message: "acme.sh 安装中，无法删除" };
-      }
-      await acme.uninstall();
+  .get(
+    "/status",
+    async ({ acme }) => {
       await acme.checkInstalled();
-      return { success: true, data: acme.getState() };
-    } catch (e: any) {
-      set.status = 500;
-      return { success: false, message: e?.message || String(e) };
-    }
-  })
-  .post("/init", async ({ acme }) => {
-    const clientSettings = await configManager.ensureAcmeClientSettings(
-      await acme.getDefaultCertificateAuthority(),
-    );
-    void acme.startInstall(undefined, clientSettings.certificateAuthority);
-    return {
-      success: true,
-      data: {
-        executablePath: acme.getState().executablePath,
-        certificateAuthority: clientSettings.certificateAuthority,
-      },
-    };
-  })
+      const state = acme.getState();
+      const clientSettings = await configManager.ensureAcmeClientSettings(
+        await acme.getDefaultCertificateAuthority(),
+      );
+      return {
+        success: true,
+        data: {
+          ...state,
+          acmeCert: await getStatusCertificate(),
+          certificateAuthority: clientSettings.certificateAuthority,
+          certificateAuthorityUpdatedAt: clientSettings.updatedAt,
+        },
+      };
+    },
+    routeDoc("获取 ACME 客户端状态"),
+  )
+  .get(
+    "/overview",
+    async ({ acme }) => {
+      await acme.checkInstalled();
+      const [clientSettings, lock, applications, runningJob] =
+        await Promise.all([
+          configManager.ensureAcmeClientSettings(
+            await acme.getDefaultCertificateAuthority(),
+          ),
+          configManager.getActiveAcmeRuntimeLock(),
+          buildApplicationOverview(),
+          configManager.getActiveAcmeJobFromLock(),
+        ]);
+
+      return {
+        success: true,
+        data: {
+          acmeState: acme.getState(),
+          clientSettings,
+          lock,
+          applications,
+          runningJob: runningJob
+            ? {
+                id: runningJob.id,
+                applicationId: runningJob.applicationId,
+                status: runningJob.status,
+                progress: runningJob.progress,
+              }
+            : null,
+        },
+      };
+    },
+    routeDoc("获取 ACME 总览"),
+  )
+  .get(
+    "/config",
+    async () => {
+      const cfg = await configManager.getAcmeSettings();
+      return { success: true, data: cfg };
+    },
+    routeDoc("获取 ACME 配置"),
+  )
+  .get(
+    "/applications",
+    async () => {
+      const applications = await configManager.listAcmeApplications();
+      return { success: true, data: applications };
+    },
+    routeDoc("获取 ACME 申请项列表"),
+  )
+  .get(
+    "/applications/:id",
+    async ({ params, set }) => {
+      const application = await configManager.getAcmeApplication(params.id);
+      if (!application) {
+        set.status = 404;
+        return { success: false, message: "not found" };
+      }
+      return { success: true, data: application };
+    },
+    routeDoc("获取单个 ACME 申请项"),
+  )
+  .get(
+    "/subdomain-recommendation",
+    async () => {
+      const config = await configManager.getConfig();
+      return {
+        success: true,
+        data: buildSubdomainCertificateRecommendation(config),
+      };
+    },
+    routeDoc("获取子域证书推荐"),
+  )
+  .get(
+    "/dns-providers",
+    () => {
+      return { success: true, data: dnsProviders };
+    },
+    routeDoc("获取 DNS 提供商目录"),
+  )
+  .delete(
+    "/",
+    async ({ acme, set }) => {
+      try {
+        const st = acme.getState();
+        if (st.status === "installing") {
+          set.status = 409;
+          return { success: false, message: "acme.sh 安装中，无法删除" };
+        }
+        await acme.uninstall();
+        await acme.checkInstalled();
+        return { success: true, data: acme.getState() };
+      } catch (e: any) {
+        set.status = 500;
+        return { success: false, message: e?.message || String(e) };
+      }
+    },
+    routeDoc("卸载 ACME 客户端"),
+  )
+  .post(
+    "/init",
+    async ({ acme }) => {
+      const clientSettings = await configManager.ensureAcmeClientSettings(
+        await acme.getDefaultCertificateAuthority(),
+      );
+      void acme.startInstall(undefined, clientSettings.certificateAuthority);
+      return {
+        success: true,
+        data: {
+          executablePath: acme.getState().executablePath,
+          certificateAuthority: clientSettings.certificateAuthority,
+        },
+      };
+    },
+    routeDoc("初始化并安装 ACME 客户端"),
+  )
   .post(
     "/client-settings",
     async ({ acme, body, set }) => {
@@ -985,14 +1026,14 @@ export const acmeRoutes = new Elysia({ prefix: "/api/admin/acme" })
         return { success: false, message: e?.message || String(e) };
       }
     },
-    {
+    withRouteDoc("切换 ACME 证书颁发机构", {
       body: t.Object({
         certificateAuthority: t.Union([
           t.Literal("zerossl"),
           t.Literal("letsencrypt"),
         ]),
       }),
-    },
+    }),
   )
   .post(
     "/config",
@@ -1023,13 +1064,13 @@ export const acmeRoutes = new Elysia({ prefix: "/api/admin/acme" })
         return { success: false, message: e?.message || String(e) };
       }
     },
-    {
+    withRouteDoc("保存默认 ACME 申请配置", {
       body: t.Object({
         domains: t.Array(t.String(), { minItems: 1 }),
         dnsType: t.String(),
         credentials: t.Optional(t.Record(t.String(), t.String())),
       }),
-    },
+    }),
   )
   .post(
     "/applications",
@@ -1071,7 +1112,7 @@ export const acmeRoutes = new Elysia({ prefix: "/api/admin/acme" })
         return { success: false, message };
       }
     },
-    {
+    withRouteDoc("创建 ACME 申请项", {
       body: t.Object({
         name: t.Optional(t.String()),
         domains: t.Array(t.String(), { minItems: 1 }),
@@ -1080,7 +1121,7 @@ export const acmeRoutes = new Elysia({ prefix: "/api/admin/acme" })
         renewEnabled: t.Optional(t.Boolean()),
         submitNow: t.Optional(t.Boolean()),
       }),
-    },
+    }),
   )
   .patch(
     "/applications/:id",
@@ -1173,7 +1214,7 @@ export const acmeRoutes = new Elysia({ prefix: "/api/admin/acme" })
         return { success: false, message };
       }
     },
-    {
+    withRouteDoc("更新 ACME 申请项", {
       body: t.Object({
         name: t.Optional(t.String()),
         domains: t.Array(t.String(), { minItems: 1 }),
@@ -1182,143 +1223,166 @@ export const acmeRoutes = new Elysia({ prefix: "/api/admin/acme" })
         renewEnabled: t.Optional(t.Boolean()),
         submitNow: t.Optional(t.Boolean()),
       }),
-    },
+    }),
   )
-  .post("/applications/:id/request", async ({ acme, params, set }) => {
-    try {
-      await ensureInstalledForRequest(acme);
-      const application = await configManager.getAcmeApplication(params.id);
-      if (!application) {
-        set.status = 404;
-        return { success: false, message: "not found" };
-      }
+  .post(
+    "/applications/:id/request",
+    async ({ acme, params, set }) => {
+      try {
+        await ensureInstalledForRequest(acme);
+        const application = await configManager.getAcmeApplication(params.id);
+        if (!application) {
+          set.status = 404;
+          return { success: false, message: "not found" };
+        }
 
-      const started = await startAcmeApplicationJob({
-        acme,
-        application,
-        trigger: "manual_request",
-      });
-      return {
-        success: true,
-        data: {
-          job: started.job,
-          lock: started.lock,
-        },
-      };
-    } catch (e: any) {
-      const message = e?.message || String(e);
-      set.status = /稍后再试|请先安装|安装中/.test(message) ? 409 : 400;
-      return { success: false, message };
-    }
-  })
-  .delete("/applications/:id", async ({ params, set }) => {
-    try {
-      const lock = await configManager.getActiveAcmeRuntimeLock();
-      if (lock.locked) {
-        set.status = 409;
+        const started = await startAcmeApplicationJob({
+          acme,
+          application,
+          trigger: "manual_request",
+        });
         return {
-          success: false,
-          message: "当前已有 ACME 任务正在执行，请稍后再试",
+          success: true,
+          data: {
+            job: started.job,
+            lock: started.lock,
+          },
         };
+      } catch (e: any) {
+        const message = e?.message || String(e);
+        set.status = /稍后再试|请先安装|安装中/.test(message) ? 409 : 400;
+        return { success: false, message };
       }
+    },
+    routeDoc("立即为申请项发起证书申请"),
+  )
+  .delete(
+    "/applications/:id",
+    async ({ params, set }) => {
+      try {
+        const lock = await configManager.getActiveAcmeRuntimeLock();
+        if (lock.locked) {
+          set.status = 409;
+          return {
+            success: false,
+            message: "当前已有 ACME 任务正在执行，请稍后再试",
+          };
+        }
 
-      const deleted = await deleteAcmeApplication(params.id);
-      return {
-        success: true,
-        data: {
-          id: deleted.application.id,
-        },
-      };
-    } catch (e: any) {
-      const message = e?.message || String(e);
-      set.status = message === "申请项不存在" ? 404 : 400;
-      return { success: false, message };
-    }
-  })
-  .delete("/applications/:id/certificate", async ({ params, set }) => {
-    try {
-      await deleteAcmeApplicationCertificate(params.id);
-      return { success: true };
-    } catch (e: any) {
-      const message = e?.message || String(e);
-      set.status = message === "申请项不存在" ? 404 : 400;
-      return { success: false, message };
-    }
-  })
-  .post("/applications/:id/library/sync", async ({ params, set }) => {
-    try {
-      const application = await configManager.getAcmeApplication(params.id);
-      if (!application) {
-        set.status = 404;
-        return { success: false, message: "not found" };
+        const deleted = await deleteAcmeApplication(params.id);
+        return {
+          success: true,
+          data: {
+            id: deleted.application.id,
+          },
+        };
+      } catch (e: any) {
+        const message = e?.message || String(e);
+        set.status = message === "申请项不存在" ? 404 : 400;
+        return { success: false, message };
       }
+    },
+    routeDoc("删除 ACME 申请项"),
+  )
+  .delete(
+    "/applications/:id/certificate",
+    async ({ params, set }) => {
+      try {
+        await deleteAcmeApplicationCertificate(params.id);
+        return { success: true };
+      } catch (e: any) {
+        const message = e?.message || String(e);
+        set.status = message === "申请项不存在" ? 404 : 400;
+        return { success: false, message };
+      }
+    },
+    routeDoc("删除申请项已签发证书"),
+  )
+  .post(
+    "/applications/:id/library/sync",
+    async ({ params, set }) => {
+      try {
+        const application = await configManager.getAcmeApplication(params.id);
+        if (!application) {
+          set.status = 404;
+          return { success: false, message: "not found" };
+        }
 
-      const issuedCertificate =
-        await getUsableIssuedCertificateForApplication(application);
-      if (!issuedCertificate) {
+        const issuedCertificate =
+          await getUsableIssuedCertificateForApplication(application);
+        if (!issuedCertificate) {
+          set.status = 400;
+          return {
+            success: false,
+            message: "当前申请项还没有与域名配置匹配的已签发证书",
+          };
+        }
+
+        const saved =
+          await configManager.saveAcmeCertificateToLibraryByApplication(
+            params.id,
+            {
+              label: application.name || application.primaryDomain,
+            },
+          );
+        const currentConfig = await configManager.getConfig();
+        const shouldSyncGateway =
+          currentConfig.ssl.active_cert_id === saved.id ||
+          currentConfig.ssl.deployment_mode === "multi_sni";
+        if (shouldSyncGateway) {
+          await syncSSLDeploymentToGateway(currentConfig);
+        }
+
+        return {
+          success: true,
+          data: {
+            certificateId: saved.id,
+            linked: true,
+          },
+        };
+      } catch (e: any) {
         set.status = 400;
-        return {
-          success: false,
-          message: "当前申请项还没有与域名配置匹配的已签发证书",
-        };
+        return { success: false, message: e?.message || String(e) };
       }
+    },
+    routeDoc("将申请项证书同步到证书库"),
+  )
+  .post(
+    "/applications/:id/deploy",
+    async ({ params, set }) => {
+      try {
+        const application = await configManager.getAcmeApplication(params.id);
+        if (!application) {
+          set.status = 404;
+          return { success: false, message: "not found" };
+        }
 
-      const saved =
+        const issuedCertificate =
+          await getUsableIssuedCertificateForApplication(application);
+        if (!issuedCertificate) {
+          set.status = 400;
+          return {
+            success: false,
+            message: "当前申请项还没有与域名配置匹配的已签发证书",
+          };
+        }
+
         await configManager.saveAcmeCertificateToLibraryByApplication(
           params.id,
           {
             label: application.name || application.primaryDomain,
+            activate: true,
           },
         );
-      const currentConfig = await configManager.getConfig();
-      const shouldSyncGateway =
-        currentConfig.ssl.active_cert_id === saved.id ||
-        currentConfig.ssl.deployment_mode === "multi_sni";
-      if (shouldSyncGateway) {
-        await syncSSLDeploymentToGateway(currentConfig);
-      }
-
-      return {
-        success: true,
-        data: {
-          certificateId: saved.id,
-          linked: true,
-        },
-      };
-    } catch (e: any) {
-      set.status = 400;
-      return { success: false, message: e?.message || String(e) };
-    }
-  })
-  .post("/applications/:id/deploy", async ({ params, set }) => {
-    try {
-      const application = await configManager.getAcmeApplication(params.id);
-      if (!application) {
-        set.status = 404;
-        return { success: false, message: "not found" };
-      }
-
-      const issuedCertificate =
-        await getUsableIssuedCertificateForApplication(application);
-      if (!issuedCertificate) {
+        await syncSSLDeploymentToGateway();
+        return { success: true, message: "成功" };
+      } catch (e: any) {
         set.status = 400;
-        return {
-          success: false,
-          message: "当前申请项还没有与域名配置匹配的已签发证书",
-        };
+        return { success: false, message: e?.message || String(e) };
       }
-
-      await configManager.saveAcmeCertificateToLibraryByApplication(params.id, {
-        label: application.name || application.primaryDomain,
-        activate: true,
-      });
-      await syncSSLDeploymentToGateway();
-      return { success: true, message: "成功" };
-    } catch (e: any) {
-      set.status = 400;
-      return { success: false, message: e?.message || String(e) };
-    }
-  })
+    },
+    routeDoc("部署申请项证书到网关"),
+  )
   .post(
     "/request",
     async ({ acme, body, set }) => {
@@ -1405,7 +1469,7 @@ export const acmeRoutes = new Elysia({ prefix: "/api/admin/acme" })
         return { success: false, message };
       }
     },
-    {
+    withRouteDoc("立即申请证书", {
       body: t.Object({
         domains: t.Array(t.String(), { minItems: 1 }),
         method: t.Optional(
@@ -1415,7 +1479,7 @@ export const acmeRoutes = new Elysia({ prefix: "/api/admin/acme" })
         dnsType: t.Optional(t.String()),
         credentials: t.Optional(t.Record(t.String(), t.String())),
       }),
-    },
+    }),
   )
   .get(
     "/jobs/:id/poll",
@@ -1434,125 +1498,36 @@ export const acmeRoutes = new Elysia({ prefix: "/api/admin/acme" })
       const analysis = analyzeAcmeLogs(job, logs);
       return { success: true, data: { job, logs, analysis } };
     },
-    {
+    withRouteDoc("轮询 ACME 任务状态与日志", {
       query: t.Object({
         limit: t.Optional(t.Numeric()),
         order: t.Optional(t.Union([t.Literal("asc"), t.Literal("desc")])),
       }),
-    },
+    }),
   )
-  .get("/jobs/:id", async ({ params, set }) => {
-    const job = await configManager.getAcmeJob(params.id);
-    if (!job) {
-      set.status = 404;
-      return { success: false, message: "not found" };
-    }
-    return { success: true, data: job };
-  })
-  .get("/jobs/:id/logs", async ({ params }) => {
-    const logs = await configManager.getAcmeLogs(params.id, 500, "desc");
-    return { success: true, data: logs };
-  })
-  .get("/certs/:domain", async ({ params, set }) => {
-    const application = await configManager.getAcmeApplicationByPrimaryDomain(
-      params.domain,
-    );
-    if (application) {
-      const issuedCertificate =
-        await getUsableIssuedCertificateForApplication(application);
-      if (!issuedCertificate) {
+  .get(
+    "/jobs/:id",
+    async ({ params, set }) => {
+      const job = await configManager.getAcmeJob(params.id);
+      if (!job) {
         set.status = 404;
         return { success: false, message: "not found" };
       }
-      return {
-        success: true,
-        data: {
-          domain: issuedCertificate.primaryDomain,
-          info: issuedCertificate.certInfo,
-        },
-      };
-    }
-
-    const cert = await configManager.getAcmeCert(params.domain);
-    if (!cert) {
-      set.status = 404;
-      return { success: false, message: "not found" };
-    }
-    const info = await configManager.getAcmeCertInfo(params.domain);
-    return { success: true, data: { domain: params.domain, info } };
-  })
-  .delete("/certs/:domain", async ({ params, set }) => {
-    try {
-      const application = await configManager.getAcmeApplicationByPrimaryDomain(
-        params.domain,
-      );
-      if (application) {
-        await deleteAcmeApplicationCertificate(application.id);
-        return { success: true };
-      }
-
-      const domain = params.domain;
-      await configManager.deleteAcmeCert(domain);
-      const deletedFromLibrary =
-        await configManager.deleteSSLCertificatesBySource("acme", domain);
-
-      const { join } = await import("node:path");
-      const { rm } = await import("node:fs/promises");
-      await rm(join(process.cwd(), "data", "ssl", domain), {
-        recursive: true,
-        force: true,
-      });
-
-      await syncGatewayIfAcmeLibraryRemoved({
-        removedActive: deletedFromLibrary.removedActive,
-        removedCount: deletedFromLibrary.removed.length,
-      });
-
-      return { success: true };
-    } catch (e: any) {
-      set.status = 400;
-      return { success: false, message: e?.message || String(e) };
-    }
-  })
-  .get("/certs/:domain/download", async ({ params, set }) => {
-    const application = await configManager.getAcmeApplicationByPrimaryDomain(
-      params.domain,
-    );
-    const pair = application
-      ? await getUsableIssuedCertificateForApplication(application).then(
-          (issuedCertificate) =>
-            issuedCertificate
-              ? {
-                  cert: issuedCertificate.cert,
-                  key: issuedCertificate.key,
-                }
-              : null,
-        )
-      : await configManager.getAcmeCert(params.domain);
-    if (!pair) {
-      set.status = 404;
-      return { success: false, message: "not found" };
-    }
-    const entries = [
-      {
-        name: `${params.domain}.cert.pem`,
-        data: new TextEncoder().encode(pair.cert),
-      },
-      {
-        name: `${params.domain}.key.pem`,
-        data: new TextEncoder().encode(pair.key),
-      },
-    ];
-    const zipData = createZip(entries);
-    return new Response(zipData, {
-      headers: {
-        "content-type": "application/zip",
-        "content-disposition": `attachment; filename="${params.domain}.zip"`,
-      },
-    });
-  })
-  .post("/certs/:domain/deploy", async ({ params, set }) => {
-    try {
+      return { success: true, data: job };
+    },
+    routeDoc("获取 ACME 任务详情"),
+  )
+  .get(
+    "/jobs/:id/logs",
+    async ({ params }) => {
+      const logs = await configManager.getAcmeLogs(params.id, 500, "desc");
+      return { success: true, data: logs };
+    },
+    routeDoc("获取 ACME 任务日志"),
+  )
+  .get(
+    "/certs/:domain",
+    async ({ params, set }) => {
       const application = await configManager.getAcmeApplicationByPrimaryDomain(
         params.domain,
       );
@@ -1560,38 +1535,149 @@ export const acmeRoutes = new Elysia({ prefix: "/api/admin/acme" })
         const issuedCertificate =
           await getUsableIssuedCertificateForApplication(application);
         if (!issuedCertificate) {
-          set.status = 400;
-          return {
-            success: false,
-            message: "当前申请项还没有与域名配置匹配的已签发证书",
-          };
+          set.status = 404;
+          return { success: false, message: "not found" };
         }
-        await configManager.saveAcmeCertificateToLibraryByApplication(
-          application.id,
-          { activate: true },
-        );
-        await syncSSLDeploymentToGateway();
-        return { success: true, message: "成功" };
-      }
-
-      const pair = await configManager.getAcmeCert(params.domain);
-      if (!pair) {
-        return { success: false, message: "证书不存在" };
-      }
-      const validation = configManager.validateSSLCert(pair.cert, pair.key);
-      if (!validation.valid) {
         return {
-          success: false,
-          message: validation.error || "证书或私钥无效",
+          success: true,
+          data: {
+            domain: issuedCertificate.primaryDomain,
+            info: issuedCertificate.certInfo,
+          },
         };
       }
-      await configManager.saveAcmeCertificateToLibrary(params.domain, {
-        activate: true,
+
+      const cert = await configManager.getAcmeCert(params.domain);
+      if (!cert) {
+        set.status = 404;
+        return { success: false, message: "not found" };
+      }
+      const info = await configManager.getAcmeCertInfo(params.domain);
+      return { success: true, data: { domain: params.domain, info } };
+    },
+    routeDoc("获取域名证书信息"),
+  )
+  .delete(
+    "/certs/:domain",
+    async ({ params, set }) => {
+      try {
+        const application =
+          await configManager.getAcmeApplicationByPrimaryDomain(params.domain);
+        if (application) {
+          await deleteAcmeApplicationCertificate(application.id);
+          return { success: true };
+        }
+
+        const domain = params.domain;
+        await configManager.deleteAcmeCert(domain);
+        const deletedFromLibrary =
+          await configManager.deleteSSLCertificatesBySource("acme", domain);
+
+        const { join } = await import("node:path");
+        const { rm } = await import("node:fs/promises");
+        await rm(join(process.cwd(), "data", "ssl", domain), {
+          recursive: true,
+          force: true,
+        });
+
+        await syncGatewayIfAcmeLibraryRemoved({
+          removedActive: deletedFromLibrary.removedActive,
+          removedCount: deletedFromLibrary.removed.length,
+        });
+
+        return { success: true };
+      } catch (e: any) {
+        set.status = 400;
+        return { success: false, message: e?.message || String(e) };
+      }
+    },
+    routeDoc("删除域名证书"),
+  )
+  .get(
+    "/certs/:domain/download",
+    async ({ params, set }) => {
+      const application = await configManager.getAcmeApplicationByPrimaryDomain(
+        params.domain,
+      );
+      const pair = application
+        ? await getUsableIssuedCertificateForApplication(application).then(
+            (issuedCertificate) =>
+              issuedCertificate
+                ? {
+                    cert: issuedCertificate.cert,
+                    key: issuedCertificate.key,
+                  }
+                : null,
+          )
+        : await configManager.getAcmeCert(params.domain);
+      if (!pair) {
+        set.status = 404;
+        return { success: false, message: "not found" };
+      }
+      const entries = [
+        {
+          name: `${params.domain}.cert.pem`,
+          data: new TextEncoder().encode(pair.cert),
+        },
+        {
+          name: `${params.domain}.key.pem`,
+          data: new TextEncoder().encode(pair.key),
+        },
+      ];
+      const zipData = createZip(entries);
+      return new Response(zipData, {
+        headers: {
+          "content-type": "application/zip",
+          "content-disposition": `attachment; filename="${params.domain}.zip"`,
+        },
       });
-      await syncSSLDeploymentToGateway();
-      return { success: true, message: "成功" };
-    } catch (e: any) {
-      set.status = 400;
-      return { success: false, message: e?.message || String(e) };
-    }
-  });
+    },
+    routeDoc("下载域名证书压缩包"),
+  )
+  .post(
+    "/certs/:domain/deploy",
+    async ({ params, set }) => {
+      try {
+        const application =
+          await configManager.getAcmeApplicationByPrimaryDomain(params.domain);
+        if (application) {
+          const issuedCertificate =
+            await getUsableIssuedCertificateForApplication(application);
+          if (!issuedCertificate) {
+            set.status = 400;
+            return {
+              success: false,
+              message: "当前申请项还没有与域名配置匹配的已签发证书",
+            };
+          }
+          await configManager.saveAcmeCertificateToLibraryByApplication(
+            application.id,
+            { activate: true },
+          );
+          await syncSSLDeploymentToGateway();
+          return { success: true, message: "成功" };
+        }
+
+        const pair = await configManager.getAcmeCert(params.domain);
+        if (!pair) {
+          return { success: false, message: "证书不存在" };
+        }
+        const validation = configManager.validateSSLCert(pair.cert, pair.key);
+        if (!validation.valid) {
+          return {
+            success: false,
+            message: validation.error || "证书或私钥无效",
+          };
+        }
+        await configManager.saveAcmeCertificateToLibrary(params.domain, {
+          activate: true,
+        });
+        await syncSSLDeploymentToGateway();
+        return { success: true, message: "成功" };
+      } catch (e: any) {
+        set.status = 400;
+        return { success: false, message: e?.message || String(e) };
+      }
+    },
+    routeDoc("部署域名证书到网关"),
+  );

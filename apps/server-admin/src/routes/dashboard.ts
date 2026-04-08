@@ -1,6 +1,7 @@
 import { Elysia, t } from "elysia";
 import { goBackend } from "../lib/go-backend";
 import { trafficMetricsManager } from "../lib/traffic-metrics";
+import { routeDoc, withRouteDoc } from "../lib/openapi";
 
 const parseIntSafe = (value: string | undefined, fallback: number) => {
   const v = Number.parseInt(String(value ?? ""), 10);
@@ -10,14 +11,18 @@ const parseIntSafe = (value: string | undefined, fallback: number) => {
 
 const toUnixSeconds = (ms = Date.now()) => Math.floor(ms / 1000);
 
-const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
+const clamp = (n: number, min: number, max: number) =>
+  Math.max(min, Math.min(max, n));
 
-const pointsToBpsData = (points: { ts: number; delta: number }[], rangeSec: number) => {
+const pointsToBpsData = (
+  points: { ts: number; delta: number }[],
+  rangeSec: number,
+) => {
   if (!points.length) return [];
   const sorted = points.slice().sort((a, b) => a.ts - b.ts);
 
   // 强制最大数据点数量，防止前端 ECharts 卡死及网络传输过大
-  const MAX_POINTS = 300; 
+  const MAX_POINTS = 300;
 
   // 如果原始数据量在安全范围内，直接计算
   if (sorted.length <= MAX_POINTS) {
@@ -76,24 +81,43 @@ const buildRealtimePayload = async () => {
   };
 };
 
-export const dashboardRoutes = new Elysia({ prefix: "/api/admin/dashboard" })
+export const dashboardRoutes = new Elysia({
+  prefix: "/api/admin/dashboard",
+  tags: ["Dashboard"],
+})
   .get(
     "/stats",
     async ({ query }) => {
       const userId = query.userId || process.env.TRAFFIC_USER_ID || "global";
-      const rangeSec = clamp(parseIntSafe(query.rangeSec, 3600), 60, 30 * 24 * 3600);
+      const rangeSec = clamp(
+        parseIntSafe(query.rangeSec, 3600),
+        60,
+        30 * 24 * 3600,
+      );
 
       const nowSec = toUnixSeconds();
       const fromSec = nowSec - rangeSec;
 
-      const [inPoints, outPoints, inSum, outSum, err5xxSum, err5xx1d, err5xx1w] = await Promise.all([
+      const [
+        inPoints,
+        outPoints,
+        inSum,
+        outSum,
+        err5xxSum,
+        err5xx1d,
+        err5xx1w,
+      ] = await Promise.all([
         trafficMetricsManager.listTrafficPoints(userId, "in", fromSec, nowSec),
         trafficMetricsManager.listTrafficPoints(userId, "out", fromSec, nowSec),
         trafficMetricsManager.sumTrafficDelta(userId, "in", fromSec, nowSec),
         trafficMetricsManager.sumTrafficDelta(userId, "out", fromSec, nowSec),
         trafficMetricsManager.sum5xxDelta(userId, fromSec, nowSec),
         trafficMetricsManager.sum5xxDelta(userId, nowSec - 24 * 3600, nowSec),
-        trafficMetricsManager.sum5xxDelta(userId, nowSec - 7 * 24 * 3600, nowSec),
+        trafficMetricsManager.sum5xxDelta(
+          userId,
+          nowSec - 7 * 24 * 3600,
+          nowSec,
+        ),
       ]);
 
       const trafficEcharts = {
@@ -102,8 +126,18 @@ export const dashboardRoutes = new Elysia({ prefix: "/api/admin/dashboard" })
         xAxis: { type: "time" },
         yAxis: { type: "value" },
         series: [
-          { name: "入站", type: "line", showSymbol: false, data: pointsToBpsData(inPoints, rangeSec) },
-          { name: "出站", type: "line", showSymbol: false, data: pointsToBpsData(outPoints, rangeSec) },
+          {
+            name: "入站",
+            type: "line",
+            showSymbol: false,
+            data: pointsToBpsData(inPoints, rangeSec),
+          },
+          {
+            name: "出站",
+            type: "line",
+            showSymbol: false,
+            data: pointsToBpsData(outPoints, rangeSec),
+          },
         ],
       };
 
@@ -136,23 +170,27 @@ export const dashboardRoutes = new Elysia({ prefix: "/api/admin/dashboard" })
         },
       };
     },
-    {
+    withRouteDoc("获取首页统计面板数据", {
       query: t.Object({
         rangeSec: t.Optional(t.String()),
         userId: t.Optional(t.String()),
       }),
-    }
+    }),
   )
-  .get("/realtime", async ({ set }) => {
-    try {
-      const payload = await buildRealtimePayload();
-      if (!payload) {
+  .get(
+    "/realtime",
+    async ({ set }) => {
+      try {
+        const payload = await buildRealtimePayload();
+        if (!payload) {
+          set.status = 502;
+          return { success: false, message: "upstream unavailable" };
+        }
+        return { success: true, data: payload };
+      } catch {
         set.status = 502;
         return { success: false, message: "upstream unavailable" };
       }
-      return { success: true, data: payload };
-    } catch {
-      set.status = 502;
-      return { success: false, message: "upstream unavailable" };
-    }
-  });
+    },
+    routeDoc("获取实时流量快照"),
+  );

@@ -1,13 +1,21 @@
 import { Elysia, t } from "elysia";
+import { routeDoc, withRouteDoc } from "../lib/openapi";
 import { redis } from "../lib/redis";
 import { frpManager } from "../lib/frp-manager";
 import path from "node:path";
 import fs from "node:fs";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { dataPath } from '../lib/AppDirManager';
-import { markTunnelRunning, markTunnelStopped, shouldResumeTunnel } from "../lib/tunnel-runtime-state";
-import { DEFAULT_REDIS_LOG_BUFFER_MAX_LEN, RedisLogBuffer } from "../lib/redis-log-buffer";
+import { dataPath } from "../lib/AppDirManager";
+import {
+  markTunnelRunning,
+  markTunnelStopped,
+  shouldResumeTunnel,
+} from "../lib/tunnel-runtime-state";
+import {
+  DEFAULT_REDIS_LOG_BUFFER_MAX_LEN,
+  RedisLogBuffer,
+} from "../lib/redis-log-buffer";
 import { collectStreamOutput, sleep, waitForProcessExit } from "../lib/runtime";
 import { emitTunnelConnectivityEvent } from "../lib/system-events/helpers";
 
@@ -55,7 +63,10 @@ const FRPC_DISCONNECTED_PATTERNS = [
 ] as const;
 
 const normalizeTunnelEventMessage = (line: string) => {
-  const normalized = line.replace(/^\[ERR\]\s*/i, "").replace(/\s+/g, " ").trim();
+  const normalized = line
+    .replace(/^\[ERR\]\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
   if (!normalized) return "";
   if (normalized.length <= 240) return normalized;
   return `${normalized.slice(0, 240).trim()}...`;
@@ -78,7 +89,10 @@ const emitFrpcConnectivity = async (
   await emitTunnelConnectivityEvent({
     tunnel: "frp",
     connected,
-    pid: typeof pid === "number" && Number.isFinite(pid) ? pid : runState.pid ?? null,
+    pid:
+      typeof pid === "number" && Number.isFinite(pid)
+        ? pid
+        : (runState.pid ?? null),
     ...(message ? { message } : {}),
   });
 };
@@ -134,14 +148,18 @@ function defaultFrpcTemplate(): string {
     `localPort = ${localPort}`,
     "remotePort = 7999",
     'transport.proxyProtocolVersion = "v2"',
-    ""
+    "",
   ].join("\n");
 }
 
-const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const escapeRegex = (value: string) =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const extractTomlString = (content: string, key: string): string | null => {
-  const pattern = new RegExp(`^\\s*${escapeRegex(key)}\\s*=\\s*["']([^"']*)["']\\s*$`, "m");
+  const pattern = new RegExp(
+    `^\\s*${escapeRegex(key)}\\s*=\\s*["']([^"']*)["']\\s*$`,
+    "m",
+  );
   const match = content.match(pattern);
   return match?.[1] ?? null;
 };
@@ -161,7 +179,10 @@ type FrpcWebStatus = {
 };
 
 const extractTomlNumber = (content: string, key: string): number | null => {
-  const pattern = new RegExp(`^\\s*${escapeRegex(key)}\\s*=\\s*(\\d+)\\s*$`, "m");
+  const pattern = new RegExp(
+    `^\\s*${escapeRegex(key)}\\s*=\\s*(\\d+)\\s*$`,
+    "m",
+  );
   const match = content.match(pattern);
   if (!match?.[1]) return null;
   const parsed = Number.parseInt(match[1], 10);
@@ -211,7 +232,9 @@ const parseSsPids = (text: string): number[] => {
   return [...found];
 };
 
-const parsePsPidAndCommand = (text: string): Array<{ pid: number; command: string }> => {
+const parsePsPidAndCommand = (
+  text: string,
+): Array<{ pid: number; command: string }> => {
   const out: Array<{ pid: number; command: string }> = [];
   for (const line of text.split(/\r?\n/)) {
     const trimmed = line.trim();
@@ -266,7 +289,13 @@ const isFrpcProcess = async (pid: number): Promise<boolean> => {
 
 const findListeningPids = async (port: number): Promise<number[]> => {
   try {
-    const lsof = await runCommand(["lsof", "-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"]);
+    const lsof = await runCommand([
+      "lsof",
+      "-nP",
+      `-iTCP:${port}`,
+      "-sTCP:LISTEN",
+      "-t",
+    ]);
     if (lsof.exitCode === 0 && lsof.stdout.trim()) {
       return [...new Set(parsePidLines(lsof.stdout))];
     }
@@ -300,11 +329,17 @@ const findFrpcPidsByConfig = async (): Promise<number[]> => {
     const ps = await runCommand(["ps", "-eo", "pid=,command="]);
     if (ps.exitCode !== 0 || !ps.stdout.trim()) return [];
     const rows = parsePsPidAndCommand(ps.stdout);
-    return [...new Set(
-      rows
-        .filter(row => /\bfrpc(\s|$)/.test(row.command) && row.command.includes(FRPC_TOML))
-        .map(row => row.pid),
-    )];
+    return [
+      ...new Set(
+        rows
+          .filter(
+            (row) =>
+              /\bfrpc(\s|$)/.test(row.command) &&
+              row.command.includes(FRPC_TOML),
+          )
+          .map((row) => row.pid),
+      ),
+    ];
   } catch {
     return [];
   }
@@ -318,16 +353,22 @@ const releaseFrpcWebPortIfNeeded = async (): Promise<void> => {
     const frpcByConfig = await findFrpcPidsByConfig();
     if (frpcByConfig.length) {
       occupiedPids = frpcByConfig;
-      await appendLogs([`preflight: 未检测到 ${webPort} 监听信息，按配置路径发现 frpc 进程 pid=${occupiedPids.join(",")}`]);
+      await appendLogs([
+        `preflight: 未检测到 ${webPort} 监听信息，按配置路径发现 frpc 进程 pid=${occupiedPids.join(",")}`,
+      ]);
     }
   }
   if (!occupiedPids.length) return;
 
-  await appendLogs([`preflight: 检测到 ${webPort} 端口占用，尝试释放 pid=${occupiedPids.join(",")}`]);
+  await appendLogs([
+    `preflight: 检测到 ${webPort} 端口占用，尝试释放 pid=${occupiedPids.join(",")}`,
+  ]);
   for (const pid of occupiedPids) {
     const ownedByFrpc = await isFrpcProcess(pid);
     if (!ownedByFrpc) {
-      await appendLogs([`preflight warning: ${webPort} 端口占用进程不是 frpc，已跳过自动终止 pid=${pid}`]);
+      await appendLogs([
+        `preflight warning: ${webPort} 端口占用进程不是 frpc，已跳过自动终止 pid=${pid}`,
+      ]);
       continue;
     }
     await terminatePid(pid);
@@ -336,7 +377,9 @@ const releaseFrpcWebPortIfNeeded = async (): Promise<void> => {
   await sleep(200);
   const remains = await findListeningPids(webPort);
   if (remains.length > 0) {
-    throw new Error(`FRPC 管理端口 ${webPort} 仍被占用 (pid=${remains.join(",")})`);
+    throw new Error(
+      `FRPC 管理端口 ${webPort} 仍被占用 (pid=${remains.join(",")})`,
+    );
   }
   await appendLogs([`preflight: 已释放 ${webPort} 端口`]);
 };
@@ -402,7 +445,11 @@ const normalizeVerifyOutput = (value: string): string => {
   return `${normalized.slice(0, 4000)}...`;
 };
 
-const formatVerifyFailureMessage = (result: { exitCode: number; stdout: string; stderr: string }): string => {
+const formatVerifyFailureMessage = (result: {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}): string => {
   const detail = [result.stderr, result.stdout]
     .map(normalizeVerifyOutput)
     .filter(Boolean)
@@ -418,7 +465,9 @@ async function verifyFrpcConfig(content: string): Promise<void> {
   try {
     bin = frpManager.getExecutable("frpc");
   } catch {
-    throw new FrpcConfigValidationError("FRP 未初始化，无法校验 frpc.toml，请先在系统设置中下载 FRP 资源。");
+    throw new FrpcConfigValidationError(
+      "FRP 未初始化，无法校验 frpc.toml，请先在系统设置中下载 FRP 资源。",
+    );
   }
 
   if (!fs.existsSync(FRPC_DIR)) fs.mkdirSync(FRPC_DIR, { recursive: true });
@@ -426,7 +475,9 @@ async function verifyFrpcConfig(content: string): Promise<void> {
   const tempPath = path.join(FRPC_DIR, `frpc.verify.${randomUUID()}.toml`);
   try {
     fs.writeFileSync(tempPath, content, "utf-8");
-    const result = await runCommand([bin, "verify", "-c", tempPath], { cwd: FRPC_DIR });
+    const result = await runCommand([bin, "verify", "-c", tempPath], {
+      cwd: FRPC_DIR,
+    });
     if (result.exitCode !== 0) {
       throw new FrpcConfigValidationError(formatVerifyFailureMessage(result));
     }
@@ -443,8 +494,15 @@ async function verifyFrpcConfig(content: string): Promise<void> {
   }
 }
 
-async function startFrpc(opts?: { releaseWebPort?: boolean }): Promise<{ pid: number }> {
-  if (runState.running && runState.proc && runState.proc.exitCode === null && !runState.proc.killed) {
+async function startFrpc(opts?: {
+  releaseWebPort?: boolean;
+}): Promise<{ pid: number }> {
+  if (
+    runState.running &&
+    runState.proc &&
+    runState.proc.exitCode === null &&
+    !runState.proc.killed
+  ) {
     return { pid: runState.proc.pid ?? 0 };
   }
   connectionState.stopRequested = false;
@@ -478,14 +536,22 @@ async function startFrpc(opts?: { releaseWebPort?: boolean }): Promise<{ pid: nu
   void (async () => {
     for (let attempt = 0; attempt < 5; attempt += 1) {
       await sleep(1500);
-      if (runState.proc !== proc || connectionState.connected || connectionState.stopRequested) {
+      if (
+        runState.proc !== proc ||
+        connectionState.connected ||
+        connectionState.stopRequested
+      ) {
         return;
       }
 
       try {
         const status = await fetchFrpcWebStatus(1500);
         if (status.tcp.length > 0) {
-          await emitFrpcConnectivity(true, "检测到 FRP 隧道已建立连接", proc.pid ?? 0);
+          await emitFrpcConnectivity(
+            true,
+            "检测到 FRP 隧道已建立连接",
+            proc.pid ?? 0,
+          );
           return;
         }
       } catch {
@@ -518,7 +584,7 @@ async function startFrpc(opts?: { releaseWebPort?: boolean }): Promise<{ pid: nu
         buf += chunk.toString();
         const parts = buf.split(/\r?\n/);
         buf = parts.pop() || "";
-        await appendLogs(parts.map(l => `[ERR] ${l}`));
+        await appendLogs(parts.map((l) => `[ERR] ${l}`));
       }
       if (buf) await appendLogs([`[ERR] ${buf}`]);
     } catch (e) {
@@ -589,108 +655,163 @@ export async function restoreFrpcOnBoot(): Promise<void> {
   }
 }
 
-export const frpcRoutes = new Elysia({ prefix: "/api/admin/frpc" })
-  .get("/status", async () => {
-    const st = frpManager.getStatus();
-    const localDefault = process.env.GO_REPROXY_PORT || "7999";
-    return {
-      success: true,
-      data: {
-        initialized: st.downloaded,
-        platform: st.platform,
-        running: runState.running,
-        pid: runState.pid || null,
-        config_path: FRPC_TOML,
-        defaults: { local_port: localDefault }
+export const frpcRoutes = new Elysia({
+  prefix: "/api/admin/frpc",
+  tags: ["Tunnel - FRP"],
+})
+  .get(
+    "/status",
+    async () => {
+      const st = frpManager.getStatus();
+      const localDefault = process.env.GO_REPROXY_PORT || "7999";
+      return {
+        success: true,
+        data: {
+          initialized: st.downloaded,
+          platform: st.platform,
+          running: runState.running,
+          pid: runState.pid || null,
+          config_path: FRPC_TOML,
+          defaults: { local_port: localDefault },
+        },
+      };
+    },
+    routeDoc("获取 FRP 客户端状态"),
+  )
+  .get(
+    "/overview",
+    async ({ query, set }) => {
+      const limit = Math.max(
+        1,
+        Math.min(
+          parseInt((query.limit as any) || "200", 10),
+          logBuffer.getMaxLen(),
+        ),
+      );
+      try {
+        const { tcp } = await fetchFrpcWebStatus(2000);
+        const logs = await logBuffer.list(limit);
+        return { success: true, data: { tcp, logs } };
+      } catch {
+        const logs = await logBuffer.list(limit);
+        set.status = 200;
+        return { success: true, data: { tcp: [], logs } };
       }
-    };
-  })
-  .get("/overview", async ({ query, set }) => {
-    const limit = Math.max(1, Math.min(parseInt((query.limit as any) || "200", 10), logBuffer.getMaxLen()));
-    try {
-      const { tcp } = await fetchFrpcWebStatus(2000);
-      const logs = await logBuffer.list(limit);
-      return { success: true, data: { tcp, logs } };
-    } catch {
-      const logs = await logBuffer.list(limit);
-      set.status = 200;
-      return { success: true, data: { tcp: [], logs } };
-    }
-  })
-  .get("/web-status", async ({ set }) => {
-    try {
-      const { statusCode, tcp } = await fetchFrpcWebStatus(2000);
-      if (statusCode >= 400) {
-        set.status = statusCode;
-        return { success: false, message: `HTTP ${statusCode}` };
+    },
+    routeDoc("获取 FRP 总览信息"),
+  )
+  .get(
+    "/web-status",
+    async ({ set }) => {
+      try {
+        const { statusCode, tcp } = await fetchFrpcWebStatus(2000);
+        if (statusCode >= 400) {
+          set.status = statusCode;
+          return { success: false, message: `HTTP ${statusCode}` };
+        }
+        return { success: true, data: { tcp } };
+      } catch (e: any) {
+        set.status = 502;
+        return { success: false, message: "unreachable" };
       }
-      return { success: true, data: { tcp } };
-    } catch (e: any) {
-      set.status = 502;
-      return { success: false, message: "unreachable" };
-    }
-  })
-  .get("/config", async () => {
-    const content = await readConfig();
-    return { success: true, data: { content } };
-  })
-  .post("/config", async ({ body, set }) => {
-    try {
-      await verifyFrpcConfig(body.content);
-      await writeConfig(body.content);
-      return { success: true };
-    } catch (e: any) {
-      const message = e?.message || "保存配置失败";
-      set.status = e instanceof FrpcConfigValidationError ? 400 : 500;
-      return { success: false, message };
-    }
-  }, {
-    body: t.Object({ content: t.String() })
-  })
-  .post("/start", async ({ set }) => {
-    const st = frpManager.getStatus();
-    if (!st.downloaded) {
-      set.status = 400;
-      return { success: false, message: "FRP 未初始化" };
-    }
-    try {
-      const { pid } = await startFrpc({ releaseWebPort: true });
-      return { success: true, data: { pid } };
-    } catch (e: any) {
-      const msg = e?.message || "启动失败";
-      await appendLogs([`start error: ${msg}`]);
-      set.status = 500;
-      return { success: false, message: msg };
-    }
-  })
-  .post("/stop", async () => {
-    await stopFrpc();
-    return { success: true };
-  })
-  .get("/logs", async ({ query }) => {
-    const limit = Math.max(1, Math.min(parseInt((query.limit as any) || "200", 10), logBuffer.getMaxLen()));
-    const logs = await logBuffer.list(limit);
-    return { success: true, data: logs };
-  })
-  .delete("/logs", async () => {
-    await logBuffer.clear();
-    return { success: true };
-  })
-  .get("/poll", async ({ query }) => {
-    const { cursor, reset, items: logs } = await logBuffer.poll(query.cursor);
-    const status = await buildFrpcRealtimeStatus();
-
-    return {
-      success: true,
-      data: {
-        cursor,
-        reset,
-        logs,
-        status,
-      },
-    };
-  }, {
-    query: t.Object({
-      cursor: t.Optional(t.String()),
+    },
+    routeDoc("获取 FRP Web 管理状态"),
+  )
+  .get(
+    "/config",
+    async () => {
+      const content = await readConfig();
+      return { success: true, data: { content } };
+    },
+    routeDoc("获取 FRP 配置文件"),
+  )
+  .post(
+    "/config",
+    async ({ body, set }) => {
+      try {
+        await verifyFrpcConfig(body.content);
+        await writeConfig(body.content);
+        return { success: true };
+      } catch (e: any) {
+        const message = e?.message || "保存配置失败";
+        set.status = e instanceof FrpcConfigValidationError ? 400 : 500;
+        return { success: false, message };
+      }
+    },
+    withRouteDoc("保存 FRP 配置文件", {
+      body: t.Object({ content: t.String() }),
     }),
-  });
+  )
+  .post(
+    "/start",
+    async ({ set }) => {
+      const st = frpManager.getStatus();
+      if (!st.downloaded) {
+        set.status = 400;
+        return { success: false, message: "FRP 未初始化" };
+      }
+      try {
+        const { pid } = await startFrpc({ releaseWebPort: true });
+        return { success: true, data: { pid } };
+      } catch (e: any) {
+        const msg = e?.message || "启动失败";
+        await appendLogs([`start error: ${msg}`]);
+        set.status = 500;
+        return { success: false, message: msg };
+      }
+    },
+    routeDoc("启动 FRP 客户端"),
+  )
+  .post(
+    "/stop",
+    async () => {
+      await stopFrpc();
+      return { success: true };
+    },
+    routeDoc("停止 FRP 客户端"),
+  )
+  .get(
+    "/logs",
+    async ({ query }) => {
+      const limit = Math.max(
+        1,
+        Math.min(
+          parseInt((query.limit as any) || "200", 10),
+          logBuffer.getMaxLen(),
+        ),
+      );
+      const logs = await logBuffer.list(limit);
+      return { success: true, data: logs };
+    },
+    routeDoc("获取 FRP 日志"),
+  )
+  .delete(
+    "/logs",
+    async () => {
+      await logBuffer.clear();
+      return { success: true };
+    },
+    routeDoc("清空 FRP 日志"),
+  )
+  .get(
+    "/poll",
+    async ({ query }) => {
+      const { cursor, reset, items: logs } = await logBuffer.poll(query.cursor);
+      const status = await buildFrpcRealtimeStatus();
+
+      return {
+        success: true,
+        data: {
+          cursor,
+          reset,
+          logs,
+          status,
+        },
+      };
+    },
+    withRouteDoc("轮询 FRP 日志与状态", {
+      query: t.Object({
+        cursor: t.Optional(t.String()),
+      }),
+    }),
+  );

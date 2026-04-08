@@ -77,6 +77,7 @@ import {
   maintenanceBackupService,
 } from "../lib/maintenance-backup";
 import { isValidHostPort } from "../../../../packages/admin-shared/src/utils/parseHostPort";
+import { routeDoc, withRouteDoc } from "../lib/openapi";
 
 const parseIntSafe = (value: string | undefined, fallback: number) => {
   const v = Number.parseInt(String(value ?? ""), 10);
@@ -536,21 +537,28 @@ const buildCountSeries = (
   );
 };
 
-export const adminRoutes = new Elysia({ prefix: "/api/admin" })
-  .get("/config", async () => {
-    const [config, gatewayLogging] = await Promise.all([
-      configManager.getConfigSafe(),
-      getGatewayLoggingConfigForResponse(),
-    ]);
+export const adminRoutes = new Elysia({
+  prefix: "/api/admin",
+  tags: ["Admin"],
+})
+  .get(
+    "/config",
+    async () => {
+      const [config, gatewayLogging] = await Promise.all([
+        configManager.getConfigSafe(),
+        getGatewayLoggingConfigForResponse(),
+      ]);
 
-    return {
-      success: true,
-      data: {
-        ...config,
-        gateway_logging: gatewayLogging,
-      },
-    };
-  })
+      return {
+        success: true,
+        data: {
+          ...config,
+          gateway_logging: gatewayLogging,
+        },
+      };
+    },
+    routeDoc("获取管理端完整配置"),
+  )
   .post(
     "/config/run_type",
     async ({ body, set }) => {
@@ -606,14 +614,14 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
 
       return { success: true };
     },
-    {
+    withRouteDoc("切换运行模式", {
       body: t.Object({
         run_type: t.Union([t.Literal(0), t.Literal(1), t.Literal(3)]),
         reverse_proxy_submode: t.Optional(
           t.Union([t.Literal("path"), t.Literal("subdomain")]),
         ),
       }),
-    },
+    }),
   )
   .post(
     "/config/auto_manage_firewall",
@@ -628,11 +636,11 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
         },
       };
     },
-    {
+    withRouteDoc("更新防火墙自动管理开关", {
       body: t.Object({
         auto_manage_firewall: t.Boolean(),
       }),
-    },
+    }),
   )
   .post(
     "/firewall/reset",
@@ -663,40 +671,56 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
         };
       }
     },
-    {
+    withRouteDoc("按运行模式重置防火墙", {
       body: t.Object({
         run_type: t.Union([t.Literal(0), t.Literal(1), t.Literal(3)]),
       }),
-    },
+    }),
   )
-  .post("/firewall/clear", async ({ set }) => {
-    try {
-      const result = await firewallService.clearFirewall();
-      return {
-        success: true,
-        data: result,
-        message: `已清空防火墙规则，并移除 ${result.gatewayPort} 端口相关的历史重定向`,
-      };
-    } catch (error: any) {
-      set.status = 502;
-      return {
-        success: false,
-        message: error?.message || "清空防火墙失败",
-      };
-    }
-  })
-  .get("/config/run_mode_prompt_preferences", async () => {
-    const preferences = await configManager.getRunModePromptPreferences();
-    return { success: true, data: preferences };
-  })
-  .get("/config/welcome_guide", async () => {
-    const status = await configManager.getWelcomeGuideStatus();
-    return { success: true, data: status };
-  })
-  .post("/config/welcome_guide/complete", async () => {
-    const status = await configManager.completeWelcomeGuide();
-    return { success: true, data: status };
-  })
+  .post(
+    "/firewall/clear",
+    async ({ set }) => {
+      try {
+        const result = await firewallService.clearFirewall();
+        return {
+          success: true,
+          data: result,
+          message: `已清空防火墙规则，并移除 ${result.gatewayPort} 端口相关的历史重定向`,
+        };
+      } catch (error: any) {
+        set.status = 502;
+        return {
+          success: false,
+          message: error?.message || "清空防火墙失败",
+        };
+      }
+    },
+    routeDoc("清空防火墙规则"),
+  )
+  .get(
+    "/config/run_mode_prompt_preferences",
+    async () => {
+      const preferences = await configManager.getRunModePromptPreferences();
+      return { success: true, data: preferences };
+    },
+    routeDoc("获取运行模式提示偏好"),
+  )
+  .get(
+    "/config/welcome_guide",
+    async () => {
+      const status = await configManager.getWelcomeGuideStatus();
+      return { success: true, data: status };
+    },
+    routeDoc("获取欢迎向导状态"),
+  )
+  .post(
+    "/config/welcome_guide/complete",
+    async () => {
+      const status = await configManager.completeWelcomeGuide();
+      return { success: true, data: status };
+    },
+    routeDoc("完成欢迎向导"),
+  )
   .post(
     "/config/run_mode_prompt_preferences",
     async ({ body }) => {
@@ -719,19 +743,23 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
         await configManager.updateRunModePromptPreferences(patch);
       return { success: true, data: preferences };
     },
-    {
+    withRouteDoc("更新运行模式提示偏好", {
       body: t.Object({
         directToReverseProxy: t.Optional(t.Boolean()),
         reverseProxyToDirect: t.Optional(t.Boolean()),
         switchToSubdomain: t.Optional(t.Boolean()),
         subdomainToReverseProxy: t.Optional(t.Boolean()),
       }),
-    },
+    }),
   )
-  .get("/config/protocol_mapping_feature", async () => {
-    const settings = await configManager.getProtocolMappingFeatureConfig();
-    return { success: true, data: settings };
-  })
+  .get(
+    "/config/protocol_mapping_feature",
+    async () => {
+      const settings = await configManager.getProtocolMappingFeatureConfig();
+      return { success: true, data: settings };
+    },
+    routeDoc("获取协议映射功能开关"),
+  )
   .post(
     "/config/protocol_mapping_feature",
     async ({ body, set }) => {
@@ -771,16 +799,20 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
         };
       }
     },
-    {
+    withRouteDoc("更新协议映射功能开关", {
       body: t.Object({
         enabled: t.Optional(t.Boolean()),
       }),
-    },
+    }),
   )
-  .get("/config/smart_connect/details", async () => {
-    const details = await getSmartConnectDetails();
-    return { success: true, data: details };
-  })
+  .get(
+    "/config/smart_connect/details",
+    async () => {
+      const details = await getSmartConnectDetails();
+      return { success: true, data: details };
+    },
+    routeDoc("获取智能连接详情"),
+  )
   .post(
     "/config/smart_connect",
     async ({ body, set }) => {
@@ -826,24 +858,28 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
         };
       }
     },
-    {
+    withRouteDoc("更新智能连接配置", {
       body: t.Object({
         enabled: t.Optional(t.Boolean()),
         selected_ipv4: t.Optional(t.String()),
       }),
-    },
+    }),
   )
-  .get("/config/fnos_share_bypass", async () => {
-    const settings = await configManager.getFnosShareBypassConfig();
-    return { success: true, data: settings };
-  })
+  .get(
+    "/config/fnos_share_bypass",
+    async () => {
+      const settings = await configManager.getFnosShareBypassConfig();
+      return { success: true, data: settings };
+    },
+    routeDoc("获取飞牛共享绕过配置"),
+  )
   .post(
     "/config/fnos_share_bypass",
     async ({ body }) => {
       const next = await configManager.updateFnosShareBypassConfig(body);
       return { success: true, data: next };
     },
-    {
+    withRouteDoc("更新飞牛共享绕过配置", {
       body: t.Object({
         enabled: t.Optional(t.Boolean()),
         upstream_timeout_ms: t.Optional(t.Number()),
@@ -851,23 +887,28 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
         validation_lock_ttl_seconds: t.Optional(t.Number()),
         session_ttl_seconds: t.Optional(t.Number()),
       }),
-    },
+    }),
   )
-  .get("/config/gateway", async () => {
-    const [config, visibilityRuntime, proxyHeadersRuntime] = await Promise.all([
-      configManager.getConfig(),
-      configManager.getGatewayVisibilityRuntimeState(),
-      configManager.getGatewayProxyHeadersRuntimeState(),
-    ]);
-    return {
-      success: true,
-      data: buildGatewaySettingsResponse(
-        config,
-        visibilityRuntime,
-        proxyHeadersRuntime,
-      ),
-    };
-  })
+  .get(
+    "/config/gateway",
+    async () => {
+      const [config, visibilityRuntime, proxyHeadersRuntime] =
+        await Promise.all([
+          configManager.getConfig(),
+          configManager.getGatewayVisibilityRuntimeState(),
+          configManager.getGatewayProxyHeadersRuntimeState(),
+        ]);
+      return {
+        success: true,
+        data: buildGatewaySettingsResponse(
+          config,
+          visibilityRuntime,
+          proxyHeadersRuntime,
+        ),
+      };
+    },
+    routeDoc("获取网关配置"),
+  )
   .post(
     "/config/gateway",
     async ({ body, set }) => {
@@ -956,7 +997,7 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
         };
       }
     },
-    {
+    withRouteDoc("更新网关配置", {
       body: t.Object({
         auth_cache_ttl_seconds: t.Optional(t.Number()),
         auth_cache_unauthorized_ttl_seconds: t.Optional(t.Number()),
@@ -969,15 +1010,19 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
           }),
         ),
       }),
-    },
+    }),
   )
-  .get("/config/gateway/visibility", async () => {
-    const details = await getGatewayVisibilityDetails();
-    return {
-      success: true,
-      data: details,
-    };
-  })
+  .get(
+    "/config/gateway/visibility",
+    async () => {
+      const details = await getGatewayVisibilityDetails();
+      return {
+        success: true,
+        data: details,
+      };
+    },
+    routeDoc("获取网关可见性配置"),
+  )
   .post(
     "/config/gateway/visibility",
     async ({ body, set }) => {
@@ -1021,7 +1066,7 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
         };
       }
     },
-    {
+    withRouteDoc("更新网关可见性配置", {
       body: t.Object({
         enabled: t.Boolean(),
         selections: t.Array(
@@ -1032,15 +1077,19 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
         ),
         custom_cidrs: t.Array(t.String()),
       }),
-    },
+    }),
   )
-  .get("/config/gateway/proxy-headers", async () => {
-    const details = await getGatewayProxyHeadersDetails();
-    return {
-      success: true,
-      data: details,
-    };
-  })
+  .get(
+    "/config/gateway/proxy-headers",
+    async () => {
+      const details = await getGatewayProxyHeadersDetails();
+      return {
+        success: true,
+        data: details,
+      };
+    },
+    routeDoc("获取网关代理请求头配置"),
+  )
   .post(
     "/config/gateway/proxy-headers",
     async ({ body, set }) => {
@@ -1087,16 +1136,20 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
         };
       }
     },
-    {
+    withRouteDoc("更新网关代理请求头配置", {
       body: t.Object({
         disabled_hosts: t.Array(t.String()),
       }),
-    },
+    }),
   )
-  .get("/config/captcha", async () => {
-    const settings = await configManager.getCaptchaSettings();
-    return { success: true, data: settings };
-  })
+  .get(
+    "/config/captcha",
+    async () => {
+      const settings = await configManager.getCaptchaSettings();
+      return { success: true, data: settings };
+    },
+    routeDoc("获取验证码配置"),
+  )
   .post(
     "/config/captcha",
     async ({ body, set }) => {
@@ -1119,7 +1172,7 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
       });
       return { success: true, data: next };
     },
-    {
+    withRouteDoc("更新验证码配置", {
       body: t.Object({
         provider: t.Union([t.Literal("pow"), t.Literal("turnstile")]),
         turnstile: t.Object({
@@ -1127,23 +1180,31 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
           secret_key: t.String(),
         }),
       }),
-    },
+    }),
   )
-  .get("/config/terminal_feature", async () => {
-    const settings = await configManager.getTerminalFeatureConfig();
-    return { success: true, data: settings };
-  })
-  .get("/config/auth_credential_settings", async () => {
-    const settings = await configManager.getAuthCredentialSettings();
-    return { success: true, data: settings };
-  })
+  .get(
+    "/config/terminal_feature",
+    async () => {
+      const settings = await configManager.getTerminalFeatureConfig();
+      return { success: true, data: settings };
+    },
+    routeDoc("获取终端功能配置"),
+  )
+  .get(
+    "/config/auth_credential_settings",
+    async () => {
+      const settings = await configManager.getAuthCredentialSettings();
+      return { success: true, data: settings };
+    },
+    routeDoc("获取认证凭据配置"),
+  )
   .post(
     "/config/auth_credential_settings",
     async ({ body }) => {
       const next = await configManager.updateAuthCredentialSettings(body);
       return { success: true, data: next };
     },
-    {
+    withRouteDoc("更新认证凭据配置", {
       body: t.Object({
         session_ttl_seconds: t.Optional(t.Number()),
         remember_me_ttl_seconds: t.Optional(t.Number()),
@@ -1158,7 +1219,7 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
           t.Union([t.Number(), t.Null()]),
         ),
       }),
-    },
+    }),
   )
   .post(
     "/config/terminal_feature",
@@ -1166,7 +1227,7 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
       const next = await configManager.updateTerminalFeatureConfig(body);
       return { success: true, data: next };
     },
-    {
+    withRouteDoc("更新终端功能配置", {
       body: t.Object({
         enabled: t.Optional(t.Boolean()),
         default_cwd: t.Optional(t.String()),
@@ -1176,12 +1237,16 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
         allow_mobile_toolbar: t.Optional(t.Boolean()),
         dangerously_run_as_current_user: t.Optional(t.Boolean()),
       }),
-    },
+    }),
   )
-  .get("/config/default_route", async () => {
-    const config = await configManager.getConfig();
-    return { success: true, data: { default_route: config.default_route } };
-  })
+  .get(
+    "/config/default_route",
+    async () => {
+      const config = await configManager.getConfig();
+      return { success: true, data: { default_route: config.default_route } };
+    },
+    routeDoc("获取默认路由"),
+  )
   .post(
     "/config/default_route",
     async ({ body }) => {
@@ -1189,11 +1254,11 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
       await goBackend.setDefaultRoute(body.path);
       return { success: true };
     },
-    {
+    withRouteDoc("更新默认路由", {
       body: t.Object({
         path: t.String(),
       }),
-    },
+    }),
   )
   .post(
     "/config/default_tunnel",
@@ -1201,11 +1266,11 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
       await configManager.updateDefaultTunnel(body.tunnel);
       return { success: true };
     },
-    {
+    withRouteDoc("设置默认隧道类型", {
       body: t.Object({
         tunnel: t.Union([t.Literal("frp"), t.Literal("cloudflared")]),
       }),
-    },
+    }),
   )
   .post(
     "/config/proxy_mappings",
@@ -1214,7 +1279,7 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
       await goBackend.setRules(body.mappings);
       return { success: true };
     },
-    {
+    withRouteDoc("更新路径代理映射", {
       body: t.Object({
         mappings: t.Array(
           t.Object({
@@ -1227,12 +1292,16 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
           }),
         ),
       }),
-    },
+    }),
   )
-  .get("/config/host_mappings", async () => {
-    const config = await configManager.getConfig();
-    return { success: true, data: config.host_mappings };
-  })
+  .get(
+    "/config/host_mappings",
+    async () => {
+      const config = await configManager.getConfig();
+      return { success: true, data: config.host_mappings };
+    },
+    routeDoc("获取 Host 映射列表"),
+  )
   .post(
     "/config/host_mappings",
     async ({ body, set }) => {
@@ -1323,7 +1392,7 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
 
       return { success: true, data: normalizedMappings };
     },
-    {
+    withRouteDoc("更新 Host 映射列表", {
       body: t.Object({
         mappings: t.Array(
           t.Object({
@@ -1345,7 +1414,7 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
           }),
         ),
       }),
-    },
+    }),
   )
   .post(
     "/config/host_mappings/metadata",
@@ -1364,54 +1433,66 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
         data: metadata.data,
       };
     },
-    {
+    withRouteDoc("抓取目标地址元数据", {
       body: t.Object({
         target: t.String(),
       }),
-    },
+    }),
   )
-  .post("/config/host_mappings/refresh_titles", async () => {
-    const config = await configManager.getConfig();
-    const { mappings, summary } = await refreshAllHostMappingTitles(
-      config.host_mappings,
-    );
+  .post(
+    "/config/host_mappings/refresh_titles",
+    async () => {
+      const config = await configManager.getConfig();
+      const { mappings, summary } = await refreshAllHostMappingTitles(
+        config.host_mappings,
+      );
 
-    await configManager.updateHostMappings(mappings);
+      await configManager.updateHostMappings(mappings);
 
-    return {
-      success: true,
-      data: summary,
-    };
-  })
-  .get("/config/host_mappings/bookmarks/export", async ({ request }) => {
-    const config = await configManager.getConfig();
-    const document = buildHostMappingsBookmarksDocument({
-      mappings: config.host_mappings,
-      scheme: resolveRequestScheme(request),
-      accessEntryPort: resolveAccessEntryInfo(config).port,
-      folderTitle: config.subdomain_mode?.root_domain?.trim()
-        ? `${config.subdomain_mode.root_domain.trim()} 子域映射`
-        : "fn-knock 子域映射",
-    });
-    const filename = buildHostMappingsBookmarkFilename(
-      config.subdomain_mode?.root_domain,
-    );
-    const body = new Blob([document], {
-      type: "text/html;charset=UTF-8",
-    });
+      return {
+        success: true,
+        data: summary,
+      };
+    },
+    routeDoc("批量刷新 Host 映射标题"),
+  )
+  .get(
+    "/config/host_mappings/bookmarks/export",
+    async ({ request }) => {
+      const config = await configManager.getConfig();
+      const document = buildHostMappingsBookmarksDocument({
+        mappings: config.host_mappings,
+        scheme: resolveRequestScheme(request),
+        accessEntryPort: resolveAccessEntryInfo(config).port,
+        folderTitle: config.subdomain_mode?.root_domain?.trim()
+          ? `${config.subdomain_mode.root_domain.trim()} 子域映射`
+          : "fn-knock 子域映射",
+      });
+      const filename = buildHostMappingsBookmarkFilename(
+        config.subdomain_mode?.root_domain,
+      );
+      const body = new Blob([document], {
+        type: "text/html;charset=UTF-8",
+      });
 
-    return new Response(body, {
-      headers: {
-        "Content-Type": "text/html; charset=UTF-8",
-        "Content-Disposition": `attachment; filename="${filename}"`,
-        "Cache-Control": "no-store",
-      },
-    });
-  })
-  .get("/config/stream_mappings", async () => {
-    const config = await configManager.getConfig();
-    return { success: true, data: config.stream_mappings };
-  })
+      return new Response(body, {
+        headers: {
+          "Content-Type": "text/html; charset=UTF-8",
+          "Content-Disposition": `attachment; filename="${filename}"`,
+          "Cache-Control": "no-store",
+        },
+      });
+    },
+    routeDoc("导出 Host 映射书签"),
+  )
+  .get(
+    "/config/stream_mappings",
+    async () => {
+      const config = await configManager.getConfig();
+      return { success: true, data: config.stream_mappings };
+    },
+    routeDoc("获取协议映射列表"),
+  )
   .post(
     "/config/stream_mappings",
     async ({ body, set }) => {
@@ -1446,7 +1527,7 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
 
       return { success: true };
     },
-    {
+    withRouteDoc("更新协议映射列表", {
       body: t.Object({
         mappings: t.Array(
           t.Object({
@@ -1457,12 +1538,16 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
           }),
         ),
       }),
-    },
+    }),
   )
-  .get("/config/subdomain_mode", async () => {
-    const config = await configManager.getConfig();
-    return { success: true, data: config.subdomain_mode };
-  })
+  .get(
+    "/config/subdomain_mode",
+    async () => {
+      const config = await configManager.getConfig();
+      return { success: true, data: config.subdomain_mode };
+    },
+    routeDoc("获取子域模式配置"),
+  )
   .post(
     "/config/subdomain_mode",
     async ({ body, set }) => {
@@ -1556,7 +1641,7 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
         },
       };
     },
-    {
+    withRouteDoc("更新子域模式配置", {
       body: t.Object({
         root_domain: t.Optional(t.String()),
         auth_host: t.Optional(t.String()),
@@ -1577,26 +1662,34 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
         ),
         passkey_rp_id: t.Optional(t.String()),
       }),
-    },
+    }),
   )
   // TOTP 认证管理
-  .get("/totp/status", async () => {
-    const credentials = await configManager.getTOTPCredentials();
-    return {
-      success: true,
-      data: { bound: credentials.length > 0, credentials },
-    };
-  })
-  .post("/totp/setup", async () => {
-    const secret = generateSecret();
-    const uri = generateURI({
-      issuer: "fn-knock",
-      label: "admin",
-      secret,
-      strategy: "totp",
-    });
-    return { success: true, data: { secret, uri } };
-  })
+  .get(
+    "/totp/status",
+    async () => {
+      const credentials = await configManager.getTOTPCredentials();
+      return {
+        success: true,
+        data: { bound: credentials.length > 0, credentials },
+      };
+    },
+    routeDoc("获取 TOTP 绑定状态"),
+  )
+  .post(
+    "/totp/setup",
+    async () => {
+      const secret = generateSecret();
+      const uri = generateURI({
+        issuer: "fn-knock",
+        label: "admin",
+        secret,
+        strategy: "totp",
+      });
+      return { success: true, data: { secret, uri } };
+    },
+    routeDoc("生成 TOTP 绑定信息"),
+  )
   .post(
     "/totp/bind",
     async ({ body, set }) => {
@@ -1617,13 +1710,13 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
       });
       return { success: true };
     },
-    {
+    withRouteDoc("绑定 TOTP 凭据", {
       body: t.Object({
         secret: t.String(),
         token: t.String(),
         comment: t.Optional(t.String()),
       }),
-    },
+    }),
   )
   .delete(
     "/totp/:id",
@@ -1635,9 +1728,9 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
       }
       return { success: true };
     },
-    {
+    withRouteDoc("删除 TOTP 凭据", {
       params: t.Object({ id: t.String() }),
-    },
+    }),
   )
   .patch(
     "/totp/:id/comment",
@@ -1652,10 +1745,10 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
       }
       return { success: true };
     },
-    {
+    withRouteDoc("更新 TOTP 凭据备注", {
       params: t.Object({ id: t.String() }),
       body: t.Object({ comment: t.String() }),
-    },
+    }),
   )
   .get(
     "/totp/:totpId/passkeys",
@@ -1664,9 +1757,9 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
       const filtered = passkeys.filter((pk) => pk.totpId === params.totpId);
       return { success: true, data: filtered };
     },
-    {
+    withRouteDoc("获取 TOTP 关联的 Passkey 列表", {
       params: t.Object({ totpId: t.String() }),
-    },
+    }),
   )
   .delete(
     "/passkeys/:id",
@@ -1678,111 +1771,127 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
       }
       return { success: true };
     },
-    {
+    withRouteDoc("删除 Passkey", {
       params: t.Object({
         id: t.String(),
       }),
-    },
+    }),
   )
-  .post("/sync-routes", async ({ set }) => {
-    try {
-      const [config, protocolMappingFeature] = await Promise.all([
-        configManager.getConfig(),
-        configManager.getProtocolMappingFeatureConfig(),
-      ]);
-      await firewallService.applyRunTypeConfig(
-        config.run_type,
-        config.run_type,
-      );
+  .post(
+    "/sync-routes",
+    async ({ set }) => {
+      try {
+        const [config, protocolMappingFeature] = await Promise.all([
+          configManager.getConfig(),
+          configManager.getProtocolMappingFeatureConfig(),
+        ]);
+        await firewallService.applyRunTypeConfig(
+          config.run_type,
+          config.run_type,
+        );
 
-      const loggingResult = await goBackend.setGatewayLoggingConfig(
-        config.gateway_logging ?? {
-          enabled: false,
-          max_days: 7,
+        const loggingResult = await goBackend.setGatewayLoggingConfig(
+          config.gateway_logging ?? {
+            enabled: false,
+            max_days: 7,
+          },
+        );
+        if (!loggingResult.success) {
+          set.status = 502;
+          return {
+            success: false,
+            message: `同步部分失败: gateway_logging=${loggingResult.success}`,
+          };
+        }
+
+        const syncedRules =
+          config.run_type === 1 && !isReverseProxySubdomainMode(config)
+            ? config.proxy_mappings.length
+            : 0;
+        const syncedHostRules = isAnySubdomainRoutingMode(config)
+          ? config.host_mappings.length
+          : 0;
+        const syncedStreamRules =
+          config.run_type === 3 && protocolMappingFeature.enabled === true
+            ? config.stream_mappings.length
+            : 0;
+
+        return {
+          success: true,
+          data: {
+            synced_rules: syncedRules,
+            synced_host_rules: syncedHostRules,
+            synced_stream_rules: syncedStreamRules,
+            synced_gateway_logging: true,
+          },
+          message: `已按当前运行模式同步 ${syncedRules} 条路径路由、${syncedHostRules} 条 Host 路由、${syncedStreamRules} 条 协议映射与请求日志配置`,
+        };
+      } catch (e: any) {
+        set.status = 500;
+        return { success: false, message: e?.message ?? String(e) };
+      }
+    },
+    routeDoc("按当前配置同步路由与网关"),
+  )
+  .get(
+    "/maintenance/backup/export",
+    async () => {
+      const archive = await maintenanceBackupService.exportBackupArchive();
+      const body = new Blob([Uint8Array.from(archive.buffer)], {
+        type: "application/octet-stream",
+      });
+
+      return new Response(body, {
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "Content-Disposition": `attachment; filename="${archive.filename}"`,
+          "Cache-Control": "no-store",
         },
-      );
-      if (!loggingResult.success) {
-        set.status = 502;
+      });
+    },
+    routeDoc("导出系统备份归档"),
+  )
+  .get(
+    "/maintenance/backup/files",
+    async ({ set }) => {
+      try {
+        return {
+          success: true,
+          data: await maintenanceBackupService.listBackupDirectoryFiles(),
+        };
+      } catch (error: any) {
+        set.status = 500;
         return {
           success: false,
-          message: `同步部分失败: gateway_logging=${loggingResult.success}`,
+          message: error?.message || "读取飞牛备份目录失败",
         };
       }
-
-      const syncedRules =
-        config.run_type === 1 && !isReverseProxySubdomainMode(config)
-          ? config.proxy_mappings.length
-          : 0;
-      const syncedHostRules = isAnySubdomainRoutingMode(config)
-        ? config.host_mappings.length
-        : 0;
-      const syncedStreamRules =
-        config.run_type === 3 && protocolMappingFeature.enabled === true
-          ? config.stream_mappings.length
-          : 0;
-
-      return {
-        success: true,
-        data: {
-          synced_rules: syncedRules,
-          synced_host_rules: syncedHostRules,
-          synced_stream_rules: syncedStreamRules,
-          synced_gateway_logging: true,
-        },
-        message: `已按当前运行模式同步 ${syncedRules} 条路径路由、${syncedHostRules} 条 Host 路由、${syncedStreamRules} 条 协议映射与请求日志配置`,
-      };
-    } catch (e: any) {
-      set.status = 500;
-      return { success: false, message: e?.message ?? String(e) };
-    }
-  })
-  .get("/maintenance/backup/export", async () => {
-    const archive = await maintenanceBackupService.exportBackupArchive();
-    const body = new Blob([Uint8Array.from(archive.buffer)], {
-      type: "application/octet-stream",
-    });
-
-    return new Response(body, {
-      headers: {
-        "Content-Type": "application/octet-stream",
-        "Content-Disposition": `attachment; filename="${archive.filename}"`,
-        "Cache-Control": "no-store",
-      },
-    });
-  })
-  .get("/maintenance/backup/files", async ({ set }) => {
-    try {
-      return {
-        success: true,
-        data: await maintenanceBackupService.listBackupDirectoryFiles(),
-      };
-    } catch (error: any) {
-      set.status = 500;
-      return {
-        success: false,
-        message: error?.message || "读取飞牛备份目录失败",
-      };
-    }
-  })
-  .post("/maintenance/backup/export/fnos", async ({ set }) => {
-    try {
-      const result =
-        await maintenanceBackupService.exportBackupArchiveToDirectory();
-      return {
-        success: true,
-        data: result,
-        message: "备份已导出到飞牛目录",
-      };
-    } catch (error: any) {
-      const status =
-        error instanceof MaintenanceBackupError ? error.status : 500;
-      set.status = status;
-      return {
-        success: false,
-        message: error?.message || "导出到飞牛目录失败",
-      };
-    }
-  })
+    },
+    routeDoc("获取飞牛备份目录文件列表"),
+  )
+  .post(
+    "/maintenance/backup/export/fnos",
+    async ({ set }) => {
+      try {
+        const result =
+          await maintenanceBackupService.exportBackupArchiveToDirectory();
+        return {
+          success: true,
+          data: result,
+          message: "备份已导出到飞牛目录",
+        };
+      } catch (error: any) {
+        const status =
+          error instanceof MaintenanceBackupError ? error.status : 500;
+        set.status = status;
+        return {
+          success: false,
+          message: error?.message || "导出到飞牛目录失败",
+        };
+      }
+    },
+    routeDoc("导出备份到飞牛目录"),
+  )
   .post(
     "/maintenance/backup/import",
     async ({ body, set }) => {
@@ -1806,12 +1915,12 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
         };
       }
     },
-    {
+    withRouteDoc("导入本地备份归档", {
       body: t.Object({
         filename: t.Optional(t.String()),
         archive_base64: t.String(),
       }),
-    },
+    }),
   )
   .post(
     "/maintenance/backup/import/fnos",
@@ -1845,11 +1954,11 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
         };
       }
     },
-    {
+    withRouteDoc("从飞牛目录导入备份", {
       body: t.Object({
         path: t.String(),
       }),
-    },
+    }),
   )
   .get(
     "/security/overview",
@@ -1902,35 +2011,39 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
         },
       };
     },
-    {
+    withRouteDoc("获取安全概览统计", {
       query: t.Object({
         rangeSec: t.Optional(t.String()),
       }),
-    },
+    }),
   )
   // Session management
-  .get("/sessions", async () => {
-    const list = await configManager.listSessions();
-    const mapped = await Promise.all(
-      list.map(async ({ id, data }) => {
-        const session = await ensureSessionComment(id, data);
-        const [mobility, fnosAttachments] = await Promise.all([
-          authMobilitySessionManager.getSessionMobilitySummary(id),
-          authMobilitySessionManager.listSessionFnosAttachments(id),
-        ]);
-        return {
-          id,
-          ...session,
-          mobility,
-          fnosAttachments,
-        };
-      }),
-    );
-    await ipLocationService.hydrateIpLocationRecords(mapped, (session) =>
-      ipLocationRefs.session(session.id),
-    );
-    return { success: true, data: mapped };
-  })
+  .get(
+    "/sessions",
+    async () => {
+      const list = await configManager.listSessions();
+      const mapped = await Promise.all(
+        list.map(async ({ id, data }) => {
+          const session = await ensureSessionComment(id, data);
+          const [mobility, fnosAttachments] = await Promise.all([
+            authMobilitySessionManager.getSessionMobilitySummary(id),
+            authMobilitySessionManager.listSessionFnosAttachments(id),
+          ]);
+          return {
+            id,
+            ...session,
+            mobility,
+            fnosAttachments,
+          };
+        }),
+      );
+      await ipLocationService.hydrateIpLocationRecords(mapped, (session) =>
+        ipLocationRefs.session(session.id),
+      );
+      return { success: true, data: mapped };
+    },
+    routeDoc("获取会话列表"),
+  )
   .get(
     "/sessions/:id",
     async ({ params, set }) => {
@@ -1955,9 +2068,9 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
       );
       return { success: true, data: record };
     },
-    {
+    withRouteDoc("获取会话详情", {
       params: t.Object({ id: t.String() }),
-    },
+    }),
   )
   .patch(
     "/sessions/:id/comment",
@@ -1997,10 +2110,10 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
       );
       return { success: true, data: record };
     },
-    {
+    withRouteDoc("更新会话备注", {
       params: t.Object({ id: t.String() }),
       body: t.Object({ comment: t.String() }),
-    },
+    }),
   )
   .get(
     "/sessions/:id/mobility",
@@ -2018,9 +2131,9 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
         data: details,
       };
     },
-    {
+    withRouteDoc("获取会话漫游详情", {
       params: t.Object({ id: t.String() }),
-    },
+    }),
   )
   .delete(
     "/sessions/:id",
@@ -2053,7 +2166,7 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
       }
       return { success: true };
     },
-    {
+    withRouteDoc("强制注销会话", {
       params: t.Object({ id: t.String() }),
-    },
+    }),
   );

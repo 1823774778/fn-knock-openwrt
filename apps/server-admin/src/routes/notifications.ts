@@ -4,6 +4,7 @@ import {
   NOTIFICATION_DELIVERY_STATUSES,
   NOTIFICATION_TRIGGER_STATUSES,
 } from "../lib/system-notifications/types";
+import { routeDoc, withRouteDoc } from "../lib/openapi";
 
 const parsePositiveInt = (value: string | undefined, fallback: number) => {
   const parsed = Number.parseInt(String(value ?? ""), 10);
@@ -86,19 +87,28 @@ const deliveryClearBody = t.Object({
 
 export const notificationRoutes = new Elysia({
   prefix: "/api/admin/notifications",
+  tags: ["Notifications"],
 })
-  .get("/providers/catalog", () => ({
-    success: true,
-    data: {
-      providers: systemNotificationService.listProviderCatalog(),
-    },
-  }))
-  .get("/providers", async () => ({
-    success: true,
-    data: {
-      providers: await systemNotificationService.listProviders(),
-    },
-  }))
+  .get(
+    "/providers/catalog",
+    () => ({
+      success: true,
+      data: {
+        providers: systemNotificationService.listProviderCatalog(),
+      },
+    }),
+    routeDoc("获取通知提供商目录"),
+  )
+  .get(
+    "/providers",
+    async () => ({
+      success: true,
+      data: {
+        providers: await systemNotificationService.listProviders(),
+      },
+    }),
+    routeDoc("获取通知提供商列表"),
+  )
   .post(
     "/providers",
     async ({ body, set }) => {
@@ -114,7 +124,7 @@ export const notificationRoutes = new Elysia({
         };
       }
     },
-    { body: providerCreateBody },
+    withRouteDoc("创建通知提供商", { body: providerCreateBody }),
   )
   .patch(
     "/providers/:id",
@@ -134,37 +144,51 @@ export const notificationRoutes = new Elysia({
         };
       }
     },
-    { body: providerUpdateBody },
+    withRouteDoc("更新通知提供商", { body: providerUpdateBody }),
   )
-  .delete("/providers/:id", async ({ params, set }) => {
-    try {
-      await systemNotificationService.deleteProvider(params.id);
-      return { success: true };
-    } catch (error) {
-      set.status = 400;
-      return {
-        success: false,
-        message: error instanceof Error ? error.message : "删除通知提供商失败",
-      };
-    }
-  })
-  .post("/providers/:id/test", async ({ params, set }) => {
-    try {
-      return await systemNotificationService.testProvider(params.id);
-    } catch (error) {
-      set.status = 400;
-      return {
-        success: false,
-        message: error instanceof Error ? error.message : "测试通知提供商失败",
-      };
-    }
-  })
-  .get("/rules", async () => ({
-    success: true,
-    data: {
-      rules: await systemNotificationService.listRules(),
+  .delete(
+    "/providers/:id",
+    async ({ params, set }) => {
+      try {
+        await systemNotificationService.deleteProvider(params.id);
+        return { success: true };
+      } catch (error) {
+        set.status = 400;
+        return {
+          success: false,
+          message:
+            error instanceof Error ? error.message : "删除通知提供商失败",
+        };
+      }
     },
-  }))
+    routeDoc("删除通知提供商"),
+  )
+  .post(
+    "/providers/:id/test",
+    async ({ params, set }) => {
+      try {
+        return await systemNotificationService.testProvider(params.id);
+      } catch (error) {
+        set.status = 400;
+        return {
+          success: false,
+          message:
+            error instanceof Error ? error.message : "测试通知提供商失败",
+        };
+      }
+    },
+    routeDoc("测试通知提供商"),
+  )
+  .get(
+    "/rules",
+    async () => ({
+      success: true,
+      data: {
+        rules: await systemNotificationService.listRules(),
+      },
+    }),
+    routeDoc("获取通知规则列表"),
+  )
   .post(
     "/rules",
     async ({ body, set }) => {
@@ -179,7 +203,7 @@ export const notificationRoutes = new Elysia({
         };
       }
     },
-    { body: ruleBody },
+    withRouteDoc("创建通知规则", { body: ruleBody }),
   )
   .patch(
     "/rules/:id",
@@ -198,20 +222,24 @@ export const notificationRoutes = new Elysia({
         };
       }
     },
-    { body: ruleUpdateBody },
+    withRouteDoc("更新通知规则", { body: ruleUpdateBody }),
   )
-  .delete("/rules/:id", async ({ params, set }) => {
-    try {
-      await systemNotificationService.deleteRule(params.id);
-      return { success: true };
-    } catch (error) {
-      set.status = 400;
-      return {
-        success: false,
-        message: error instanceof Error ? error.message : "删除通知规则失败",
-      };
-    }
-  })
+  .delete(
+    "/rules/:id",
+    async ({ params, set }) => {
+      try {
+        await systemNotificationService.deleteRule(params.id);
+        return { success: true };
+      } catch (error) {
+        set.status = 400;
+        return {
+          success: false,
+          message: error instanceof Error ? error.message : "删除通知规则失败",
+        };
+      }
+    },
+    routeDoc("删除通知规则"),
+  )
   .get(
     "/triggers",
     async ({ query }) => {
@@ -226,14 +254,14 @@ export const notificationRoutes = new Elysia({
       });
       return { success: true, data: result };
     },
-    {
+    withRouteDoc("分页查询通知触发记录", {
       query: t.Object({
         page: t.Optional(t.String()),
         limit: t.Optional(t.String()),
         rule_id: t.Optional(t.String()),
         status: t.Optional(t.String()),
       }),
-    },
+    }),
   )
   .get(
     "/deliveries",
@@ -255,7 +283,7 @@ export const notificationRoutes = new Elysia({
       });
       return { success: true, data: result };
     },
-    {
+    withRouteDoc("分页查询通知投递记录", {
       query: t.Object({
         page: t.Optional(t.String()),
         limit: t.Optional(t.String()),
@@ -264,7 +292,7 @@ export const notificationRoutes = new Elysia({
         trigger_id: t.Optional(t.String()),
         status: t.Optional(t.String()),
       }),
-    },
+    }),
   )
   .delete(
     "/deliveries",
@@ -305,7 +333,7 @@ export const notificationRoutes = new Elysia({
         };
       }
     },
-    {
+    withRouteDoc("按条件清空通知投递记录", {
       body: deliveryClearBody,
-    },
+    }),
   );

@@ -2,8 +2,12 @@ import { Elysia, t } from "elysia";
 import { portScannerPlugin } from "../plugins/scanner";
 import { acmePlugin } from "../plugins/acme";
 import { ConfigManager } from "../lib/redis";
+import { routeDoc } from "../lib/openapi";
 
-export const assetsRoutes = new Elysia({ prefix: "/api/admin/scan" })
+export const assetsRoutes = new Elysia({
+  prefix: "/api/admin/scan",
+  tags: ["Assets"],
+})
   .use(portScannerPlugin)
   .use(acmePlugin)
   .get(
@@ -20,7 +24,7 @@ export const assetsRoutes = new Elysia({ prefix: "/api/admin/scan" })
         parseInt(process.env.GO_BACKEND_PORT || "7996", 10),
         parseInt(process.env.GO_REPROXY_PORT || "7999", 10),
         7995,
-        8000 // 旧的飞牛端口
+        8000, // 旧的飞牛端口
       ];
 
       const mappingPorts: number[] = [];
@@ -36,7 +40,9 @@ export const assetsRoutes = new Elysia({ prefix: "/api/admin/scan" })
               mappingPorts.push(443);
             }
           } catch (e) {
-            console.warn(`[扫描警告] 无法解析代理映射的 URL: ${mapping.target}`);
+            console.warn(
+              `[扫描警告] 无法解析代理映射的 URL: ${mapping.target}`,
+            );
           }
         }
       }
@@ -59,5 +65,6 @@ export const assetsRoutes = new Elysia({ prefix: "/api/admin/scan" })
           message: (error as Error).message,
         };
       }
-    }
+    },
+    routeDoc("扫描本机可发现服务"),
   );

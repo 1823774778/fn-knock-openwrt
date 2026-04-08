@@ -7,9 +7,11 @@ import {
 } from "../lib/system-events/constants";
 import { hydrateSystemEventIpLocations } from "../lib/system-events/ip-locations";
 import { systemEventManager } from "../lib/system-events/manager";
+import { withRouteDoc } from "../lib/openapi";
 
 export const internalSystemEventRoutes = new Elysia({
   prefix: "/api/internal/system-events",
+  tags: ["Internal Events"],
 }).post(
   "/",
   async ({ body, request, set }) => {
@@ -70,7 +72,7 @@ export const internalSystemEventRoutes = new Elysia({
       data: event,
     };
   },
-  {
+  withRouteDoc("写入内部系统事件", {
     body: t.Object({
       type: t.String(),
       source: t.String(),
@@ -87,5 +89,5 @@ export const internalSystemEventRoutes = new Elysia({
       tags: t.Optional(t.Array(t.String())),
       payload: t.Record(t.String(), t.Any()),
     }),
-  },
+  }),
 );

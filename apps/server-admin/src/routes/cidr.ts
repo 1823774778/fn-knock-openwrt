@@ -1,5 +1,6 @@
 import { Elysia, t } from "elysia";
 import { CidrServiceError, cidrService } from "../lib/cidr";
+import { routeDoc, withRouteDoc } from "../lib/openapi";
 
 const handleCidrError = (
   error: unknown,
@@ -17,17 +18,24 @@ const handleCidrError = (
   };
 };
 
-export const cidrRoutes = new Elysia({ prefix: "/api/admin/cidr" })
-  .get("/provinces", async ({ set }) => {
-    try {
-      const payload = await cidrService.getProvinces();
-      return { success: true, data: payload };
-    } catch (error) {
-      const handled = handleCidrError(error);
-      set.status = handled.status;
-      return { success: false, message: handled.message };
-    }
-  })
+export const cidrRoutes = new Elysia({
+  prefix: "/api/admin/cidr",
+  tags: ["CIDR"],
+})
+  .get(
+    "/provinces",
+    async ({ set }) => {
+      try {
+        const payload = await cidrService.getProvinces();
+        return { success: true, data: payload };
+      } catch (error) {
+        const handled = handleCidrError(error);
+        set.status = handled.status;
+        return { success: false, message: handled.message };
+      }
+    },
+    routeDoc("获取省份列表"),
+  )
   .get(
     "/cities",
     async ({ query, set }) => {
@@ -40,11 +48,11 @@ export const cidrRoutes = new Elysia({ prefix: "/api/admin/cidr" })
         return { success: false, message: handled.message };
       }
     },
-    {
+    withRouteDoc("获取指定省份的城市列表", {
       query: t.Object({
         province: t.String(),
       }),
-    },
+    }),
   )
   .get(
     "/selector",
@@ -58,11 +66,11 @@ export const cidrRoutes = new Elysia({ prefix: "/api/admin/cidr" })
         return { success: false, message: handled.message };
       }
     },
-    {
+    withRouteDoc("获取省市联动选择器数据", {
       query: t.Object({
         province: t.Optional(t.String()),
       }),
-    },
+    }),
   )
   .get(
     "/cidrs",
@@ -79,10 +87,10 @@ export const cidrRoutes = new Elysia({ prefix: "/api/admin/cidr" })
         return { success: false, message: handled.message };
       }
     },
-    {
+    withRouteDoc("查询省市对应的 CIDR 列表", {
       query: t.Object({
         province: t.String(),
         city: t.Optional(t.String()),
       }),
-    },
+    }),
   );
