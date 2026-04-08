@@ -1723,7 +1723,6 @@ export class ConfigManager {
   private acmeMigrationVersionKey = "fn_knock:acme:migration:v1";
   private acmeSettingsKey = "fn_knock:acme:settings";
   private acmeClientSettingsKey = "fn_knock:acme:client-settings";
-  private onboardingCompletedKey = "fn_knock:onboarding:completed";
   private runModePromptPreferencesKey = "fn_knock:run-mode:prompt-preferences";
   private reverseProxyThrottlePatchFlagKey =
     LEGACY_REVERSE_PROXY_THROTTLE_PATCH_FLAG_KEY;
@@ -4186,15 +4185,6 @@ return actual
     const config = await this.getConfig();
     config.default_tunnel = tunnel;
     await this.saveConfig(config);
-  }
-
-  async getOnboardingStatus(): Promise<{ completed: boolean }> {
-    const value = await this.redis.get(this.onboardingCompletedKey);
-    return { completed: value === "1" };
-  }
-
-  async markOnboardingCompleted(): Promise<void> {
-    await this.redis.set(this.onboardingCompletedKey, "1");
   }
 
   // CA Hosts list in Redis

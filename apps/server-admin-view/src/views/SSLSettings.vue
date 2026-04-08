@@ -15,7 +15,7 @@
       @update:model-value="navigateTo"
       class="w-full"
     >
-      <TabsList data-guide-ssl-settings>
+      <TabsList>
         <TabsTrigger value="cert-config">证书配置</TabsTrigger>
         <TabsTrigger value="self-signed">自签证书</TabsTrigger>
         <TabsTrigger value="acme-cert">ACME证书</TabsTrigger>

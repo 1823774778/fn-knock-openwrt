@@ -633,7 +633,6 @@ const tunnelCards = computed(() => [
   <div class="h-full flex flex-col gap-6">
     <section
       class="flex flex-col xl:flex-row xl:items-baseline xl:justify-between gap-6"
-      data-guide-onboarding-done
     >
       <div class="space-y-2 min-w-0">
         <div

@@ -1,5 +1,5 @@
 <template>
-  <Card data-guide-auth-settings class="min-h-[600px]">
+  <Card class="min-h-[600px]">
     <CardHeader class="flex flex-row items-center justify-between">
       <div>
         <CardTitle>TOTP 令牌管理</CardTitle>
@@ -9,9 +9,7 @@
       </div>
       <div class="flex items-center gap-2">
         <DocsLinkButton :href="docsUrls.guides.auth" />
-        <Button data-guide-bind-token @click="openSetupDialog">
-          绑定新令牌
-        </Button>
+        <Button @click="openSetupDialog">绑定新令牌</Button>
       </div>
     </CardHeader>
     <CardContent v-if="isLoading && showLoadingSkeleton && !credentials.length">

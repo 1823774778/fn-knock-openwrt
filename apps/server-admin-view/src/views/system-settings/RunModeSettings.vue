@@ -1,5 +1,5 @@
 <template>
-  <Card data-guide-run-mode>
+  <Card>
     <CardHeader>
       <CardTitle>运行模式设置</CardTitle>
       <CardDescription
@@ -234,11 +234,7 @@
         >
           放弃更改
         </Button>
-        <Button
-          data-guide-run-mode-save
-          @click="save"
-          :disabled="isBusy || isModeUnchanged"
-        >
+        <Button @click="save" :disabled="isBusy || isModeUnchanged">
           <span
             v-if="isSaving"
             class="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-background border-t-foreground"

@@ -74,7 +74,7 @@ export class ScannerLogic {
         }
       }
     } else {
-      portsToScan = Array.from({ length: 20000 }, (_, i) => i + 1000); 
+      portsToScan = Array.from({ length: 28000 }, (_, i) => i + 1000); 
     }
 
     const skipSet = new Set(options.skipPorts || []);

@@ -137,13 +137,6 @@ const toHostMappingUpdatePayload = (
 });
 
 export const ConfigAPI = {
-  async getOnboardingStatus(): Promise<{ completed: boolean }> {
-    const res = await apiClient.get("/onboarding/status");
-    return res.data.data;
-  },
-  async completeOnboarding(): Promise<void> {
-    await apiClient.post("/onboarding/complete");
-  },
   async getConfig(): Promise<AppConfig> {
     const res = await apiClient.get("/config");
     return res.data.data;

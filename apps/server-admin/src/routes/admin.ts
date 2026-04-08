@@ -537,14 +537,6 @@ const buildCountSeries = (
 };
 
 export const adminRoutes = new Elysia({ prefix: "/api/admin" })
-  .get("/onboarding/status", async () => {
-    const status = await configManager.getOnboardingStatus();
-    return { success: true, data: status };
-  })
-  .post("/onboarding/complete", async () => {
-    await configManager.markOnboardingCompleted();
-    return { success: true };
-  })
   .get("/config", async () => {
     const [config, gatewayLogging] = await Promise.all([
       configManager.getConfigSafe(),

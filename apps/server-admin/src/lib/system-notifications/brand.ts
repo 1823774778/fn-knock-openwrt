@@ -4,7 +4,7 @@ import type {
   NotificationMessageFact,
 } from "./types";
 
-export const NOTIFICATION_BRAND_PREFIX = "【敲门 knock】";
+export const NOTIFICATION_BRAND_PREFIX = "敲门 Knock ";
 export const DEFAULT_NOTIFICATION_TITLE = `${NOTIFICATION_BRAND_PREFIX}通知`;
 
 const trimValue = (value: unknown) => String(value ?? "").trim();

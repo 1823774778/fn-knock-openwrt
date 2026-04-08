@@ -145,9 +145,9 @@ const buildBodyText = (args: {
   advice?: string;
 }) =>
   [
-    args.overview ? `事件概述\n${args.overview}` : "",
-    args.aggregation ? `聚合情况\n${args.aggregation}` : "",
-    args.advice ? `处理建议\n${args.advice}` : "",
+    args.overview ? `${args.overview}` : "",
+    args.aggregation ? `${args.aggregation}` : "",
+    args.advice ? `${args.advice}` : "",
   ]
     .filter(Boolean)
     .join("\n\n");

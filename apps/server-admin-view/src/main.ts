@@ -1,6 +1,5 @@
 import { createApp } from "vue";
 import "./assets/index.css";
-import "driver.js/dist/driver.css";
 import "nprogress/nprogress.css";
 import App from "./App.vue";
 import router from "./router";
