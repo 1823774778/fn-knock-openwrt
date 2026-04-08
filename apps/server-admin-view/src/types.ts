@@ -676,10 +676,15 @@ export type SystemEventType =
   | "FN_EVENT_SECURITY_SCANNER_BLOCKED"
   | "FN_EVENT_DDNS_UPDATE_COMPLETED"
   | "FN_EVENT_GATEWAY_THROTTLE_BLOCKED"
+  | "FN_EVENT_SYSTEM_APP_UPDATE_AVAILABLE"
   | "FN_EVENT_SYSTEM_CPU_ALERT"
   | "FN_EVENT_SYSTEM_CPU_RECOVERED"
   | "FN_EVENT_SYSTEM_MEMORY_ALERT"
-  | "FN_EVENT_SYSTEM_MEMORY_RECOVERED";
+  | "FN_EVENT_SYSTEM_MEMORY_RECOVERED"
+  | "FN_EVENT_TUNNEL_FRP_CONNECTED"
+  | "FN_EVENT_TUNNEL_FRP_DISCONNECTED"
+  | "FN_EVENT_TUNNEL_CLOUDFLARED_CONNECTED"
+  | "FN_EVENT_TUNNEL_CLOUDFLARED_DISCONNECTED";
 
 export type SystemEventLevel = "INFO" | "WARN" | "ERROR" | "CRITICAL";
 
@@ -688,7 +693,13 @@ export type SystemEventSource =
   | "GO_REAUTH_PROXY"
   | "SYSTEM_MONITOR";
 
-export type SystemEventSubjectKind = "IP" | "SESSION" | "DDNS" | "RESOURCE";
+export type SystemEventSubjectKind =
+  | "IP"
+  | "SESSION"
+  | "DDNS"
+  | "RESOURCE"
+  | "APPLICATION"
+  | "TUNNEL";
 
 export interface SystemEventSubject {
   kind: SystemEventSubjectKind;

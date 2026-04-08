@@ -8,11 +8,17 @@ import { dataPath } from '../lib/AppDirManager';
 import { markTunnelRunning, markTunnelStopped, shouldResumeTunnel } from "../lib/tunnel-runtime-state";
 import { DEFAULT_REDIS_LOG_BUFFER_MAX_LEN, RedisLogBuffer } from "../lib/redis-log-buffer";
 import { waitForProcessExit } from "../lib/runtime";
+import { emitTunnelConnectivityEvent } from "../lib/system-events/helpers";
 
 type RunState = {
   proc?: ReturnType<typeof spawn>;
   running: boolean;
   pid?: number;
+};
+
+type TunnelConnectionState = {
+  connected: boolean;
+  stopRequested: boolean;
 };
 
 const LOG_KEY = "fn_knock:cloudflared:logs";
@@ -24,9 +30,72 @@ const logBuffer = new RedisLogBuffer(redis, {
 });
 
 const runState: RunState = { running: false };
+const connectionState: TunnelConnectionState = {
+  connected: false,
+  stopRequested: false,
+};
+
+const CLOUDFLARED_CONNECTED_PATTERNS = [
+  /\bregistered tunnel connection\b/i,
+  /\bconnection [0-9a-f-]+ registered\b/i,
+] as const;
+
+const CLOUDFLARED_DISCONNECTED_PATTERNS = [
+  /\bserve tunnel error\b/i,
+  /\btunnel disconnected\b/i,
+  /\bfailed to serve tunnel\b/i,
+] as const;
+
+const normalizeTunnelEventMessage = (line: string) => {
+  const normalized = line.replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  if (normalized.length <= 240) return normalized;
+  return `${normalized.slice(0, 240).trim()}...`;
+};
+
+const emitCloudflaredConnectivity = async (
+  connected: boolean,
+  message?: string,
+  pid?: number | null,
+) => {
+  if (connected) {
+    if (connectionState.connected) return;
+    connectionState.connected = true;
+  } else {
+    if (!connectionState.connected) return;
+    connectionState.connected = false;
+    if (connectionState.stopRequested) return;
+  }
+
+  await emitTunnelConnectivityEvent({
+    tunnel: "cloudflared",
+    connected,
+    pid: typeof pid === "number" && Number.isFinite(pid) ? pid : runState.pid ?? null,
+    ...(message ? { message } : {}),
+  });
+};
+
+const handleCloudflaredRuntimeSignals = async (lines: string[]) => {
+  for (const rawLine of lines) {
+    const line = normalizeTunnelEventMessage(rawLine);
+    if (!line) continue;
+
+    if (CLOUDFLARED_CONNECTED_PATTERNS.some((pattern) => pattern.test(line))) {
+      await emitCloudflaredConnectivity(true, line);
+      continue;
+    }
+
+    if (CLOUDFLARED_DISCONNECTED_PATTERNS.some((pattern) => pattern.test(line))) {
+      await emitCloudflaredConnectivity(false, line);
+    }
+  }
+};
 
 const appendLogs = async (lines: string[]) => {
-  await logBuffer.append(lines.map(l => l.trimEnd()));
+  const normalizedLines = lines.map((line) => line.trimEnd()).filter(Boolean);
+  if (!normalizedLines.length) return;
+  await logBuffer.append(normalizedLines);
+  await handleCloudflaredRuntimeSignals(normalizedLines);
 };
 
 const buildCloudflaredStatus = () => ({
@@ -61,6 +130,7 @@ async function startCloudflared(): Promise<{ pid: number }> {
   if (runState.running && runState.proc && runState.proc.exitCode === null && !runState.proc.killed) {
     return { pid: runState.proc.pid ?? 0 };
   }
+  connectionState.stopRequested = false;
   const token = await readConfig();
   if (!token) {
       throw new Error("请先配置 Cloudflare Token");
@@ -123,13 +193,17 @@ async function startCloudflared(): Promise<{ pid: number }> {
   })();
 
   void (async () => {
+    let exitMessage = "cloudflared 进程已退出";
     try {
       const code = await exitPromise;
+      exitMessage = `cloudflared 进程已退出（退出码 ${code}）`;
       await appendLogs([`cloudflared exited with code ${code}`]);
     } catch (e: any) {
+      exitMessage = `cloudflared 进程异常退出：${e?.message || String(e)}`;
       await appendLogs([`cloudflared process error: ${e?.message || String(e)}`]);
     }
 
+    const expectedStop = connectionState.stopRequested;
     if (runState.proc !== proc) return;
     runState.proc = undefined;
     runState.running = false;
@@ -139,6 +213,10 @@ async function startCloudflared(): Promise<{ pid: number }> {
     } catch (e) {
       console.error("Failed to persist cloudflared stopped state:", e);
     }
+    if (!expectedStop) {
+      await emitCloudflaredConnectivity(false, exitMessage, proc.pid ?? 0);
+    }
+    connectionState.stopRequested = false;
   })();
 
   await appendLogs([`cloudflared started pid=${proc.pid ?? 0}`]);
@@ -147,6 +225,8 @@ async function startCloudflared(): Promise<{ pid: number }> {
 
 async function stopCloudflared(): Promise<void> {
   const proc = runState.proc;
+  connectionState.stopRequested = true;
+  connectionState.connected = false;
   if (proc && proc.exitCode === null && !proc.killed) {
     proc.kill();
   }
@@ -157,6 +237,9 @@ async function stopCloudflared(): Promise<void> {
     await markTunnelStopped("cloudflared");
   } catch (e) {
     console.error("Failed to persist cloudflared stopped state:", e);
+  }
+  if (!proc || proc.exitCode !== null || proc.killed) {
+    connectionState.stopRequested = false;
   }
 }
 

@@ -12,11 +12,16 @@ import {
   FN_EVENT_AUTH_SESSION_IP_DRIFT,
   FN_EVENT_DDNS_UPDATE_COMPLETED,
   FN_EVENT_GATEWAY_THROTTLE_BLOCKED,
+  FN_EVENT_SYSTEM_APP_UPDATE_AVAILABLE,
   FN_EVENT_SECURITY_SCANNER_BLOCKED,
   FN_EVENT_SYSTEM_CPU_ALERT,
   FN_EVENT_SYSTEM_CPU_RECOVERED,
   FN_EVENT_SYSTEM_MEMORY_ALERT,
   FN_EVENT_SYSTEM_MEMORY_RECOVERED,
+  FN_EVENT_TUNNEL_CLOUDFLARED_CONNECTED,
+  FN_EVENT_TUNNEL_CLOUDFLARED_DISCONNECTED,
+  FN_EVENT_TUNNEL_FRP_CONNECTED,
+  FN_EVENT_TUNNEL_FRP_DISCONNECTED,
 } from "./constants";
 
 export type AuthMethod = "TOTP" | "PASSKEY";
@@ -126,6 +131,23 @@ export type SystemEventResourceAlertPayload = {
   sustain_seconds: number;
 };
 
+export type SystemEventAppUpdateAvailablePayload = {
+  local_version: string;
+  latest_version: string;
+  force_update: boolean;
+  release_notes?: string;
+  check_reason?: string;
+};
+
+export type TunnelType = "frp" | "cloudflared";
+
+export type SystemEventTunnelConnectivityPayload = {
+  tunnel: TunnelType;
+  status: "connected" | "disconnected";
+  pid?: number;
+  message?: string;
+};
+
 export type SystemEventPayloadMap = {
   [FN_EVENT_AUTH_LOGIN_SUCCESS]: SystemEventAuthLoginSuccessPayload;
   [FN_EVENT_AUTH_LOGOUT]: SystemEventAuthLogoutPayload;
@@ -134,10 +156,16 @@ export type SystemEventPayloadMap = {
   [FN_EVENT_SECURITY_SCANNER_BLOCKED]: SystemEventScannerBlockedPayload;
   [FN_EVENT_DDNS_UPDATE_COMPLETED]: SystemEventDDNSUpdateCompletedPayload;
   [FN_EVENT_GATEWAY_THROTTLE_BLOCKED]: SystemEventGatewayThrottleBlockedPayload;
+  [FN_EVENT_SYSTEM_APP_UPDATE_AVAILABLE]: SystemEventAppUpdateAvailablePayload;
   [FN_EVENT_SYSTEM_CPU_ALERT]: SystemEventResourceAlertPayload;
   [FN_EVENT_SYSTEM_CPU_RECOVERED]: SystemEventResourceAlertPayload;
   [FN_EVENT_SYSTEM_MEMORY_ALERT]: SystemEventResourceAlertPayload;
   [FN_EVENT_SYSTEM_MEMORY_RECOVERED]: SystemEventResourceAlertPayload;
+  [FN_EVENT_TUNNEL_FRP_CONNECTED]: SystemEventTunnelConnectivityPayload;
+  [FN_EVENT_TUNNEL_FRP_DISCONNECTED]: SystemEventTunnelConnectivityPayload;
+  [FN_EVENT_TUNNEL_CLOUDFLARED_CONNECTED]: SystemEventTunnelConnectivityPayload;
+  [FN_EVENT_TUNNEL_CLOUDFLARED_DISCONNECTED]:
+    SystemEventTunnelConnectivityPayload;
 };
 
 export type SystemEventEnvelope<T extends SystemEventType = SystemEventType> = {

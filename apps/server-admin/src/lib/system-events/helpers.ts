@@ -9,19 +9,32 @@ import {
   FN_EVENT_LEVEL_INFO,
   FN_EVENT_LEVEL_WARN,
   FN_EVENT_SECURITY_SCANNER_BLOCKED,
+  FN_EVENT_SYSTEM_APP_UPDATE_AVAILABLE,
   FN_EVENT_SYSTEM_CPU_ALERT,
   FN_EVENT_SYSTEM_CPU_RECOVERED,
   FN_EVENT_SYSTEM_MEMORY_ALERT,
   FN_EVENT_SYSTEM_MEMORY_RECOVERED,
   SYSTEM_EVENT_SOURCE_SERVER_ADMIN,
   SYSTEM_EVENT_SOURCE_SYSTEM_MONITOR,
+  SYSTEM_EVENT_SUBJECT_KIND_APPLICATION,
   SYSTEM_EVENT_SUBJECT_KIND_DDNS,
   SYSTEM_EVENT_SUBJECT_KIND_IP,
   SYSTEM_EVENT_SUBJECT_KIND_RESOURCE,
   SYSTEM_EVENT_SUBJECT_KIND_SESSION,
+  SYSTEM_EVENT_SUBJECT_KIND_TUNNEL,
+  FN_EVENT_TUNNEL_CLOUDFLARED_CONNECTED,
+  FN_EVENT_TUNNEL_CLOUDFLARED_DISCONNECTED,
+  FN_EVENT_TUNNEL_FRP_CONNECTED,
+  FN_EVENT_TUNNEL_FRP_DISCONNECTED,
 } from "./constants";
 import { systemEventManager } from "./manager";
-import type { AuthMethod, SystemEventSessionDriftSource } from "./types";
+import type {
+  AuthMethod,
+  SystemEventSessionDriftSource,
+  TunnelType,
+} from "./types";
+
+const APP_UPDATE_EVENT_DEDUPE_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 export const emitLoginSuccessEvent = async (payload: {
   sessionId: string;
@@ -257,5 +270,62 @@ export const emitResourceAlertEvent = async (payload: {
       recover_percent: payload.recoverPercent,
       sample_interval_seconds: payload.sampleIntervalSeconds,
       sustain_seconds: payload.sustainSeconds,
+    },
+  });
+
+export const emitAppUpdateAvailableEvent = async (payload: {
+  localVersion: string;
+  latestVersion: string;
+  forceUpdate: boolean;
+  releaseNotes?: string;
+  checkReason?: string;
+}) =>
+  systemEventManager.publishSafely({
+    type: FN_EVENT_SYSTEM_APP_UPDATE_AVAILABLE,
+    source: SYSTEM_EVENT_SOURCE_SERVER_ADMIN,
+    level: FN_EVENT_LEVEL_INFO,
+    dedupe_key: `system:app-update:${payload.latestVersion}`,
+    dedupe_ttl_seconds: APP_UPDATE_EVENT_DEDUPE_TTL_SECONDS,
+    subject: {
+      kind: SYSTEM_EVENT_SUBJECT_KIND_APPLICATION,
+      id: "fn-knock",
+    },
+    payload: {
+      local_version: payload.localVersion,
+      latest_version: payload.latestVersion,
+      force_update: payload.forceUpdate,
+      ...(payload.releaseNotes ? { release_notes: payload.releaseNotes } : {}),
+      ...(payload.checkReason ? { check_reason: payload.checkReason } : {}),
+    },
+  });
+
+export const emitTunnelConnectivityEvent = async (payload: {
+  tunnel: TunnelType;
+  connected: boolean;
+  pid?: number | null;
+  message?: string;
+}) =>
+  systemEventManager.publishSafely({
+    type:
+      payload.tunnel === "frp"
+        ? payload.connected
+          ? FN_EVENT_TUNNEL_FRP_CONNECTED
+          : FN_EVENT_TUNNEL_FRP_DISCONNECTED
+        : payload.connected
+          ? FN_EVENT_TUNNEL_CLOUDFLARED_CONNECTED
+          : FN_EVENT_TUNNEL_CLOUDFLARED_DISCONNECTED,
+    source: SYSTEM_EVENT_SOURCE_SERVER_ADMIN,
+    level: payload.connected ? FN_EVENT_LEVEL_INFO : FN_EVENT_LEVEL_ERROR,
+    subject: {
+      kind: SYSTEM_EVENT_SUBJECT_KIND_TUNNEL,
+      id: payload.tunnel,
+    },
+    payload: {
+      tunnel: payload.tunnel,
+      status: payload.connected ? "connected" : "disconnected",
+      ...(typeof payload.pid === "number" && Number.isFinite(payload.pid)
+        ? { pid: payload.pid }
+        : {}),
+      ...(payload.message ? { message: payload.message } : {}),
     },
   });

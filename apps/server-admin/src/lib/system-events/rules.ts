@@ -10,10 +10,15 @@ import {
   FN_EVENT_LEVEL_INFO,
   FN_EVENT_LEVEL_WARN,
   FN_EVENT_SECURITY_SCANNER_BLOCKED,
+  FN_EVENT_SYSTEM_APP_UPDATE_AVAILABLE,
   FN_EVENT_SYSTEM_CPU_ALERT,
   FN_EVENT_SYSTEM_CPU_RECOVERED,
   FN_EVENT_SYSTEM_MEMORY_ALERT,
   FN_EVENT_SYSTEM_MEMORY_RECOVERED,
+  FN_EVENT_TUNNEL_CLOUDFLARED_CONNECTED,
+  FN_EVENT_TUNNEL_CLOUDFLARED_DISCONNECTED,
+  FN_EVENT_TUNNEL_FRP_CONNECTED,
+  FN_EVENT_TUNNEL_FRP_DISCONNECTED,
   type SystemEventLevel,
   type SystemEventType,
 } from "./constants";
@@ -38,12 +43,20 @@ export const isSystemEventTypeEnabled = (
       return config.rules.ddns_update.enabled;
     case FN_EVENT_GATEWAY_THROTTLE_BLOCKED:
       return config.rules.gateway_throttle_block.enabled;
+    case FN_EVENT_SYSTEM_APP_UPDATE_AVAILABLE:
+      return config.rules.app_update_available.enabled;
     case FN_EVENT_SYSTEM_CPU_ALERT:
     case FN_EVENT_SYSTEM_CPU_RECOVERED:
       return config.rules.cpu_alert.enabled;
     case FN_EVENT_SYSTEM_MEMORY_ALERT:
     case FN_EVENT_SYSTEM_MEMORY_RECOVERED:
       return config.rules.memory_alert.enabled;
+    case FN_EVENT_TUNNEL_FRP_CONNECTED:
+    case FN_EVENT_TUNNEL_FRP_DISCONNECTED:
+      return config.rules.frp_tunnel.enabled;
+    case FN_EVENT_TUNNEL_CLOUDFLARED_CONNECTED:
+    case FN_EVENT_TUNNEL_CLOUDFLARED_DISCONNECTED:
+      return config.rules.cloudflared_tunnel.enabled;
     default:
       return false;
   }
@@ -56,8 +69,11 @@ export const getDefaultSystemEventLevel = (
     case FN_EVENT_AUTH_LOGIN_SUCCESS:
     case FN_EVENT_AUTH_LOGOUT:
     case FN_EVENT_DDNS_UPDATE_COMPLETED:
+    case FN_EVENT_SYSTEM_APP_UPDATE_AVAILABLE:
     case FN_EVENT_SYSTEM_CPU_RECOVERED:
     case FN_EVENT_SYSTEM_MEMORY_RECOVERED:
+    case FN_EVENT_TUNNEL_FRP_CONNECTED:
+    case FN_EVENT_TUNNEL_CLOUDFLARED_CONNECTED:
       return FN_EVENT_LEVEL_INFO;
     case FN_EVENT_SYSTEM_CPU_ALERT:
     case FN_EVENT_SYSTEM_MEMORY_ALERT:
@@ -66,6 +82,8 @@ export const getDefaultSystemEventLevel = (
     case FN_EVENT_AUTH_SESSION_IP_DRIFT:
     case FN_EVENT_SECURITY_SCANNER_BLOCKED:
     case FN_EVENT_GATEWAY_THROTTLE_BLOCKED:
+    case FN_EVENT_TUNNEL_FRP_DISCONNECTED:
+    case FN_EVENT_TUNNEL_CLOUDFLARED_DISCONNECTED:
       return FN_EVENT_LEVEL_WARN;
     default:
       return FN_EVENT_LEVEL_ERROR;

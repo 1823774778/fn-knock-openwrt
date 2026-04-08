@@ -184,6 +184,14 @@ const detailFieldDefinitions = [
   { key: "message", label: "消息" },
   { key: "update_scope", label: "更新范围" },
   { key: "ip_source", label: "IP 来源" },
+  { key: "local_version", label: "当前版本" },
+  { key: "latest_version", label: "最新版本" },
+  { key: "force_update", label: "强制更新" },
+  { key: "release_notes", label: "更新说明" },
+  { key: "check_reason", label: "检查方式" },
+  { key: "tunnel", label: "隧道类型" },
+  { key: "status", label: "连接状态" },
+  { key: "pid", label: "进程 PID" },
   { key: "previous_ipv4", label: "原 IPv4" },
   { key: "next_ipv4", label: "当前 IPv4" },
   { key: "previous_ipv6", label: "原 IPv6" },
@@ -214,6 +222,8 @@ const SUBJECT_KIND_LABELS: Record<
   SESSION: "会话",
   DDNS: "DDNS",
   RESOURCE: "资源",
+  APPLICATION: "应用",
+  TUNNEL: "隧道",
 };
 
 const LOGOUT_SOURCE_LABELS: Record<string, string> = {
@@ -248,6 +258,23 @@ const UPDATE_SCOPE_LABELS: Record<string, string> = {
 const IP_SOURCE_LABELS: Record<string, string> = {
   public: "公网 IP",
   interface: "网卡地址",
+};
+
+const CHECK_REASON_LABELS: Record<string, string> = {
+  cron: "定时检查",
+  manual: "手动检查",
+  "manual-check-and-download": "手动检查并下载",
+  "download-bootstrap": "下载前检查",
+};
+
+const TUNNEL_LABELS: Record<string, string> = {
+  frp: "FRP",
+  cloudflared: "Cloudflared",
+};
+
+const TUNNEL_STATUS_LABELS: Record<string, string> = {
+  connected: "已连上",
+  disconnected: "已断开",
 };
 
 const formatSubject = (
@@ -331,8 +358,16 @@ const detailItems = computed(() => {
         return UPDATE_SCOPE_LABELS[String(value)] || String(value);
       if (key === "ip_source")
         return IP_SOURCE_LABELS[String(value)] || String(value);
+      if (key === "check_reason")
+        return CHECK_REASON_LABELS[String(value)] || String(value);
+      if (key === "tunnel")
+        return TUNNEL_LABELS[String(value)] || String(value);
+      if (key === "status")
+        return TUNNEL_STATUS_LABELS[String(value)] || String(value);
       if (key === "remember_me" || key === "is_auth_route")
         return formatBoolean(value);
+      if (key === "force_update")
+        return formatBoolean(value === true || value === "true");
       if (key === "success")
         return value === undefined || value === null
           ? "-"
@@ -449,6 +484,10 @@ const describeEvent = (event: SystemEventRecord) => {
       return `${formatIpDisplay(payload.ip)} 触发节流封锁 ${String(
         payload.block_seconds || "-",
       )} 秒`;
+    case "FN_EVENT_SYSTEM_APP_UPDATE_AVAILABLE":
+      return `发现新版本 ${String(payload.latest_version || "-")}，当前版本 ${String(
+        payload.local_version || "-",
+      )}${payload.force_update ? "，建议尽快更新" : ""}`;
     case "FN_EVENT_SYSTEM_CPU_ALERT":
       return `${String(payload.hostname || "-")} CPU 使用率 ${String(
         payload.usage_percent || "-",
@@ -465,6 +504,19 @@ const describeEvent = (event: SystemEventRecord) => {
       return `${String(payload.hostname || "-")} 内存已恢复到 ${String(
         payload.usage_percent || "-",
       )}%`;
+    case "FN_EVENT_TUNNEL_FRP_CONNECTED":
+    case "FN_EVENT_TUNNEL_FRP_DISCONNECTED":
+    case "FN_EVENT_TUNNEL_CLOUDFLARED_CONNECTED":
+    case "FN_EVENT_TUNNEL_CLOUDFLARED_DISCONNECTED": {
+      const tunnel =
+        TUNNEL_LABELS[String(payload.tunnel)] ||
+        (event.type.includes("CLOUDFLARED") ? "Cloudflared" : "FRP");
+      const status =
+        TUNNEL_STATUS_LABELS[String(payload.status)] ||
+        (event.type.endsWith("_CONNECTED") ? "已连上" : "已断开");
+      const message = String(payload.message || "").trim();
+      return `${tunnel} ${status}${message ? `：${message}` : ""}`;
+    }
     default:
       return JSON.stringify(payload);
   }

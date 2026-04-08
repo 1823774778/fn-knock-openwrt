@@ -9,11 +9,17 @@ import { dataPath } from '../lib/AppDirManager';
 import { markTunnelRunning, markTunnelStopped, shouldResumeTunnel } from "../lib/tunnel-runtime-state";
 import { DEFAULT_REDIS_LOG_BUFFER_MAX_LEN, RedisLogBuffer } from "../lib/redis-log-buffer";
 import { collectStreamOutput, sleep, waitForProcessExit } from "../lib/runtime";
+import { emitTunnelConnectivityEvent } from "../lib/system-events/helpers";
 
 type RunState = {
   proc?: ReturnType<typeof spawn>;
   running: boolean;
   pid?: number;
+};
+
+type TunnelConnectionState = {
+  connected: boolean;
+  stopRequested: boolean;
 };
 
 class FrpcConfigValidationError extends Error {
@@ -32,9 +38,72 @@ const logBuffer = new RedisLogBuffer(redis, {
 });
 
 const runState: RunState = { running: false };
+const connectionState: TunnelConnectionState = {
+  connected: false,
+  stopRequested: false,
+};
+
+const FRPC_CONNECTED_PATTERNS = [
+  /\blogin to server success\b/i,
+  /\bstart proxy success\b/i,
+] as const;
+
+const FRPC_DISCONNECTED_PATTERNS = [
+  /\bconnect to server error\b/i,
+  /\blogin to the server failed\b/i,
+  /\bsession shutdown\b/i,
+] as const;
+
+const normalizeTunnelEventMessage = (line: string) => {
+  const normalized = line.replace(/^\[ERR\]\s*/i, "").replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  if (normalized.length <= 240) return normalized;
+  return `${normalized.slice(0, 240).trim()}...`;
+};
+
+const emitFrpcConnectivity = async (
+  connected: boolean,
+  message?: string,
+  pid?: number | null,
+) => {
+  if (connected) {
+    if (connectionState.connected) return;
+    connectionState.connected = true;
+  } else {
+    if (!connectionState.connected) return;
+    connectionState.connected = false;
+    if (connectionState.stopRequested) return;
+  }
+
+  await emitTunnelConnectivityEvent({
+    tunnel: "frp",
+    connected,
+    pid: typeof pid === "number" && Number.isFinite(pid) ? pid : runState.pid ?? null,
+    ...(message ? { message } : {}),
+  });
+};
+
+const handleFrpcRuntimeSignals = async (lines: string[]) => {
+  for (const rawLine of lines) {
+    const line = normalizeTunnelEventMessage(rawLine);
+    if (!line) continue;
+
+    if (FRPC_CONNECTED_PATTERNS.some((pattern) => pattern.test(line))) {
+      await emitFrpcConnectivity(true, line);
+      continue;
+    }
+
+    if (FRPC_DISCONNECTED_PATTERNS.some((pattern) => pattern.test(line))) {
+      await emitFrpcConnectivity(false, line);
+    }
+  }
+};
 
 const appendLogs = async (lines: string[]) => {
-  await logBuffer.append(lines.map(l => l.trimEnd()));
+  const normalizedLines = lines.map((line) => line.trimEnd()).filter(Boolean);
+  if (!normalizedLines.length) return;
+  await logBuffer.append(normalizedLines);
+  await handleFrpcRuntimeSignals(normalizedLines);
 };
 
 const FRPC_DIR = path.join(dataPath, "frp");
@@ -378,6 +447,7 @@ async function startFrpc(opts?: { releaseWebPort?: boolean }): Promise<{ pid: nu
   if (runState.running && runState.proc && runState.proc.exitCode === null && !runState.proc.killed) {
     return { pid: runState.proc.pid ?? 0 };
   }
+  connectionState.stopRequested = false;
   if (opts?.releaseWebPort) {
     await releaseFrpcWebPortIfNeeded();
   }
@@ -404,6 +474,25 @@ async function startFrpc(opts?: { releaseWebPort?: boolean }): Promise<{ pid: nu
   } catch (e) {
     console.error("Failed to persist frpc running state:", e);
   }
+
+  void (async () => {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await sleep(1500);
+      if (runState.proc !== proc || connectionState.connected || connectionState.stopRequested) {
+        return;
+      }
+
+      try {
+        const status = await fetchFrpcWebStatus(1500);
+        if (status.tcp.length > 0) {
+          await emitFrpcConnectivity(true, "检测到 FRP 隧道已建立连接", proc.pid ?? 0);
+          return;
+        }
+      } catch {
+        // ignore probe errors and keep waiting for the next round
+      }
+    }
+  })();
 
   (async () => {
     if (!proc.stdout) return;
@@ -438,13 +527,17 @@ async function startFrpc(opts?: { releaseWebPort?: boolean }): Promise<{ pid: nu
   })();
 
   void (async () => {
+    let exitMessage = "frpc 进程已退出";
     try {
       const code = await exitPromise;
+      exitMessage = `frpc 进程已退出（退出码 ${code}）`;
       await appendLogs([`frpc exited with code ${code}`]);
     } catch (e: any) {
+      exitMessage = `frpc 进程异常退出：${e?.message || String(e)}`;
       await appendLogs([`frpc process error: ${e?.message || String(e)}`]);
     }
 
+    const expectedStop = connectionState.stopRequested;
     if (runState.proc !== proc) return;
     runState.proc = undefined;
     runState.running = false;
@@ -454,6 +547,10 @@ async function startFrpc(opts?: { releaseWebPort?: boolean }): Promise<{ pid: nu
     } catch (e) {
       console.error("Failed to persist frpc stopped state:", e);
     }
+    if (!expectedStop) {
+      await emitFrpcConnectivity(false, exitMessage, proc.pid ?? 0);
+    }
+    connectionState.stopRequested = false;
   })();
 
   await appendLogs([`frpc started pid=${proc.pid ?? 0}`]);
@@ -462,6 +559,8 @@ async function startFrpc(opts?: { releaseWebPort?: boolean }): Promise<{ pid: nu
 
 async function stopFrpc(): Promise<void> {
   const proc = runState.proc;
+  connectionState.stopRequested = true;
+  connectionState.connected = false;
   if (proc && proc.exitCode === null && !proc.killed) {
     proc.kill();
   }
@@ -472,6 +571,9 @@ async function stopFrpc(): Promise<void> {
     await markTunnelStopped("frp");
   } catch (e) {
     console.error("Failed to persist frpc stopped state:", e);
+  }
+  if (!proc || proc.exitCode !== null || proc.killed) {
+    connectionState.stopRequested = false;
   }
 }
 

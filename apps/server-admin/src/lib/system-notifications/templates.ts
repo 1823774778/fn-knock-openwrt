@@ -15,10 +15,15 @@ const EVENT_LABELS: Record<SystemEventEnvelope["type"], string> = {
   FN_EVENT_SECURITY_SCANNER_BLOCKED: "扫描器拦截",
   FN_EVENT_DDNS_UPDATE_COMPLETED: "DDNS 更新",
   FN_EVENT_GATEWAY_THROTTLE_BLOCKED: "网关节流封锁",
+  FN_EVENT_SYSTEM_APP_UPDATE_AVAILABLE: "应用更新提示",
   FN_EVENT_SYSTEM_CPU_ALERT: "CPU 告警",
   FN_EVENT_SYSTEM_CPU_RECOVERED: "CPU 恢复",
   FN_EVENT_SYSTEM_MEMORY_ALERT: "内存告警",
   FN_EVENT_SYSTEM_MEMORY_RECOVERED: "内存恢复",
+  FN_EVENT_TUNNEL_FRP_CONNECTED: "FRP 已连上",
+  FN_EVENT_TUNNEL_FRP_DISCONNECTED: "FRP 已断开",
+  FN_EVENT_TUNNEL_CLOUDFLARED_CONNECTED: "Cloudflared 已连上",
+  FN_EVENT_TUNNEL_CLOUDFLARED_DISCONNECTED: "Cloudflared 已断开",
 };
 
 export const formatNotificationEventLabel = (
@@ -80,6 +85,18 @@ const DDNS_IP_SOURCE_LABELS = {
   interface: "网卡读取",
 } as const;
 
+const UPDATE_CHECK_REASON_LABELS = {
+  cron: "定时检查",
+  manual: "手动检查",
+  "manual-check-and-download": "手动检查并下载",
+  "download-bootstrap": "下载前检查",
+} as const;
+
+const TUNNEL_LABELS = {
+  frp: "FRP",
+  cloudflared: "Cloudflared",
+} as const;
+
 const readPayloadValue = (event: SystemEventEnvelope, key: string) => {
   const payload = event.payload as Record<string, unknown>;
   const value = payload[key];
@@ -127,6 +144,13 @@ const formatBoolean = (value: string) => {
 const formatIpTransition = (previousIp: string, nextIp: string) => {
   if (previousIp && nextIp) return `${previousIp} -> ${nextIp}`;
   return previousIp || nextIp;
+};
+
+const truncateText = (value: string, maxLength = 180) => {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength).trim()}...`;
 };
 
 const pushFact = (
@@ -421,6 +445,37 @@ const buildNotificationDetails = (args: {
       );
       break;
     }
+    case "FN_EVENT_SYSTEM_APP_UPDATE_AVAILABLE": {
+      const localVersion =
+        readPayloadValue(event, "local_version") || "当前版本未知";
+      const latestVersion =
+        readPayloadValue(event, "latest_version") || "目标版本未知";
+      const forceUpdate = readPayloadValue(event, "force_update") === "true";
+      const checkReason =
+        UPDATE_CHECK_REASON_LABELS[
+          readPayloadValue(
+            event,
+            "check_reason",
+          ) as keyof typeof UPDATE_CHECK_REASON_LABELS
+        ] || readPayloadValue(event, "check_reason");
+      const releaseNotes = truncateText(
+        readPayloadValue(event, "release_notes"),
+        160,
+      );
+
+      summary = `发现新版本 ${latestVersion}`;
+      overview = `${checkReason || "本次检查"}发现 fn-knock 可从 ${localVersion} 升级到 ${latestVersion}${forceUpdate ? "，建议尽快安排更新" : ""}。`;
+      advice = releaseNotes
+        ? `更新说明：${releaseNotes}`
+        : "建议在合适的维护窗口完成更新，并在安装前确认当前配置与服务状态。";
+
+      pushFact(facts, "当前版本", localVersion);
+      pushFact(facts, "最新版本", latestVersion);
+      pushFact(facts, "检查方式", checkReason);
+      pushFact(facts, "强制更新", forceUpdate ? "是" : "否");
+      pushFact(facts, "更新说明", releaseNotes);
+      break;
+    }
     case "FN_EVENT_SYSTEM_CPU_ALERT":
     case "FN_EVENT_SYSTEM_CPU_RECOVERED":
     case "FN_EVENT_SYSTEM_MEMORY_ALERT":
@@ -466,6 +521,33 @@ const buildNotificationDetails = (args: {
           ? `${readPayloadValue(event, "sustain_seconds")} 秒`
           : "",
       );
+      break;
+    }
+    case "FN_EVENT_TUNNEL_FRP_CONNECTED":
+    case "FN_EVENT_TUNNEL_FRP_DISCONNECTED":
+    case "FN_EVENT_TUNNEL_CLOUDFLARED_CONNECTED":
+    case "FN_EVENT_TUNNEL_CLOUDFLARED_DISCONNECTED": {
+      const tunnel =
+        TUNNEL_LABELS[
+          readPayloadValue(event, "tunnel") as keyof typeof TUNNEL_LABELS
+        ] ||
+        (event.type.includes("CLOUDFLARED") ? "Cloudflared" : "FRP");
+      const connected = readPayloadValue(event, "status") === "connected";
+      const message = truncateText(readPayloadValue(event, "message"), 200);
+      const pid = readPayloadValue(event, "pid");
+
+      summary = `${tunnel} ${connected ? "已连上" : "已断开"}`;
+      overview = connected
+        ? `${tunnel} 隧道连接已经恢复${message ? `，运行反馈为：${message}` : ""}。`
+        : `${tunnel} 隧道连接已断开${message ? `，当前反馈为：${message}` : ""}。`;
+      advice = connected
+        ? "如你之前正在排查访问问题，现在可以重新验证外部入口是否已经恢复。"
+        : "建议检查隧道配置、上游网络状态，以及远端服务是否可达。";
+
+      pushFact(facts, "隧道类型", tunnel);
+      pushFact(facts, "连接状态", connected ? "已连上" : "已断开");
+      pushFact(facts, "进程 PID", pid);
+      pushFact(facts, "运行反馈", message);
       break;
     }
   }
@@ -543,6 +625,13 @@ const formatEventSummary = (event: SystemEventEnvelope) => {
           ? `封锁${readPayloadValue(event, "block_seconds")}s`
           : "触发封锁",
       );
+    case "FN_EVENT_SYSTEM_APP_UPDATE_AVAILABLE":
+      return joinCompactParts(
+        readPayloadValue(event, "latest_version"),
+        readPayloadValue(event, "local_version")
+          ? `当前 ${readPayloadValue(event, "local_version")}`
+          : "",
+      );
     case "FN_EVENT_SYSTEM_CPU_ALERT":
     case "FN_EVENT_SYSTEM_CPU_RECOVERED":
     case "FN_EVENT_SYSTEM_MEMORY_ALERT":
@@ -552,6 +641,17 @@ const formatEventSummary = (event: SystemEventEnvelope) => {
         readPayloadValue(event, "usage_percent")
           ? `${readPayloadValue(event, "usage_percent")}%`
           : "",
+      );
+    case "FN_EVENT_TUNNEL_FRP_CONNECTED":
+    case "FN_EVENT_TUNNEL_FRP_DISCONNECTED":
+    case "FN_EVENT_TUNNEL_CLOUDFLARED_CONNECTED":
+    case "FN_EVENT_TUNNEL_CLOUDFLARED_DISCONNECTED":
+      return joinCompactParts(
+        TUNNEL_LABELS[
+          readPayloadValue(event, "tunnel") as keyof typeof TUNNEL_LABELS
+        ] ||
+          (event.type.includes("CLOUDFLARED") ? "Cloudflared" : "FRP"),
+        readPayloadValue(event, "status") === "connected" ? "已连上" : "已断开",
       );
     default:
       return "";
@@ -567,6 +667,8 @@ const buildNotificationTitle = (
       ? readPayloadValue(event, "success") === "true"
         ? "DDNS 更新成功"
         : "DDNS 更新失败"
+      : event.type === "FN_EVENT_SYSTEM_APP_UPDATE_AVAILABLE"
+        ? `发现新版本 ${readPayloadValue(event, "latest_version") || ""}`.trim()
       : formatNotificationEventLabel(event.type);
 
   return matchedCount > 1 ? `${baseTitle} x${matchedCount}` : baseTitle;

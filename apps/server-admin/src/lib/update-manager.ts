@@ -10,6 +10,7 @@ import {
   compareVersion,
 } from "./app-version";
 import { waitForProcessExit } from "./runtime";
+import { emitAppUpdateAvailableEvent } from "./system-events/helpers";
 
 const OTA_LATEST_URL = "https://fn-knock.cdn.wxlnk.com/latest.json";
 const UPDATE_PENDING_KEY = "fn_knock:update:pending";
@@ -347,6 +348,8 @@ export class UpdateManager {
 
   private async checkNowInternal(reason: string): Promise<void> {
     try {
+      const previousVersion = this.latestManifest?.version || null;
+      const previousHasUpdate = this.hasUpdate;
       const manifest = await this.fetchManifestFromRemote();
       const hasUpdate = manifest.update_available === true && compareVersion(manifest.version, APP_LOCAL_VERSION) > 0;
       if (hasUpdate) {
@@ -367,6 +370,19 @@ export class UpdateManager {
         this.downloadState.status !== "installing"
       ) {
         this.resetDownloadState();
+      }
+
+      if (
+        hasUpdate &&
+        (!previousHasUpdate || previousVersion !== manifest.version)
+      ) {
+        await emitAppUpdateAvailableEvent({
+          localVersion: APP_LOCAL_VERSION,
+          latestVersion: manifest.version,
+          forceUpdate: manifest.force_update,
+          releaseNotes: manifest.release_notes,
+          checkReason: reason,
+        });
       }
     } catch (error) {
       this.checkError = toErrorMessage(error, "更新检查失败");

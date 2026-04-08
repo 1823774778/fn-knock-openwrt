@@ -205,6 +205,9 @@ export interface EventSystemConfig {
     scanner_blocked: EventSystemSimpleRuleConfig;
     ddns_update: EventSystemSimpleRuleConfig;
     gateway_throttle_block: EventSystemSimpleRuleConfig;
+    app_update_available: EventSystemSimpleRuleConfig;
+    frp_tunnel: EventSystemSimpleRuleConfig;
+    cloudflared_tunnel: EventSystemSimpleRuleConfig;
     cpu_alert: EventSystemResourceAlertRuleConfig;
     memory_alert: EventSystemResourceAlertRuleConfig;
   };
@@ -499,6 +502,15 @@ export const DEFAULT_EVENT_SYSTEM_CONFIG: EventSystemConfig = {
     gateway_throttle_block: {
       enabled: true,
     },
+    app_update_available: {
+      enabled: true,
+    },
+    frp_tunnel: {
+      enabled: true,
+    },
+    cloudflared_tunnel: {
+      enabled: true,
+    },
     cpu_alert: {
       enabled: true,
       threshold_percent: 80,
@@ -670,6 +682,15 @@ const DEFAULT_CONFIG: AppConfig = {
       gateway_throttle_block: {
         ...DEFAULT_EVENT_SYSTEM_CONFIG.rules.gateway_throttle_block,
       },
+      app_update_available: {
+        ...DEFAULT_EVENT_SYSTEM_CONFIG.rules.app_update_available,
+      },
+      frp_tunnel: {
+        ...DEFAULT_EVENT_SYSTEM_CONFIG.rules.frp_tunnel,
+      },
+      cloudflared_tunnel: {
+        ...DEFAULT_EVENT_SYSTEM_CONFIG.rules.cloudflared_tunnel,
+      },
       cpu_alert: {
         ...DEFAULT_EVENT_SYSTEM_CONFIG.rules.cpu_alert,
       },
@@ -840,6 +861,18 @@ const normalizeEventSystemConfig = (
       gateway_throttle_block: normalizeEventSystemSimpleRuleConfig(
         rawRules.gateway_throttle_block,
         DEFAULT_EVENT_SYSTEM_CONFIG.rules.gateway_throttle_block,
+      ),
+      app_update_available: normalizeEventSystemSimpleRuleConfig(
+        rawRules.app_update_available,
+        DEFAULT_EVENT_SYSTEM_CONFIG.rules.app_update_available,
+      ),
+      frp_tunnel: normalizeEventSystemSimpleRuleConfig(
+        rawRules.frp_tunnel,
+        DEFAULT_EVENT_SYSTEM_CONFIG.rules.frp_tunnel,
+      ),
+      cloudflared_tunnel: normalizeEventSystemSimpleRuleConfig(
+        rawRules.cloudflared_tunnel,
+        DEFAULT_EVENT_SYSTEM_CONFIG.rules.cloudflared_tunnel,
       ),
       cpu_alert: normalizeEventSystemResourceAlertRuleConfig(
         rawRules.cpu_alert,
