@@ -69,6 +69,11 @@ export interface ProxyMapping {
 
 export type RunType = 0 | 1 | 3;
 
+export interface WelcomeGuideStatus {
+  completed: boolean;
+  completed_at: string | null;
+}
+
 export type HostAccessMode = "login_first" | "strict_whitelist";
 export type HostServiceRole = "app" | "auth";
 export type StreamMappingProtocol = "tcp" | "udp";
@@ -1757,6 +1762,7 @@ export class ConfigManager {
   private acmeSettingsKey = "fn_knock:acme:settings";
   private acmeClientSettingsKey = "fn_knock:acme:client-settings";
   private runModePromptPreferencesKey = "fn_knock:run-mode:prompt-preferences";
+  private welcomeGuideStatusKey = "fn_knock:welcome-guide:status";
   private reverseProxyThrottlePatchFlagKey =
     LEGACY_REVERSE_PROXY_THROTTLE_PATCH_FLAG_KEY;
   private eventSystemResourceAlertsPatchFlagKey =
@@ -3810,6 +3816,49 @@ return actual
       this.runModePromptPreferencesKey,
       JSON.stringify(next),
     );
+    return next;
+  }
+
+  async getWelcomeGuideStatus(): Promise<WelcomeGuideStatus> {
+    const raw = await this.redis.get(this.welcomeGuideStatusKey);
+    if (!raw) {
+      return {
+        completed: false,
+        completed_at: null,
+      };
+    }
+
+    if (raw === "1" || raw === "true") {
+      return {
+        completed: true,
+        completed_at: null,
+      };
+    }
+
+    try {
+      const parsed = JSON.parse(raw) as Partial<WelcomeGuideStatus>;
+      return {
+        completed: parsed.completed === true,
+        completed_at:
+          typeof parsed.completed_at === "string" && parsed.completed_at.trim()
+            ? parsed.completed_at
+            : null,
+      };
+    } catch {
+      return {
+        completed: false,
+        completed_at: null,
+      };
+    }
+  }
+
+  async completeWelcomeGuide(): Promise<WelcomeGuideStatus> {
+    const current = await this.getWelcomeGuideStatus();
+    const next: WelcomeGuideStatus = {
+      completed: true,
+      completed_at: current.completed_at ?? new Date().toISOString(),
+    };
+    await this.redis.set(this.welcomeGuideStatusKey, JSON.stringify(next));
     return next;
   }
 

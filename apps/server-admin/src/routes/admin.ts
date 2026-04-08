@@ -689,6 +689,14 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
     const preferences = await configManager.getRunModePromptPreferences();
     return { success: true, data: preferences };
   })
+  .get("/config/welcome_guide", async () => {
+    const status = await configManager.getWelcomeGuideStatus();
+    return { success: true, data: status };
+  })
+  .post("/config/welcome_guide/complete", async () => {
+    const status = await configManager.completeWelcomeGuide();
+    return { success: true, data: status };
+  })
   .post(
     "/config/run_mode_prompt_preferences",
     async ({ body }) => {

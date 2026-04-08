@@ -61,6 +61,7 @@ import type {
   NotificationRuleListPayload,
   NotificationTriggerListPayload,
   NotificationTriggerStatus,
+  WelcomeGuideStatus,
 } from "../types";
 import { createSignedApiClient } from "@frontend-core/api/createSignedApiClient";
 import type { CaptchaSettings } from "@frontend-core/captcha/types";
@@ -139,6 +140,14 @@ const toHostMappingUpdatePayload = (
 export const ConfigAPI = {
   async getConfig(): Promise<AppConfig> {
     const res = await apiClient.get("/config");
+    return res.data.data;
+  },
+  async getWelcomeGuideStatus(): Promise<WelcomeGuideStatus> {
+    const res = await apiClient.get("/config/welcome_guide");
+    return res.data.data;
+  },
+  async completeWelcomeGuide(): Promise<WelcomeGuideStatus> {
+    const res = await apiClient.post("/config/welcome_guide/complete");
     return res.data.data;
   },
   async updateRunType(payload: {

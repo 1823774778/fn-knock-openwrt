@@ -10,6 +10,11 @@ export interface ProxyMapping {
 export type RunType = 0 | 1 | 3;
 export type ReverseProxySubmode = "path" | "subdomain";
 
+export interface WelcomeGuideStatus {
+  completed: boolean;
+  completed_at: string | null;
+}
+
 export type HostAccessMode = "login_first" | "strict_whitelist";
 export type HostServiceRole = "app" | "auth";
 export type StreamMappingProtocol = "tcp" | "udp";
