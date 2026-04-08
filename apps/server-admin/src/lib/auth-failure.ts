@@ -25,6 +25,7 @@ export const registerAuthFailure = async (args: {
   userAgent: string;
   method: "TOTP" | "PASSKEY";
   credentialName?: string;
+  linkedTotpName?: string;
 }) => {
   const normalizedIp = normalizeAuthFailureTrackingIp(args.clientIp);
   const credentialName =
@@ -47,6 +48,7 @@ export const registerAuthFailure = async (args: {
         : {}),
       method: args.method,
       credentialName,
+      linkedTotpName: args.linkedTotpName,
       userAgent: args.userAgent,
     });
   }

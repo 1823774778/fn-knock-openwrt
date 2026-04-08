@@ -387,6 +387,7 @@ export type LoginSession = {
   method: "TOTP" | "PASSKEY";
   credentialId: string;
   credentialName: string;
+  linkedTotpName?: string;
   grantType?: "browser_session" | "login_ip_grant";
   postLoginIpGrantMode?: PostLoginIpGrantMode | null;
   postLoginIpGrantRecordId?: string | null;

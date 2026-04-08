@@ -41,7 +41,9 @@ const NO_STORE_RESPONSE_HEADERS = {
 } as const;
 
 export const applyNoStoreHeaders = (
-  headers: Headers | Record<string, string | number>,
+  headers:
+    | Headers
+    | Record<string, string | number | boolean | undefined>,
 ) => {
   for (const [key, value] of Object.entries(NO_STORE_RESPONSE_HEADERS)) {
     if (headers instanceof Headers) {

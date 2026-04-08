@@ -154,6 +154,7 @@ const detailFieldDefinitions = [
   { key: "dedupe_key", label: "去重键" },
   { key: "subject", label: "主题" },
   { key: "credential_name", label: "凭证名称" },
+  { key: "linked_totp_name", label: "关联 TOTP 设备" },
   { key: "credential_id", label: "凭证 ID" },
   { key: "auth_method", label: "认证方式" },
   { key: "grant_type", label: "授权方式" },
@@ -229,6 +230,11 @@ const SUBJECT_KIND_LABELS: Record<
 const LOGOUT_SOURCE_LABELS: Record<string, string> = {
   user_logout: "用户主动退出",
   admin_session_delete: "管理员删除会话",
+};
+
+const AUTH_METHOD_LABELS: Record<string, string> = {
+  TOTP: "TOTP",
+  PASSKEY: "Passkey",
 };
 
 const DRIFT_SOURCE_LABELS: Record<string, string> = {
@@ -313,6 +319,21 @@ const formatPercentage = (value: unknown) =>
 const formatBoolean = (value: unknown) =>
   value === undefined || value === null ? "-" : value ? "是" : "否";
 
+const formatCredentialDisplay = (
+  credentialName: unknown,
+  linkedTotpName: unknown,
+  authMethod: unknown,
+) => {
+  const credential = String(credentialName ?? "").trim() || "未知凭证";
+  const linkedTotp = String(linkedTotpName ?? "").trim();
+
+  if (String(authMethod ?? "") === "PASSKEY" && linkedTotp) {
+    return `Passkey「${credential}」 / TOTP「${linkedTotp}」`;
+  }
+
+  return credential;
+};
+
 const detailItems = computed(() => {
   const event = activeEvent.value;
   if (!event) return [];
@@ -348,6 +369,8 @@ const detailItems = computed(() => {
       if (key === "subject") return formatSubject(event.subject, false);
       if (key === "logout_source")
         return LOGOUT_SOURCE_LABELS[String(value)] || String(value);
+      if (key === "auth_method" || key === "method")
+        return AUTH_METHOD_LABELS[String(value)] || String(value);
       if (key === "drift_source")
         return DRIFT_SOURCE_LABELS[String(value)] || String(value);
       if (key === "grant_type")
@@ -451,18 +474,38 @@ const describeEvent = (event: SystemEventRecord) => {
 
   switch (event.type) {
     case "FN_EVENT_AUTH_LOGIN_SUCCESS":
-      return `${String(payload.credential_name || "未知凭证")} 通过 ${String(
-        payload.auth_method || "-",
-      )} 登录，来源 IP ${formatIpDisplay(payload.ip)}`;
+      return `${formatCredentialDisplay(
+        payload.credential_name,
+        payload.linked_totp_name,
+        payload.auth_method,
+      )} 通过 ${
+        AUTH_METHOD_LABELS[String(payload.auth_method)] ||
+        String(payload.auth_method || "-")
+      } 登录，来源 IP ${formatIpDisplay(payload.ip)}`;
     case "FN_EVENT_AUTH_LOGOUT":
-      return `${String(payload.credential_name || "未知凭证")} 已退出登录，来源 ${
+      return `${formatCredentialDisplay(
+        payload.credential_name,
+        payload.linked_totp_name,
+        payload.auth_method,
+      )} 已退出登录，来源 ${
         LOGOUT_SOURCE_LABELS[String(payload.logout_source)] ||
         String(payload.logout_source || "-")
       }，会话 IP ${formatIpDisplay(payload.ip)}`;
     case "FN_EVENT_AUTH_LOGIN_FAILURE": {
       const attempts = String(payload.attempts || "-");
       const retryAfterSeconds = Number(payload.retry_after_seconds);
-      return `IP ${formatIpDisplay(payload.ip)} 在 1 小时内第 ${attempts} 次失败${
+      const credentialName = String(payload.credential_name ?? "").trim();
+      const hasCredentialContext =
+        (!!credentialName && !credentialName.startsWith("!")) ||
+        payload.linked_totp_name !== undefined;
+      const credentialContext = hasCredentialContext
+        ? `${formatCredentialDisplay(
+            payload.credential_name,
+            payload.linked_totp_name,
+            payload.method,
+          )} 在 IP ${formatIpDisplay(payload.ip)} `
+        : `IP ${formatIpDisplay(payload.ip)} `;
+      return `${credentialContext}1 小时内第 ${attempts} 次失败${
         Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
           ? `，需等待 ${retryAfterSeconds} 秒后重试`
           : ""

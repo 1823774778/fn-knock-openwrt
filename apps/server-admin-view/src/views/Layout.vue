@@ -129,6 +129,57 @@
         :aria-busy="isRouteNavigating"
       >
         <div
+          v-if="systemClockStore.shouldShowBanner && systemClockStore.status"
+          :class="[
+            'mx-auto mt-3 mb-6 w-full max-w-7xl rounded-lg border px-4 py-3',
+            systemClockStore.status.timeMismatch
+              ? 'border-red-300 bg-red-50 text-red-800'
+              : 'border-amber-300 bg-amber-50 text-amber-900',
+          ]"
+        >
+          <div
+            class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+          >
+            <div class="space-y-1">
+              <p class="text-sm font-semibold">{{ systemClockBannerTitle }}</p>
+              <p class="text-xs leading-5">
+                {{ systemClockBannerDescription }}
+              </p>
+              <p
+                v-if="systemClockBannerMeta"
+                class="text-[11px] leading-5 opacity-85"
+              >
+                {{ systemClockBannerMeta }}
+              </p>
+            </div>
+            <div class="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                class="bg-white/80"
+                :disabled="
+                  systemClockStore.isRefreshing || systemClockStore.isSyncing
+                "
+                @click="refreshSystemClockStatus"
+              >
+                刷新状态
+              </Button>
+              <Button
+                size="sm"
+                :variant="
+                  systemClockStore.status.timeMismatch
+                    ? 'destructive'
+                    : 'default'
+                "
+                :disabled="systemClockStore.isSyncing"
+                @click="syncSystemClock"
+              >
+                立即同步
+              </Button>
+            </div>
+          </div>
+        </div>
+        <div
           v-if="updateStore.shouldShowBanner && updateStore.status"
           :class="[
             'mx-auto mt-3 mb-6 w-full max-w-7xl rounded-lg border px-4 py-3',
@@ -203,6 +254,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { isNavigationFailure, useRoute, useRouter } from "vue-router";
 import { useConfigStore } from "../store/config";
+import { useSystemClockStore } from "../store/systemClock";
 import { useUpdateStore } from "../store/update";
 import { isRouteNavigating, pendingNavPath } from "../router/navigation-state";
 import {
@@ -239,15 +291,18 @@ import {
 const router = useRouter();
 const route = useRoute();
 const configStore = useConfigStore();
+const systemClockStore = useSystemClockStore();
 const updateStore = useUpdateStore();
 const isMobileNavOpen = ref(false);
 
 onMounted(() => {
   void configStore.loadConfig();
+  void systemClockStore.initialize();
   void updateStore.initialize();
 });
 
 onUnmounted(() => {
+  systemClockStore.stopPolling();
   updateStore.stopPolling();
 });
 
@@ -282,6 +337,14 @@ watch(
 const startUpdateFromBanner = async () => {
   await navigateTo("/about");
   await updateStore.checkAndDownload();
+};
+
+const refreshSystemClockStatus = async () => {
+  await systemClockStore.refresh(true);
+};
+
+const syncSystemClock = async () => {
+  await systemClockStore.sync();
 };
 
 const isNavActive = (path: string) => {
@@ -352,5 +415,47 @@ const currentNavLabel = computed(() => {
 const currentVersionLabel = computed(() => {
   const version = updateStore.status?.localVersion?.trim();
   return version ? `v${version}` : "";
+});
+
+const systemClockBannerTitle = computed(() => {
+  const status = systemClockStore.status;
+  if (!status) return "";
+  if (status.timezoneMismatch && status.timeMismatch) {
+    return "系统时间与时区需要立即同步";
+  }
+  if (status.timezoneMismatch) {
+    return "系统时区不是北京时间";
+  }
+  return "系统时间与联网校验结果不一致";
+});
+
+const systemClockBannerDescription = computed(() => {
+  const status = systemClockStore.status;
+  if (!status) return "";
+  const messages = status.issues.map((issue) => issue.message);
+  if (status.lastCheckError) {
+    messages.push(`最近一次联网校验失败：${status.lastCheckError}`);
+  }
+  return messages.join(" ");
+});
+
+const systemClockBannerMeta = computed(() => {
+  const status = systemClockStore.status;
+  if (!status) return "";
+
+  const parts: string[] = [];
+  if (status.systemBeijingTime) {
+    parts.push(`系统北京时间：${status.systemBeijingTime}`);
+  }
+  if (status.remoteBeijingTime) {
+    parts.push(`联网校验：${status.remoteBeijingTime}`);
+  }
+  if (status.systemTimeZone) {
+    parts.push(`系统时区：${status.systemTimeZone}`);
+  }
+  if (status.networkSource) {
+    parts.push(`校验来源：${status.networkSource}`);
+  }
+  return parts.join(" · ");
 });
 </script>

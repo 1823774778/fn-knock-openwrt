@@ -339,6 +339,8 @@ let lastLoginAttemptAt = 0;
 let loginCooldownTimer: number | null = null;
 const PASSKEY_BIND_PROMPT_STORAGE_KEY =
   "server-auth-view:passkey-bind-prompt-dismissed";
+const PASSKEY_CREDENTIAL_IDS_STORAGE_KEY =
+  "server-auth-view:known-passkey-credential-digests";
 
 const captchaConfig = ref<CaptchaPublicSettings | null>(null);
 const powWidgetRef = ref<any>(null);
@@ -576,6 +578,119 @@ function isPasskeyBindPromptDismissed() {
   return window.localStorage.getItem(PASSKEY_BIND_PROMPT_STORAGE_KEY) === "1";
 }
 
+function normalizePasskeyCredentialIds(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return [...new Set(value)]
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function readKnownPasskeyCredentialDigests() {
+  if (typeof window === "undefined") {
+    return [] as string[];
+  }
+
+  try {
+    const raw = window.localStorage.getItem(PASSKEY_CREDENTIAL_IDS_STORAGE_KEY);
+    if (!raw) {
+      return [] as string[];
+    }
+
+    return normalizePasskeyCredentialIds(JSON.parse(raw));
+  } catch {
+    return [] as string[];
+  }
+}
+
+function persistKnownPasskeyCredentialDigests(digests: string[]) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const normalizedDigests = normalizePasskeyCredentialIds(digests);
+  if (normalizedDigests.length === 0) {
+    window.localStorage.removeItem(PASSKEY_CREDENTIAL_IDS_STORAGE_KEY);
+    return;
+  }
+
+  window.localStorage.setItem(
+    PASSKEY_CREDENTIAL_IDS_STORAGE_KEY,
+    JSON.stringify(normalizedDigests),
+  );
+}
+
+async function digestPasskeyCredentialId(
+  credentialId: string,
+): Promise<string | null> {
+  if (
+    typeof window === "undefined" ||
+    !window.isSecureContext ||
+    typeof window.crypto === "undefined" ||
+    !window.crypto.subtle
+  ) {
+    return null;
+  }
+
+  const normalizedCredentialId = credentialId.trim();
+  if (!normalizedCredentialId) {
+    return null;
+  }
+
+  const bytes = new TextEncoder().encode(normalizedCredentialId);
+  const digest = await window.crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (value) =>
+    value.toString(16).padStart(2, "0"),
+  ).join("");
+}
+
+async function rememberKnownPasskeyCredentialId(credentialId: unknown) {
+  if (typeof credentialId !== "string") {
+    return;
+  }
+
+  const digest = await digestPasskeyCredentialId(credentialId);
+  if (!digest) {
+    return;
+  }
+
+  const knownDigests = readKnownPasskeyCredentialDigests();
+  if (knownDigests.includes(digest)) {
+    return;
+  }
+
+  persistKnownPasskeyCredentialDigests([...knownDigests, digest]);
+}
+
+async function hasKnownPasskeyCredential(credentialIds: unknown) {
+  const knownDigests = new Set(readKnownPasskeyCredentialDigests());
+  if (knownDigests.size === 0) {
+    return false;
+  }
+
+  const normalizedCredentialIds = normalizePasskeyCredentialIds(credentialIds);
+  for (const credentialId of normalizedCredentialIds) {
+    const digest = await digestPasskeyCredentialId(credentialId);
+    if (digest && knownDigests.has(digest)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function fetchPasskeyBindInfo() {
+  try {
+    const res = await apiClient.post("/passkey/bind-token");
+    return res.data.success ? res.data.data : null;
+  } catch {
+    return null;
+  }
+}
+
 function persistPasskeyBindPromptPreference() {
   if (typeof window === "undefined") {
     return;
@@ -642,16 +757,23 @@ async function handleLogin() {
 
     if (res.data.success) {
       const runType = (res.data.data?.run_type ?? 1) as 0 | 1 | 3;
-      const passkey = res.data.data?.passkey;
       const redirectTo =
         typeof res.data.data?.redirect_to === "string"
           ? res.data.data.redirect_to
           : null;
+      const passkey = isPasskeySupported.value
+        ? await fetchPasskeyBindInfo()
+        : null;
       if (
         isPasskeySupported.value &&
         passkey?.can_bind &&
         passkey?.bind_token
       ) {
+        if (await hasKnownPasskeyCredential(passkey?.credential_ids)) {
+          completeLogin(runType, redirectTo);
+          return;
+        }
+
         if (isPasskeyBindPromptDismissed()) {
           completeLogin(runType, redirectTo);
           return;
@@ -730,6 +852,7 @@ async function handlePasskeyLogin() {
       redirect_uri: redirectUri || undefined,
     });
     if (verifyRes.data.success) {
+      await rememberKnownPasskeyCredentialId(payload.id);
       completeLogin(
         (verifyRes.data.data?.run_type ?? 1) as 0 | 1 | 3,
         typeof verifyRes.data.data?.redirect_to === "string"
@@ -791,6 +914,7 @@ async function handlePasskeyBind() {
       credential: payload,
     });
     if (verifyRes.data.success) {
+      await rememberKnownPasskeyCredentialId(payload.id);
       isPasskeyAvailable.value = true;
       showPasskeyBindDialog.value = false;
       passkeyBindToken.value = "";

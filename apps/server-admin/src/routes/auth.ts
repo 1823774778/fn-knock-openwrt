@@ -2,7 +2,6 @@ import { Elysia, t } from "elysia";
 import { configManager } from "../lib/redis";
 import { verifySync } from "otplib";
 import {
-  buildPasskeyBindInfo,
   getRpInfo,
   handleLoginSuccess,
 } from "../lib/auth-utils";
@@ -309,7 +308,6 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
           retryAfter: rf.retryAfter,
         };
       }
-      const passkeyInfo = await buildPasskeyBindInfo(matchedTotpId);
       const userAgent = request.headers.get("user-agent") || "Unknown";
       const credentialName =
         totpCredentials.find((t) => t.id === matchedTotpId)?.comment ||
@@ -331,7 +329,6 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
         rememberMe: body.rememberMe,
         set,
         totpId: matchedTotpId,
-        passkeyInfo,
         redirectTo,
       });
     },
@@ -388,6 +385,9 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
         authMethod: session.method,
         credentialId: session.credentialId,
         credentialName: session.credentialName,
+        ...(session.linkedTotpName
+          ? { linkedTotpName: session.linkedTotpName }
+          : {}),
         ip: session.ip,
         ...(session.ipLocation ? { ipLocation: session.ipLocation } : {}),
         userAgent: session.userAgent,

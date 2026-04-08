@@ -2039,6 +2039,9 @@ export const adminRoutes = new Elysia({ prefix: "/api/admin" })
           authMethod: sess.method,
           credentialId: sess.credentialId,
           credentialName: sess.credentialName,
+          ...(sess.linkedTotpName
+            ? { linkedTotpName: sess.linkedTotpName }
+            : {}),
           ip: sess.ip,
           ...(sess.ipLocation ? { ipLocation: sess.ipLocation } : {}),
           userAgent: sess.userAgent,

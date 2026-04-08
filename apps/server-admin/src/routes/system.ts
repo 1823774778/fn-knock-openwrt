@@ -4,8 +4,28 @@ import { cloudflaredManager } from "../lib/cloudflared-manager";
 import { configManager } from "../lib/redis";
 import { resolveAccessEntryInfo } from "../lib/access-entry";
 import { dnsmasqManager } from "../lib/dnsmasq-manager";
+import { systemClockManager } from "../lib/system-clock-manager";
 
 export const systemRoutes = new Elysia({ prefix: "/api/admin/system" })
+  .get("/clock/status", () => {
+    return { success: true, data: systemClockManager.getStatus() };
+  })
+  .post("/clock/check", async () => {
+    const data = await systemClockManager.checkNow();
+    return { success: true, data };
+  })
+  .post("/clock/sync", async ({ set }) => {
+    try {
+      const result = await systemClockManager.syncNow();
+      return { success: true, message: result.message, data: result.data };
+    } catch (error) {
+      set.status = 400;
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : "系统时间同步失败",
+      };
+    }
+  })
   .get("/access-entry", async () => {
     const config = await configManager.getConfig();
     return {

@@ -66,6 +66,7 @@ import { cleanupLegacyAuthLogStorage } from "./lib/cleanup-legacy-auth-logs";
 import { eventRoutes } from "./routes/events";
 import { notificationRoutes } from "./routes/notifications";
 import { systemNotificationRuntime } from "./lib/system-notifications/runtime";
+import { systemClockManager } from "./lib/system-clock-manager";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -201,13 +202,14 @@ const startNodeServer = (service: Elysia, port: number, hostname: string) => {
   return server;
 };
 
-const serveInjectedIndex = (rootPath: string) => {
+const serveIndexHtml = (rootPath: string, injectRuntimeSecret = false) => {
   const indexPath = join(rootPath, "index.html");
   if (!existsSync(indexPath)) {
     return new Response("Not Found", { status: 404 });
   }
   const html = readFileSync(indexPath, "utf-8");
-  return new Response(injectRuntimeScript(html), {
+  const body = injectRuntimeSecret ? injectRuntimeScript(html) : html;
+  return new Response(body, {
     headers: {
       "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": "no-cache",
@@ -215,9 +217,10 @@ const serveInjectedIndex = (rootPath: string) => {
   });
 };
 
-const buildRuntimeHmacSecretResponse = (
-  set: { status?: number; headers: Record<string, string | number> },
-) => {
+const buildRuntimeHmacSecretResponse = (set: {
+  status?: number | string;
+  headers: Record<string, string | number | boolean | undefined>;
+}) => {
   applyNoStoreHeaders(set.headers);
   if (!EXPOSE_RUNTIME_HMAC_SECRET) {
     set.status = 404;
@@ -288,7 +291,6 @@ app.use(ipDetectorPlugin);
 app.use(updatePlugin);
 
 app.use(cors());
-app.use(hmacMiddleware);
 
 app.use(internalSystemEventRoutes);
 app.use(portScannerPlugin);
@@ -311,10 +313,6 @@ app.use(ipLocationRoutes);
 app.use(updateRoutes);
 app.use(terminalRoutes);
 app.use(cidrRoutes);
-
-app.get("/__fn-knock/runtime-hmac-secret", ({ set }) => {
-  return buildRuntimeHmacSecretResponse(set);
-});
 
 app.use(
   cron({
@@ -378,9 +376,10 @@ registerSystemMonitorCron(app);
 registerUpdateCron(app);
 void updateManager.prepareOnBoot();
 void updateManager.checkNow("startup");
+systemClockManager.prepareOnBoot();
 
-app.get("/", () => serveInjectedIndex(STATIC_PATH));
-app.get("/index.html", () => serveInjectedIndex(STATIC_PATH));
+app.get("/", () => serveIndexHtml(STATIC_PATH));
+app.get("/index.html", () => serveIndexHtml(STATIC_PATH));
 
 app.use(
   createStaticFilesPlugin({
@@ -390,17 +389,19 @@ app.use(
 
 app.get("*", ({ path }) => {
   if (path.startsWith("/api")) return;
-  return serveInjectedIndex(STATIC_PATH);
+  return serveIndexHtml(STATIC_PATH);
 });
 
-authApp.get("/", () => serveInjectedIndex(AUTH_STATIC_PATH));
-authApp.get("/index.html", () => serveInjectedIndex(AUTH_STATIC_PATH));
-authApp.get("/auth", () => serveInjectedIndex(AUTH_STATIC_PATH));
-authApp.get("/auth/", () => serveInjectedIndex(AUTH_STATIC_PATH));
-authApp.get("/auth/index.html", () => serveInjectedIndex(AUTH_STATIC_PATH));
-authApp.get("/__auth__", () => serveInjectedIndex(AUTH_STATIC_PATH));
-authApp.get("/__auth__/", () => serveInjectedIndex(AUTH_STATIC_PATH));
-authApp.get("/__auth__/index.html", () => serveInjectedIndex(AUTH_STATIC_PATH));
+authApp.get("/", () => serveIndexHtml(AUTH_STATIC_PATH, true));
+authApp.get("/index.html", () => serveIndexHtml(AUTH_STATIC_PATH, true));
+authApp.get("/auth", () => serveIndexHtml(AUTH_STATIC_PATH, true));
+authApp.get("/auth/", () => serveIndexHtml(AUTH_STATIC_PATH, true));
+authApp.get("/auth/index.html", () => serveIndexHtml(AUTH_STATIC_PATH, true));
+authApp.get("/__auth__", () => serveIndexHtml(AUTH_STATIC_PATH, true));
+authApp.get("/__auth__/", () => serveIndexHtml(AUTH_STATIC_PATH, true));
+authApp.get("/__auth__/index.html", () =>
+  serveIndexHtml(AUTH_STATIC_PATH, true),
+);
 authApp.get("/__fn-knock/runtime-hmac-secret", ({ set }) => {
   return buildRuntimeHmacSecretResponse(set);
 });
@@ -420,7 +421,7 @@ authApp.use(
 authApp.get("*", ({ path }) => {
   const normalizedPath = normalizeAuthPath(path);
   if (normalizedPath.startsWith("/api")) return;
-  return serveInjectedIndex(AUTH_STATIC_PATH);
+  return serveIndexHtml(AUTH_STATIC_PATH, true);
 });
 
 let { applied: reverseProxyThrottlePatchApplied, config } =

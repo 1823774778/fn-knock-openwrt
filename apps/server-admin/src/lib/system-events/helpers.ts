@@ -41,6 +41,7 @@ export const emitLoginSuccessEvent = async (payload: {
   authMethod: AuthMethod;
   credentialId: string;
   credentialName: string;
+  linkedTotpName?: string;
   grantType: "browser_session" | "login_ip_grant";
   postLoginIpGrantMode?: "follow_session" | "disabled" | "custom" | null;
   whitelistRecordId?: string | null;
@@ -62,6 +63,9 @@ export const emitLoginSuccessEvent = async (payload: {
       auth_method: payload.authMethod,
       credential_id: payload.credentialId,
       credential_name: payload.credentialName,
+      ...(payload.linkedTotpName
+        ? { linked_totp_name: payload.linkedTotpName }
+        : {}),
       grant_type: payload.grantType,
       post_login_ip_grant_mode: payload.postLoginIpGrantMode,
       whitelist_record_id: payload.whitelistRecordId,
@@ -78,6 +82,7 @@ export const emitLogoutEvent = async (payload: {
   authMethod: AuthMethod;
   credentialId: string;
   credentialName: string;
+  linkedTotpName?: string;
   ip: string;
   ipLocation?: string;
   userAgent: string;
@@ -97,6 +102,9 @@ export const emitLogoutEvent = async (payload: {
       auth_method: payload.authMethod,
       credential_id: payload.credentialId,
       credential_name: payload.credentialName,
+      ...(payload.linkedTotpName
+        ? { linked_totp_name: payload.linkedTotpName }
+        : {}),
       ip: payload.ip,
       ...(payload.ipLocation ? { ip_location: payload.ipLocation } : {}),
       user_agent: payload.userAgent,
@@ -112,6 +120,7 @@ export const emitLoginFailureEvent = async (payload: {
   blockedUntil?: string;
   method?: AuthMethod;
   credentialName?: string;
+  linkedTotpName?: string;
   userAgent?: string;
 }) =>
   systemEventManager.publishSafely({
@@ -130,6 +139,9 @@ export const emitLoginFailureEvent = async (payload: {
       ...(payload.method ? { method: payload.method } : {}),
       ...(payload.credentialName
         ? { credential_name: payload.credentialName }
+        : {}),
+      ...(payload.linkedTotpName
+        ? { linked_totp_name: payload.linkedTotpName }
         : {}),
       ...(payload.userAgent ? { user_agent: payload.userAgent } : {}),
     },

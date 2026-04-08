@@ -224,6 +224,7 @@ const buildNotificationDetails = (args: {
     case "FN_EVENT_AUTH_LOGIN_SUCCESS": {
       const credentialName =
         readPayloadValue(event, "credential_name") || "未知凭证";
+      const linkedTotpName = readPayloadValue(event, "linked_totp_name");
       const ip = readPayloadValue(event, "ip") || "未知 IP";
       const ipLocation = readPayloadValue(event, "ip_location");
       const authMethod =
@@ -243,11 +244,14 @@ const buildNotificationDetails = (args: {
       const rememberMe = formatBoolean(readPayloadValue(event, "remember_me"));
       const expiresAt = formatDateTime(readPayloadValue(event, "expires_at"));
 
-      summary = `凭证「${credentialName}」从 ${ip} 登录成功`;
+      summary = linkedTotpName
+        ? `Passkey「${credentialName}」关联 TOTP「${linkedTotpName}」从 ${ip} 登录成功`
+        : `凭证「${credentialName}」从 ${ip} 登录成功`;
       overview = `本次登录使用 ${authMethod || "未知方式"} 完成认证，授权方式为 ${grantType || "未知"}${ipLocation ? `，登录位置为 ${ipLocation}` : ""}。`;
       advice = "如该登录并非本人操作，建议尽快撤销会话并检查访问策略。";
 
       pushFact(facts, "凭证名称", credentialName);
+      pushFact(facts, "关联 TOTP", linkedTotpName);
       pushFact(facts, "登录 IP", ip);
       pushFact(facts, "IP 位置", ipLocation);
       pushFact(facts, "认证方式", authMethod);
@@ -260,6 +264,7 @@ const buildNotificationDetails = (args: {
     case "FN_EVENT_AUTH_LOGOUT": {
       const credentialName =
         readPayloadValue(event, "credential_name") || "未知凭证";
+      const linkedTotpName = readPayloadValue(event, "linked_totp_name");
       const ip = readPayloadValue(event, "ip") || "未知 IP";
       const ipLocation = readPayloadValue(event, "ip_location");
       const logoutSource =
@@ -270,11 +275,14 @@ const buildNotificationDetails = (args: {
           ) as keyof typeof LOGOUT_SOURCE_LABELS
         ] || readPayloadValue(event, "logout_source");
 
-      summary = `凭证「${credentialName}」已退出登录`;
+      summary = linkedTotpName
+        ? `Passkey「${credentialName}」关联 TOTP「${linkedTotpName}」已退出登录`
+        : `凭证「${credentialName}」已退出登录`;
       overview = `该会话已从 ${ip}${ipLocation ? `（${ipLocation}）` : ""} 退出，退出方式为 ${logoutSource || "未知"}。`;
       advice = "如该退出不符合预期，请核查是否存在管理员下线或异常会话清理。";
 
       pushFact(facts, "凭证名称", credentialName);
+      pushFact(facts, "关联 TOTP", linkedTotpName);
       pushFact(facts, "登录 IP", ip);
       pushFact(facts, "IP 位置", ipLocation);
       pushFact(facts, "退出方式", logoutSource);
@@ -298,6 +306,7 @@ const buildNotificationDetails = (args: {
           readPayloadValue(event, "method") as keyof typeof AUTH_METHOD_LABELS
         ] || readPayloadValue(event, "method");
       const credentialName = readPayloadValue(event, "credential_name");
+      const linkedTotpName = readPayloadValue(event, "linked_totp_name");
 
       summary = `来自 ${ip} 的登录失败已累计 ${attempts} 次`;
       overview = `检测到登录认证连续失败，当前来源 IP 为 ${ip}${retryAfter ? `，需等待 ${retryAfter} 秒后再尝试` : ""}${blockedUntil ? `，限制将持续到 ${blockedUntil}` : ""}。`;
@@ -308,6 +317,7 @@ const buildNotificationDetails = (args: {
       pushFact(facts, "失败次数", `${attempts} 次`);
       pushFact(facts, "认证方式", method);
       pushFact(facts, "凭证名称", credentialName);
+      pushFact(facts, "关联 TOTP", linkedTotpName);
       pushFact(facts, "重试等待", retryAfter ? `${retryAfter} 秒` : "");
       pushFact(facts, "限制截止", blockedUntil);
       break;

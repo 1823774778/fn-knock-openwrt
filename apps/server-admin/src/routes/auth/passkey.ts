@@ -2,10 +2,12 @@ import { Elysia, t } from "elysia";
 import { configManager, type PasskeyCredential } from "../../lib/redis";
 import {
   base64UrlToBuffer,
+  buildPasskeyBindInfo,
   bufferToBase64Url,
   extractChallenge,
   getRpInfo,
   handleLoginSuccess,
+  resolveTotpCredentialName,
 } from "../../lib/auth-utils";
 import { getClientIp } from "../../lib/auth-request";
 import {
@@ -143,6 +145,7 @@ export const passkeyRoutes = new Elysia({ prefix: "/passkey" })
           retryAfter: failure.retryAfter,
         };
       }
+      const linkedTotpName = await resolveTotpCredentialName(matched.totpId);
 
       let verification;
       try {
@@ -169,6 +172,7 @@ export const passkeyRoutes = new Elysia({ prefix: "/passkey" })
           userAgent,
           method: "PASSKEY",
           credentialName: matched.deviceName,
+          linkedTotpName,
         });
         set.status = 429;
         set.headers["Retry-After"] = String(failure.retryAfter);
@@ -185,6 +189,7 @@ export const passkeyRoutes = new Elysia({ prefix: "/passkey" })
           userAgent,
           method: "PASSKEY",
           credentialName: matched.deviceName,
+          linkedTotpName,
         });
         set.status = 429;
         set.headers["Retry-After"] = String(failure.retryAfter);
@@ -214,6 +219,7 @@ export const passkeyRoutes = new Elysia({ prefix: "/passkey" })
         authMethod: "PASSKEY",
         credentialId: matched.id,
         credentialName: matched.deviceName,
+        ...(linkedTotpName ? { linkedTotpName } : {}),
         rememberMe: body.rememberMe,
         set,
         totpId: matched.totpId,
@@ -243,15 +249,7 @@ export const passkeyRoutes = new Elysia({ prefix: "/passkey" })
       set.status = 401;
       return { success: false, message: "Unauthorized or missing TOTP ID" };
     }
-
-    const passkeys = await configManager.getPasskeys();
-    const boundPasskeys = passkeys.filter((pk) => pk.totpId === totpId);
-    if (boundPasskeys.length > 0) {
-      set.status = 409;
-      return { success: false, message: "Passkey already bound" };
-    }
-    const token = await configManager.createPasskeyBindToken(totpId);
-    return { success: true, data: { token } };
+    return { success: true, data: await buildPasskeyBindInfo(totpId) };
   })
   .post(
     "/register/options",
@@ -330,6 +328,11 @@ export const passkeyRoutes = new Elysia({ prefix: "/passkey" })
         return { success: false, message: "Passkey registration failed" };
       }
       const info = verification.registrationInfo;
+      const passkeys = await configManager.getPasskeys();
+      if (passkeys.some((passkey) => passkey.id === info.credential.id)) {
+        set.status = 409;
+        return { success: false, message: "Passkey already registered" };
+      }
       const passkey: PasskeyCredential = {
         id: info.credential.id,
         totpId,

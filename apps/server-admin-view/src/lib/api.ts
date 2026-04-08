@@ -63,7 +63,7 @@ import type {
   NotificationTriggerStatus,
   WelcomeGuideStatus,
 } from "../types";
-import { createSignedApiClient } from "@frontend-core/api/createSignedApiClient";
+import { createApiClient } from "@frontend-core/api/createApiClient";
 import type { CaptchaSettings } from "@frontend-core/captcha/types";
 
 type HostMappingUpdatePayload = Pick<
@@ -85,44 +85,10 @@ const resolveAppRelativePath = (relativePath: string) => {
   return new URL(relativePath, `${window.location.origin}${basePath}`).pathname;
 };
 
-const runtimeSecretPath = resolveAppRelativePath(
-  "./__fn-knock/runtime-hmac-secret",
-);
 const adminApiBasePath = resolveAppRelativePath("./api/admin");
 
-const runtimeSecret =
-  typeof window !== "undefined"
-    ? (window as Window & { __FN_KNOCK_HMAC_SECRET__?: string })
-        .__FN_KNOCK_HMAC_SECRET__
-    : undefined;
-let hmacSecret = import.meta.env.VITE_HMAC_SECRET || runtimeSecret;
-
-const fetchRuntimeHmacSecret = async () => {
-  if (hmacSecret) return hmacSecret;
-  try {
-    const res = await fetch(runtimeSecretPath);
-    if (res.ok) {
-      const payload = (await res.json().catch(() => null)) as {
-        data?: { hmacSecret?: string };
-      } | null;
-      const next = payload?.data?.hmacSecret?.trim();
-      if (next) {
-        hmacSecret = next;
-        return hmacSecret;
-      }
-    }
-  } catch {
-    // ignore and fallback below
-  }
-  throw new Error(
-    "Missing HMAC secret: provide VITE_HMAC_SECRET or serve via backend runtime injection",
-  );
-};
-
-export const apiClient = createSignedApiClient({
+export const apiClient = createApiClient({
   baseURL: adminApiBasePath,
-  hmacSecret,
-  getHmacSecret: fetchRuntimeHmacSecret,
 });
 
 const toHostMappingUpdatePayload = (
@@ -916,7 +882,57 @@ export type UpdateConfirmPayload = {
   completedAt: string;
 };
 
+export type SystemClockIssueCode = "timezone_mismatch" | "time_mismatch";
+
+export type SystemClockIssue = {
+  code: SystemClockIssueCode;
+  title: string;
+  message: string;
+};
+
+export type SystemClockStatus = {
+  expectedTimeZone: string;
+  systemTimeZone: string | null;
+  checkedAt: string | null;
+  networkSource: string | null;
+  hasRemoteTime: boolean;
+  lastCheckError: string | null;
+  systemTimeMs: number | null;
+  remoteTimeMs: number | null;
+  systemBeijingTime: string | null;
+  remoteBeijingTime: string | null;
+  driftMs: number | null;
+  driftThresholdMs: number;
+  timeMismatch: boolean;
+  timezoneMismatch: boolean;
+  needsAttention: boolean;
+  issues: SystemClockIssue[];
+  checking: boolean;
+  syncInProgress: boolean;
+  lastSyncAt: string | null;
+  lastSyncError: string | null;
+  syncSummary: string | null;
+};
+
 export const SystemAPI = {
+  async getClockStatus(): Promise<SystemClockStatus> {
+    const res = await apiClient.get("/system/clock/status");
+    return res.data.data;
+  },
+  async refreshClockStatus(): Promise<SystemClockStatus> {
+    const res = await apiClient.post("/system/clock/check");
+    return res.data.data;
+  },
+  async syncClock(): Promise<{
+    message: string;
+    data: SystemClockStatus;
+  }> {
+    const res = await apiClient.post("/system/clock/sync");
+    return {
+      message: String(res.data.message || "系统时间同步完成"),
+      data: res.data.data,
+    };
+  },
   async getAccessEntry(): Promise<AccessEntryInfo> {
     const res = await apiClient.get("/system/access-entry");
     return res.data.data;

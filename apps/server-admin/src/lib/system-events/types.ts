@@ -42,6 +42,7 @@ export type SystemEventAuthLoginSuccessPayload = {
   auth_method: AuthMethod;
   credential_id: string;
   credential_name: string;
+  linked_totp_name?: string;
   grant_type: "browser_session" | "login_ip_grant";
   post_login_ip_grant_mode?: "follow_session" | "disabled" | "custom" | null;
   whitelist_record_id?: string | null;
@@ -57,6 +58,7 @@ export type SystemEventAuthLogoutPayload = {
   auth_method: AuthMethod;
   credential_id: string;
   credential_name: string;
+  linked_totp_name?: string;
   ip: string;
   ip_location?: string;
   user_agent: string;
@@ -71,6 +73,7 @@ export type SystemEventAuthLoginFailurePayload = {
   blocked_until?: string;
   method?: AuthMethod;
   credential_name?: string;
+  linked_totp_name?: string;
   user_agent?: string;
 };
 

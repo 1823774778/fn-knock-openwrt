@@ -18,6 +18,7 @@ export type PasskeyBindInfo = {
   available: boolean;
   can_bind: boolean;
   bind_token?: string;
+  credential_ids?: string[];
 };
 
 const takeFirstHeaderValue = (value: string | null): string | null => {
@@ -222,12 +223,26 @@ export const buildPasskeyBindInfo = async (
   totpId: string,
 ): Promise<PasskeyBindInfo> => {
   const passkeys = await configManager.getPasskeys();
-  const boundPasskeys = passkeys.filter((pk) => pk.totpId === totpId);
-  if (boundPasskeys.length > 0) {
-    return { available: true, can_bind: false };
-  }
+  const credentialIds = passkeys
+    .filter((pk) => pk.totpId === totpId)
+    .map((pk) => pk.id);
   const token = await configManager.createPasskeyBindToken(totpId);
-  return { available: false, can_bind: true, bind_token: token };
+  return {
+    available: credentialIds.length > 0,
+    can_bind: true,
+    bind_token: token,
+    credential_ids: credentialIds,
+  };
+};
+
+export const resolveTotpCredentialName = async (
+  totpId: string,
+): Promise<string | undefined> => {
+  const totp = (await configManager.getTOTPCredentials()).find(
+    (item) => item.id === totpId,
+  );
+  const name = totp?.comment?.trim();
+  return name || undefined;
 };
 
 export const handleLoginSuccess = async ({
@@ -241,6 +256,7 @@ export const handleLoginSuccess = async ({
   rememberMe,
   set,
   totpId,
+  linkedTotpName,
   passkeyInfo,
   redirectTo,
 }: {
@@ -254,6 +270,7 @@ export const handleLoginSuccess = async ({
   rememberMe: boolean;
   set: any;
   totpId: string;
+  linkedTotpName?: string;
   passkeyInfo?: PasskeyBindInfo;
   redirectTo?: string | null;
 }) => {
@@ -274,6 +291,10 @@ export const handleLoginSuccess = async ({
   const expiresAtISO = new Date(expireAt * 1000).toISOString();
   const autoWhitelistComment = "登录后自动授权";
   const postLoginIpGrantMode = credentialSettings.post_login_ip_grant_mode;
+  const resolvedLinkedTotpName =
+    authMethod === "PASSKEY"
+      ? linkedTotpName || (await resolveTotpCredentialName(totpId))
+      : undefined;
 
   let whitelistRecordId: string | null = null;
   let sessionComment: string | undefined;
@@ -314,6 +335,9 @@ export const handleLoginSuccess = async ({
       method: authMethod,
       credentialId,
       credentialName,
+      ...(resolvedLinkedTotpName
+        ? { linkedTotpName: resolvedLinkedTotpName }
+        : {}),
       grantType,
       postLoginIpGrantMode:
         grantType === "login_ip_grant" ? postLoginIpGrantMode : null,
@@ -363,6 +387,9 @@ export const handleLoginSuccess = async ({
     authMethod,
     credentialId,
     credentialName,
+    ...(resolvedLinkedTotpName
+      ? { linkedTotpName: resolvedLinkedTotpName }
+      : {}),
     grantType,
     postLoginIpGrantMode:
       grantType === "login_ip_grant" ? postLoginIpGrantMode : null,
@@ -380,7 +407,7 @@ export const handleLoginSuccess = async ({
     data: {
       run_type: config.run_type,
       grant_type: grantType,
-      passkey: passkeyInfo,
+      ...(passkeyInfo ? { passkey: passkeyInfo } : {}),
       redirect_to: effectiveRedirectTo,
     },
   };

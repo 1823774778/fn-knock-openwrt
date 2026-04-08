@@ -1,5 +1,6 @@
-import axios, { type InternalAxiosRequestConfig } from "axios";
+import type { InternalAxiosRequestConfig } from "axios";
 import CryptoJS from "crypto-js";
+import { createApiClient } from "./createApiClient";
 
 export interface SignedApiClientOptions {
   baseURL: string;
@@ -21,7 +22,7 @@ export function buildRequestSignature(hmacSecret: string) {
 }
 
 export function createSignedApiClient(options: SignedApiClientOptions) {
-  const apiClient = axios.create({
+  const apiClient = createApiClient({
     baseURL: options.baseURL,
   });
 
@@ -45,30 +46,5 @@ export function createSignedApiClient(options: SignedApiClientOptions) {
       return config;
     },
   );
-
-  apiClient.interceptors.response.use(
-    (response) => response,
-    (error) => {
-      if (axios.isAxiosError(error)) {
-        const payload = error.response?.data as
-          | { message?: unknown }
-          | string
-          | undefined;
-        const responseMessage =
-          typeof payload === "string"
-            ? payload.trim()
-            : typeof payload?.message === "string"
-              ? payload.message.trim()
-              : "";
-
-        if (responseMessage) {
-          error.message = responseMessage;
-        }
-      }
-
-      return Promise.reject(error);
-    },
-  );
-
   return apiClient;
 }
