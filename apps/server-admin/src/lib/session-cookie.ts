@@ -3,6 +3,7 @@ import { getBooleanEnv } from "./env";
 type SameSitePolicy = "Strict" | "Lax" | "None";
 
 export const FNOS_SHARE_SESSION_COOKIE_NAME = "fn-knock-fnos-share-session";
+export const ADMIN_PANEL_SESSION_COOKIE_NAME = "fn-knock-admin-panel-session";
 
 const resolveSameSite = (): SameSitePolicy => {
   const raw = process.env.SESSION_COOKIE_SAMESITE?.trim().toLowerCase();
@@ -11,9 +12,12 @@ const resolveSameSite = (): SameSitePolicy => {
   return "Lax";
 };
 
-const appendSecure = (parts: string[]) => {
+const appendSecure = (parts: string[], secureOverride?: boolean) => {
   const secureDefault = true;
-  const secure = getBooleanEnv("SESSION_COOKIE_SECURE", secureDefault);
+  const secure =
+    typeof secureOverride === "boolean"
+      ? secureOverride
+      : getBooleanEnv("SESSION_COOKIE_SECURE", secureDefault);
   if (secure) parts.push("Secure");
 };
 
@@ -24,6 +28,7 @@ const buildCookie = ({
   path,
   domain,
   httpOnly = true,
+  secure,
 }: {
   name: string;
   value: string;
@@ -31,6 +36,7 @@ const buildCookie = ({
   path: string;
   domain?: string;
   httpOnly?: boolean;
+  secure?: boolean;
 }): string => {
   const sameSite = resolveSameSite();
   const parts = [
@@ -41,7 +47,7 @@ const buildCookie = ({
   ];
   if (domain) parts.splice(2, 0, `Domain=${domain}`);
   if (httpOnly) parts.splice(2, 0, "HttpOnly");
-  appendSecure(parts);
+  appendSecure(parts, secure);
   return parts.join("; ");
 };
 
@@ -90,4 +96,28 @@ export const buildFnosShareSessionClearCookie = (opts?: {
     maxAge: 0,
     path: "/s",
     domain: opts?.domain,
+  });
+
+export const buildAdminPanelSessionCookie = (
+  sessionId: string,
+  maxAge: number,
+  opts?: { secure?: boolean },
+): string =>
+  buildCookie({
+    name: ADMIN_PANEL_SESSION_COOKIE_NAME,
+    value: sessionId,
+    maxAge,
+    path: "/",
+    secure: opts?.secure,
+  });
+
+export const buildAdminPanelSessionClearCookie = (opts?: {
+  secure?: boolean;
+}): string =>
+  buildCookie({
+    name: ADMIN_PANEL_SESSION_COOKIE_NAME,
+    value: "",
+    maxAge: 0,
+    path: "/",
+    secure: opts?.secure,
   });

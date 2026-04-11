@@ -110,6 +110,19 @@ const joinCompactParts = (...parts: Array<string | undefined>) =>
     .filter(Boolean)
     .join(" | ");
 
+const formatCredentialContext = (event: SystemEventEnvelope, fallback = "") => {
+  const credentialName = readPayloadValue(event, "credential_name");
+  const linkedTotpName = readPayloadValue(event, "linked_totp_name");
+
+  if (linkedTotpName) {
+    return `Passkey「${credentialName || "未知凭证"}」关联 TOTP「${linkedTotpName}」`;
+  }
+  if (credentialName) {
+    return `凭证「${credentialName}」`;
+  }
+  return fallback;
+};
+
 const formatEventLevelLabel = (level: SystemEventEnvelope["level"]) =>
   EVENT_LEVEL_LABELS[level] || level;
 
@@ -323,6 +336,15 @@ const buildNotificationDetails = (args: {
       break;
     }
     case "FN_EVENT_AUTH_SESSION_IP_DRIFT": {
+      const credentialName = readPayloadValue(event, "credential_name");
+      const linkedTotpName = readPayloadValue(event, "linked_totp_name");
+      const authMethod =
+        AUTH_METHOD_LABELS[
+          readPayloadValue(
+            event,
+            "auth_method",
+          ) as keyof typeof AUTH_METHOD_LABELS
+        ] || readPayloadValue(event, "auth_method");
       const fromIp = readPayloadValue(event, "from_ip") || "未知 IP";
       const toIp = readPayloadValue(event, "to_ip") || "未知 IP";
       const source =
@@ -332,12 +354,16 @@ const buildNotificationDetails = (args: {
             "drift_source",
           ) as keyof typeof DRIFT_SOURCE_LABELS
         ] || readPayloadValue(event, "drift_source");
+      const sessionLabel = formatCredentialContext(event, "当前会话");
 
-      summary = `会话 IP 从 ${fromIp} 切换到 ${toIp}`;
-      overview = `检测到同一会话的访问 IP 发生变化，来源判定为 ${source || "未知"}。这通常与网络切换、代理变化或会话异常有关。`;
+      summary = `${sessionLabel} IP 从 ${fromIp} 切换到 ${toIp}`;
+      overview = `检测到${sessionLabel}的访问来源 IP 发生变化，来源判定为 ${source || "未知"}。这通常与网络切换、代理变化或会话异常有关。`;
       advice =
         "若这次 IP 变化并不符合预期，请尽快核查当前会话是否存在被接管风险。";
 
+      pushFact(facts, "凭证名称", credentialName);
+      pushFact(facts, "关联 TOTP", linkedTotpName);
+      pushFact(facts, "认证方式", authMethod);
       pushFact(facts, "原始 IP", fromIp);
       pushFact(facts, "原始位置", readPayloadValue(event, "from_ip_location"));
       pushFact(facts, "当前 IP", toIp);
@@ -540,8 +566,7 @@ const buildNotificationDetails = (args: {
       const tunnel =
         TUNNEL_LABELS[
           readPayloadValue(event, "tunnel") as keyof typeof TUNNEL_LABELS
-        ] ||
-        (event.type.includes("CLOUDFLARED") ? "Cloudflared" : "FRP");
+        ] || (event.type.includes("CLOUDFLARED") ? "Cloudflared" : "FRP");
       const connected = readPayloadValue(event, "status") === "connected";
       const message = truncateText(readPayloadValue(event, "message"), 200);
       const pid = readPayloadValue(event, "pid");
@@ -610,12 +635,13 @@ const formatEventSummary = (event: SystemEventEnvelope) => {
           : "",
       );
     case "FN_EVENT_AUTH_SESSION_IP_DRIFT":
-      return [
-        readPayloadValue(event, "from_ip"),
-        readPayloadValue(event, "to_ip"),
-      ]
-        .filter(Boolean)
-        .join(" -> ");
+      return joinCompactParts(
+        formatCredentialContext(event),
+        formatIpTransition(
+          readPayloadValue(event, "from_ip"),
+          readPayloadValue(event, "to_ip"),
+        ),
+      );
     case "FN_EVENT_SECURITY_SCANNER_BLOCKED":
       return joinCompactParts(
         readPayloadValue(event, "ip"),
@@ -659,8 +685,7 @@ const formatEventSummary = (event: SystemEventEnvelope) => {
       return joinCompactParts(
         TUNNEL_LABELS[
           readPayloadValue(event, "tunnel") as keyof typeof TUNNEL_LABELS
-        ] ||
-          (event.type.includes("CLOUDFLARED") ? "Cloudflared" : "FRP"),
+        ] || (event.type.includes("CLOUDFLARED") ? "Cloudflared" : "FRP"),
         readPayloadValue(event, "status") === "connected" ? "已连上" : "已断开",
       );
     default:
@@ -672,14 +697,19 @@ const buildNotificationTitle = (
   event: SystemEventEnvelope,
   matchedCount: number,
 ) => {
+  const driftCredentialName = readPayloadValue(event, "credential_name");
   const baseTitle =
     event.type === "FN_EVENT_DDNS_UPDATE_COMPLETED"
       ? readPayloadValue(event, "success") === "true"
         ? "DDNS 更新成功"
         : "DDNS 更新失败"
-      : event.type === "FN_EVENT_SYSTEM_APP_UPDATE_AVAILABLE"
-        ? `发现新版本 ${readPayloadValue(event, "latest_version") || ""}`.trim()
-      : formatNotificationEventLabel(event.type);
+      : event.type === "FN_EVENT_AUTH_SESSION_IP_DRIFT"
+        ? driftCredentialName
+          ? `凭证「${driftCredentialName}」IP 漂移`
+          : formatNotificationEventLabel(event.type)
+        : event.type === "FN_EVENT_SYSTEM_APP_UPDATE_AVAILABLE"
+          ? `发现新版本 ${readPayloadValue(event, "latest_version") || ""}`.trim()
+          : formatNotificationEventLabel(event.type);
 
   return matchedCount > 1 ? `${baseTitle} x${matchedCount}` : baseTitle;
 };

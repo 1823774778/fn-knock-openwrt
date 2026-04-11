@@ -13,7 +13,6 @@ export const registerDDNSCron = (app: Elysia) => {
         await runAutomaticDDNSCheck({
           trigger: "cron",
           emitSkipLog: true,
-          emitNoopLog: true,
         });
       },
     })

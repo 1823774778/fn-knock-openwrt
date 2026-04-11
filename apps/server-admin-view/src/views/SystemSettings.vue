@@ -15,6 +15,7 @@ import GatewaySettings from "./system-settings/GatewaySettings.vue";
 import TerminalSettings from "./system-settings/TerminalSettings.vue";
 import SessionSettings from "./system-settings/SessionSettings.vue";
 import MaintenanceSettings from "./system-settings/MaintenanceSettings.vue";
+import PanelSettings from "./system-settings/PanelSettings.vue";
 import { useSyncedQueryTab } from "@admin-shared/composables/useSyncedQueryTab";
 import { useConfigStore } from "../store/config";
 import { isCloudflaredTunnelAvailable } from "../lib/reverse-proxy-submode";
@@ -28,6 +29,8 @@ const showTunnelTabs = computed(() => configStore.config?.run_type === 1);
 const showCloudflaredTab = computed(() =>
   isCloudflaredTunnelAvailable(configStore.config),
 );
+const showTerminalTab = computed(() => configStore.canUseTerminal);
+const showPanelTab = computed(() => configStore.isDockerDeployment);
 const allowedTabs = computed(() => {
   const tabs = [
     "run-mode",
@@ -37,11 +40,20 @@ const allowedTabs = computed(() => {
     "features",
     "gateway",
     "gateway-logging",
-    "terminal",
     "session",
+    "panel",
     "captcha",
     "maintenance",
   ];
+  if (showTerminalTab.value) {
+    tabs.splice(7, 0, "terminal");
+  }
+  if (!showPanelTab.value) {
+    const panelIndex = tabs.indexOf("panel");
+    if (panelIndex >= 0) {
+      tabs.splice(panelIndex, 1);
+    }
+  }
   if (showTunnelTabs.value) {
     tabs.splice(1, 0, "frp");
     if (showCloudflaredTab.value) {
@@ -100,11 +112,20 @@ const { currentTab, navigateTo } = useSyncedQueryTab({
           <TabsTrigger value="gateway-logging" class="flex-none shrink-0 px-3"
             >日志</TabsTrigger
           >
-          <TabsTrigger value="terminal" class="flex-none shrink-0 px-3"
+          <TabsTrigger
+            v-if="showTerminalTab"
+            value="terminal"
+            class="flex-none shrink-0 px-3"
             >终端</TabsTrigger
           >
           <TabsTrigger value="session" class="flex-none shrink-0 px-3"
             >会话</TabsTrigger
+          >
+          <TabsTrigger
+            v-if="showPanelTab"
+            value="panel"
+            class="flex-none shrink-0 px-3"
+            >面板</TabsTrigger
           >
           <TabsTrigger value="captcha" class="flex-none shrink-0 px-3"
             >验证码</TabsTrigger
@@ -145,11 +166,14 @@ const { currentTab, navigateTo } = useSyncedQueryTab({
       <TabsContent value="gateway-logging" class="pt-2">
         <GatewayLoggingSettings />
       </TabsContent>
-      <TabsContent value="terminal" class="pt-2">
+      <TabsContent v-if="showTerminalTab" value="terminal" class="pt-2">
         <TerminalSettings />
       </TabsContent>
       <TabsContent value="session" class="pt-2">
         <SessionSettings />
+      </TabsContent>
+      <TabsContent v-if="showPanelTab" value="panel" class="pt-2">
+        <PanelSettings />
       </TabsContent>
       <TabsContent value="captcha" class="pt-2">
         <CaptchaSettings />

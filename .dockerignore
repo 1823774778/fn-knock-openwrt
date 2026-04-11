@@ -1,0 +1,15 @@
+.git
+.turbo
+dist
+node_modules
+**/node_modules
+**/dist
+coverage
+*.log
+.DS_Store
+*.local
+*.tmp
+*.swp
+.env
+.env.*
+!.env.example

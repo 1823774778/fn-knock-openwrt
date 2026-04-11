@@ -3,6 +3,33 @@ import vue from '@vitejs/plugin-vue'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
 
+const createChunkMatcher = (patterns: string[]) => (id: string) =>
+  patterns.some((pattern) => id.includes(pattern))
+
+const isFrameworkChunk = createChunkMatcher([
+  'node_modules/vue/',
+  'node_modules/@vue/',
+  'node_modules/vue-router/',
+  'node_modules/pinia/',
+  'node_modules/@vueuse/',
+])
+
+const isUiChunk = createChunkMatcher([
+  'node_modules/lucide-vue-next/',
+  'node_modules/reka-ui/',
+  'node_modules/@floating-ui/',
+  'node_modules/@tanstack/',
+  'node_modules/class-variance-authority/',
+  'node_modules/clsx/',
+  'node_modules/tailwind-merge/',
+  'node_modules/vue-sonner/',
+  'node_modules/nprogress/',
+])
+
+const isEchartsChunk = createChunkMatcher([
+  'node_modules/vue-echarts/',
+])
+
 export default defineConfig({
   base: './',
   publicDir: path.resolve(__dirname, '../../packages/icons'),
@@ -17,23 +44,29 @@ export default defineConfig({
     rolldownOptions: {
       output: {
         manualChunks(id) {
-          if (id.includes('node_modules/zrender')) {
+          if (isFrameworkChunk(id)) {
+            return 'framework'
+          }
+          if (isUiChunk(id)) {
+            return 'ui-vendor'
+          }
+          if (id.includes('node_modules/zrender/')) {
             return 'zrender-vendor'
           }
-          if (id.includes('node_modules/echarts/charts')) {
+          if (id.includes('node_modules/echarts/charts/')) {
             return 'echarts-charts'
           }
-          if (id.includes('node_modules/echarts/components')) {
+          if (id.includes('node_modules/echarts/components/')) {
             return 'echarts-components'
           }
-          if (id.includes('node_modules/echarts/core') || id.includes('node_modules/echarts/renderers')) {
+          if (
+            id.includes('node_modules/echarts/core/') ||
+            id.includes('node_modules/echarts/renderers/')
+          ) {
             return 'echarts-core'
           }
-          if (id.includes('node_modules/echarts')) {
+          if (isEchartsChunk(id)) {
             return 'echarts-vendor'
-          }
-          if (id.includes('node_modules')) {
-            return 'vendor'
           }
         },
       },

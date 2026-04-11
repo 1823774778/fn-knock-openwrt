@@ -456,6 +456,12 @@ export class AuthMobilitySessionManager {
       );
       await emitSessionIpDriftEvent({
         sessionId: args.sessionId,
+        authMethod: session.method,
+        credentialId: session.credentialId,
+        credentialName: session.credentialName,
+        ...(session.linkedTotpName
+          ? { linkedTotpName: session.linkedTotpName }
+          : {}),
         driftSource: args.source,
         fromIp: previousIp,
         ...(previousIpLocation ? { fromIpLocation: previousIpLocation } : {}),

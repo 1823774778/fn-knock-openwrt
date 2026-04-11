@@ -51,6 +51,7 @@ const isImportDialogOpen = ref(false);
 const isBackupPickerOpen = ref(false);
 const backupFilesError = ref("");
 const hasLoadedBackupFiles = ref(false);
+const supportsSharedBackup = computed(() => !configStore.isDockerDeployment);
 
 const defaultBackupFiles: BackupDirectoryFilesPayload = {
   shareName: "fn-knock / backup",
@@ -348,7 +349,7 @@ async function importBackup() {
             </p>
           </div>
 
-          <DropdownMenu>
+          <DropdownMenu v-if="supportsSharedBackup">
             <DropdownMenuTrigger as-child>
               <Button
                 variant="default"
@@ -375,6 +376,17 @@ async function importBackup() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          <Button
+            v-else
+            variant="default"
+            size="default"
+            class="min-w-[168px]"
+            :disabled="isBusy"
+            @click="exportBackupToLocal"
+          >
+            <Download class="mr-2 h-4 w-4" />
+            {{ isExporting ? "导出中..." : "下载备份" }}
+          </Button>
         </div>
 
         <div class="px-6 py-6 sm:px-8">
@@ -399,18 +411,28 @@ async function importBackup() {
                   先选择来源，再从已有归档恢复系统设置。
                 </p>
                 <p class="text-xs leading-5 text-muted-foreground">
-                  飞牛导入会读取与 SSL 导入相同的飞牛共享根目录下的
-                  <code>backup</code>
-                  文件夹，本机导入则直接读取当前设备中的
-                  <code>{{ KNOCK_BACKUP_EXTENSION }}</code>
-                  文件。
+                  <template v-if="supportsSharedBackup">
+                    共享目录导入会读取与 SSL 导入相同的共享根目录下的
+                    <code>backup</code>
+                    文件夹，本机导入则直接读取当前设备中的
+                    <code>{{ KNOCK_BACKUP_EXTENSION }}</code>
+                    文件。
+                  </template>
+                  <template v-else>
+                    Docker 部署下仅支持从当前设备选择
+                    <code>{{ KNOCK_BACKUP_EXTENSION }}</code>
+                    文件导入。
+                  </template>
                 </p>
               </div>
 
               <div class="flex flex-wrap gap-3 lg:justify-end">
-                <DropdownMenu>
+                <DropdownMenu v-if="supportsSharedBackup">
                   <DropdownMenuTrigger as-child>
-                    <Button variant="outline" :disabled="isBusy">
+                    <Button
+                      variant="outline"
+                      :disabled="isBusy"
+                    >
                       <Upload class="mr-2 h-4 w-4" />
                       {{ selectedSummary ? "重新选择来源" : "导入备份" }}
                       <ChevronDown class="ml-2 h-4 w-4" />
@@ -433,6 +455,15 @@ async function importBackup() {
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
+                <Button
+                  v-else
+                  variant="outline"
+                  :disabled="isBusy"
+                  @click="triggerLocalFilePicker"
+                >
+                  <Upload class="mr-2 h-4 w-4" />
+                  {{ selectedSummary ? "重新选择文件" : "选择备份文件" }}
+                </Button>
                 <Button
                   variant="default"
                   size="default"
@@ -481,10 +512,11 @@ async function importBackup() {
     </section>
 
     <DataShareFilePicker
+      v-if="supportsSharedBackup"
       v-model:open="isBackupPickerOpen"
-      title="从飞牛中选择备份"
+      title="从共享目录中选择备份"
       description="从文件管理->应用数据->fn-knock->backup 文件夹中选择一个 .knock 备份文件。"
-      directory-label="飞牛备份目录"
+      directory-label="备份目录"
       :share-name="backupFiles.shareName"
       :files="backupFiles.files"
       :supported-file-types="[KNOCK_BACKUP_EXTENSION]"
@@ -494,9 +526,9 @@ async function importBackup() {
       :error-message="backupFilesError"
       alert-title="备份目录读取失败"
       available-description="从文件管理->应用数据->fn-knock->backup 中读取现有的 .knock 备份。"
-      unavailable-description="备份目录暂不可访问，请确认飞牛共享目录已正确挂载。"
+      unavailable-description="备份目录暂不可访问，请确认共享目录已正确挂载。"
       empty-title="backup 目录里还没有备份"
-      empty-description="先导出一份备份到飞牛，或将已有 .knock 文件放入飞牛应用数据->fnknock的 backup 文件夹。"
+      empty-description="先导出一份备份到共享目录，或将已有 .knock 文件放入应用数据->fn-knock 的 backup 文件夹。"
       confirm-text="使用这个备份"
       @refresh="refreshBackupFiles"
       @select="handleFnosFileSelect"

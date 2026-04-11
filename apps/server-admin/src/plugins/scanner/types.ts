@@ -3,6 +3,7 @@ import { Rule } from "../../lib/go-backend";
 export interface ScanOptions {
   timeout?: number;
   maxConcurrent?: number;
+  hostConcurrency?: number;
   skipPorts?: number[];
   portRanges?: { start: number; end: number }[];
 }

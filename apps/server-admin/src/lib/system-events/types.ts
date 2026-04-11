@@ -79,6 +79,10 @@ export type SystemEventAuthLoginFailurePayload = {
 
 export type SystemEventSessionIpDriftPayload = {
   session_id: string;
+  auth_method?: AuthMethod;
+  credential_id?: string;
+  credential_name?: string;
+  linked_totp_name?: string;
   drift_source: SystemEventSessionDriftSource;
   from_ip: string;
   from_ip_location?: string;
@@ -167,8 +171,7 @@ export type SystemEventPayloadMap = {
   [FN_EVENT_TUNNEL_FRP_CONNECTED]: SystemEventTunnelConnectivityPayload;
   [FN_EVENT_TUNNEL_FRP_DISCONNECTED]: SystemEventTunnelConnectivityPayload;
   [FN_EVENT_TUNNEL_CLOUDFLARED_CONNECTED]: SystemEventTunnelConnectivityPayload;
-  [FN_EVENT_TUNNEL_CLOUDFLARED_DISCONNECTED]:
-    SystemEventTunnelConnectivityPayload;
+  [FN_EVENT_TUNNEL_CLOUDFLARED_DISCONNECTED]: SystemEventTunnelConnectivityPayload;
 };
 
 export type SystemEventEnvelope<T extends SystemEventType = SystemEventType> = {

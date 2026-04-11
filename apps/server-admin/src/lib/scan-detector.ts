@@ -329,6 +329,8 @@ class ScanDetector {
       "/sac/rpcproxy/v1/new-user-guide/status",
       "/locales/zh-CN/pages/login.json",
       "/static/bg/wallpaper-1.webp",
+      '/api/config',
+      '/identity/connect/token'
     ]);
     if (common.has(cleanPath)) return true;
 

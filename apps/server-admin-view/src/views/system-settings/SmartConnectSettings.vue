@@ -190,6 +190,13 @@ const isDirty = computed(() => {
   );
 });
 
+const capabilityBlockedReason = computed(() => {
+  if (configStore.canUseSmartConnect) return "";
+  if (configStore.isDockerDeployment) {
+    return "Docker 部署暂不支持 Smart Connect，它依赖宿主机 dnsmasq、53 端口和网络行为。";
+  }
+  return "当前运行环境暂不支持 Smart Connect。";
+});
 const isSmartConnectAvailable = computed(
   () => details.value?.availability.available === true,
 );
@@ -282,6 +289,9 @@ const resolvedIpOptions = computed<SmartConnectLocalIpOption[]>(() => {
   ];
 });
 const saveBlockedReason = computed(() => {
+  if (!configStore.canUseSmartConnect) {
+    return capabilityBlockedReason.value;
+  }
   if (!form.enabled) return "";
   if (!isSmartConnectAvailable.value) {
     return details.value?.availability.reason || "当前模式暂不可用";
@@ -417,13 +427,19 @@ const saveSettings = async () => {
 
         <template v-else-if="details">
           <div
-            v-if="!isSmartConnectAvailable"
+            v-if="!isSmartConnectAvailable || !configStore.canUseSmartConnect"
             class="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm leading-6 text-zinc-700"
           >
-            当前模式暂不可用。{{ details.availability.reason }}
+            {{
+              !configStore.canUseSmartConnect
+                ? capabilityBlockedReason
+                : `当前模式暂不可用。${details.availability.reason}`
+            }}
           </div>
 
-          <div class="rounded-2xl border border-border/60 bg-muted/10 px-4 py-4">
+          <div
+            class="rounded-2xl border border-border/60 bg-muted/10 px-4 py-4"
+          >
             <div class="flex items-start justify-between gap-4">
               <div class="min-w-0 space-y-2">
                 <div class="flex flex-wrap items-center gap-2">
@@ -434,7 +450,11 @@ const saveSettings = async () => {
               <Switch
                 class="mt-0.5 shrink-0"
                 :model-value="form.enabled"
-                :disabled="isSaving || isStartingInstall"
+                :disabled="
+                  !configStore.canUseSmartConnect ||
+                  isSaving ||
+                  isStartingInstall
+                "
                 @update:model-value="form.enabled = $event === true"
               />
             </div>
@@ -572,9 +592,17 @@ const saveSettings = async () => {
                   <div class="space-y-1">
                     <Label class="text-base">说明</Label>
                     <p class="text-sm leading-6 text-muted-foreground">
-                      要让设备真正生效，请修改路由器DHCP服务器的DNS服务器为 {{ form.selected_ipv4 || "本机的局域网IP" }}，或者在设备上手动设置 DNS 服务器为 {{ form.selected_ipv4 || "本机的局域网IP" }}。配置好后请重新连接Wi-Fi
+                      要让设备真正生效，请修改路由器DHCP服务器的DNS服务器为
+                      {{
+                        form.selected_ipv4 || "本机的局域网IP"
+                      }}，或者在设备上手动设置 DNS 服务器为
+                      {{
+                        form.selected_ipv4 || "本机的局域网IP"
+                      }}。配置好后请重新连接Wi-Fi
 
-                      <span>注意：Android版的飞牛App客户端可能存在兼容问题，如遇到无法登录的问题，请关闭此功能</span>
+                      <span
+                        >注意：Android版的飞牛App客户端可能存在兼容问题，如遇到无法登录的问题，请关闭此功能</span
+                      >
                     </p>
                   </div>
                 </section>

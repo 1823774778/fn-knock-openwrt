@@ -1,6 +1,10 @@
 import { Elysia, t } from "elysia";
 import { terminalManager } from "../lib/terminal-manager";
 import { routeDoc, withRouteDoc } from "../lib/openapi";
+import {
+  getCapabilityUnavailableMessage,
+  getRuntimeCapabilities,
+} from "../lib/runtime-profile";
 
 const detectClientIp = (request: Request): string => {
   const forwarded = request.headers.get("x-forwarded-for");
@@ -17,6 +21,17 @@ export const terminalRoutes = new Elysia({
   prefix: "/api/admin/terminal",
   tags: ["Terminal"],
 })
+  .onBeforeHandle(({ set }) => {
+    if (getRuntimeCapabilities().terminal_available) {
+      return;
+    }
+
+    set.status = 403;
+    return {
+      success: false,
+      message: getCapabilityUnavailableMessage("terminal_available"),
+    };
+  })
   .get(
     "/status",
     async () => {

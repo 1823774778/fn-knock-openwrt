@@ -20,7 +20,21 @@
         </AlertDescription>
       </Alert>
 
+      <Alert
+        v-if="showHostFirewallUnavailableAlert"
+        class="items-start rounded-xl border-zinc-200 bg-zinc-50/70 text-zinc-900"
+      >
+        <Info class="mt-0.5 h-4 w-4" />
+        <AlertTitle>当前部署不支持宿主机防火墙能力</AlertTitle>
+        <AlertDescription>
+          <div class="space-y-2 text-sm leading-6">
+            <p>{{ hostFirewallUnavailableDescription }}</p>
+          </div>
+        </AlertDescription>
+      </Alert>
+
       <div
+        v-if="canUseDirectMode"
         class="group flex items-start space-x-4 rounded-lg border p-4 cursor-pointer transition-all hover:border-primary/50"
         :class="
           mode === 0
@@ -175,7 +189,10 @@
     <CardFooter
       class="flex flex-col gap-4 border-t border-zinc-200/80 pt-6 sm:flex-row sm:items-center sm:justify-between"
     >
-      <label class="flex items-start gap-3 text-sm text-zinc-700">
+      <label
+        v-if="canManageHostFirewall"
+        class="flex items-start gap-3 text-sm text-zinc-700"
+      >
         <Checkbox
           class="mt-0.5"
           :model-value="autoManageFirewall"
@@ -195,9 +212,15 @@
           class="mt-0.5 h-4 w-4 animate-spin text-muted-foreground"
         />
       </label>
+      <div
+        v-else-if="!configStore.isDockerDeployment"
+        class="w-full text-sm leading-6 text-muted-foreground sm:max-w-xl"
+      >
+        宿主机防火墙管理已禁用，自动处理系统防火墙和手动防火墙操作入口不会显示。
+      </div>
 
       <div class="flex w-full justify-end gap-2 sm:w-auto">
-        <DropdownMenu>
+        <DropdownMenu v-if="canManageHostFirewall">
           <DropdownMenuTrigger as-child>
             <Button variant="outline" class="w-24 gap-2" :disabled="isBusy">
               <Loader2
@@ -416,6 +439,18 @@ const isBusy = computed(
     isFirewallActionPending.value ||
     isAutoManageFirewallPending.value,
 );
+const canUseDirectMode = computed(() => configStore.canUseDirectMode);
+const canManageHostFirewall = computed(() => configStore.canManageHostFirewall);
+const showHostFirewallUnavailableAlert = computed(
+  () => !canManageHostFirewall.value && !configStore.isDockerDeployment,
+);
+const hostFirewallUnavailableDescription = computed(() => {
+  if (configStore.isDockerDeployment) {
+    return "Docker 部署不支持宿主机直连防火墙模式，也不会执行宿主机防火墙写入、重置或清空操作。";
+  }
+
+  return "当前运行环境没有宿主机防火墙管理能力，因此不会暴露相关设置。";
+});
 const savedReverseProxySubmode = computed(() =>
   resolveReverseProxySubmode(configStore.config),
 );
@@ -501,6 +536,10 @@ watch(
       reverseProxySubmode.value = savedReverseProxySubmode.value;
     }
     autoManageFirewall.value = nextAutoManageFirewall !== false;
+
+    if (!canUseDirectMode.value && mode.value === 0) {
+      mode.value = nextMode === 0 ? 1 : (nextMode ?? 1);
+    }
   },
 );
 
@@ -514,6 +553,7 @@ function reset() {
 async function handleAutoManageFirewallChange(
   value: boolean | "indeterminate",
 ) {
+  if (!canManageHostFirewall.value) return;
   if (isBusy.value) return;
 
   const nextValue = value === true;
@@ -544,6 +584,14 @@ async function handleAutoManageFirewallChange(
 }
 
 async function save() {
+  if (mode.value === 0 && !canUseDirectMode.value) {
+    toast.error("当前部署不支持直连模式", {
+      description:
+        "Docker 部署不支持宿主机直连防火墙模式，请改用反代模式或子域模式。",
+    });
+    return;
+  }
+
   const currentMode = configStore.config?.run_type;
   const currentSubmode = savedReverseProxySubmode.value;
   if (
@@ -639,6 +687,13 @@ async function applyRunModeChange(
 }
 
 async function resetFirewallBySelectedMode() {
+  if (!canManageHostFirewall.value) {
+    toast.error("当前部署不支持防火墙操作", {
+      description: hostFirewallUnavailableDescription.value,
+    });
+    return;
+  }
+
   await runFirewallAction(async () => {
     const result = await SystemAPI.resetFirewallByRunType(mode.value);
     toast.success("防火墙已重设", {
@@ -651,6 +706,13 @@ async function resetFirewallBySelectedMode() {
 }
 
 async function clearFirewallRules() {
+  if (!canManageHostFirewall.value) {
+    toast.error("当前部署不支持防火墙操作", {
+      description: hostFirewallUnavailableDescription.value,
+    });
+    return;
+  }
+
   await runFirewallAction(async () => {
     const result = await SystemAPI.clearFirewall();
     toast.success("防火墙已清空", {

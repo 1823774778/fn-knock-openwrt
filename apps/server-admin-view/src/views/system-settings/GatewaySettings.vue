@@ -119,6 +119,13 @@ const proxyHeadersDisabledReason = computed(() => {
   if (isProxyHeadersAvailable.value) return "";
   return `仅子域模式可用，当前为${currentRunTypeLabel.value}。`;
 });
+const isHostResponseAvailable = computed(
+  () => configStore.config?.run_type === 3,
+);
+const hostResponseDisabledReason = computed(() => {
+  if (isHostResponseAvailable.value) return "";
+  return `仅子域模式可用，当前为${currentRunTypeLabel.value}。`;
+});
 
 const openVisibilityEditor = () => {
   void router.push("/system/gateway-visibility");
@@ -130,6 +137,14 @@ const openProxyHeadersEditor = () => {
   }
 
   void router.push("/system/gateway-proxy-headers");
+};
+
+const openHostResponseEditor = () => {
+  if (!isHostResponseAvailable.value) {
+    return;
+  }
+
+  void router.push("/system/gateway-host-response");
 };
 
 const toggleThrottleEnabled = () => {
@@ -422,6 +437,46 @@ onMounted(fetchSettings);
             @click="openProxyHeadersEditor"
           >
             编辑协议头
+          </Button>
+        </div>
+      </div>
+
+      <div
+        class="grid gap-4 p-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center"
+      >
+        <div class="space-y-3">
+          <div class="flex flex-wrap items-center gap-2">
+            <Label
+              class="text-base"
+              :class="isHostResponseAvailable ? '' : 'text-zinc-500'"
+            >
+              Host响应
+            </Label>
+          </div>
+          <div
+            class="text-sm leading-6"
+            :class="
+              isHostResponseAvailable
+                ? 'text-muted-foreground'
+                : 'text-zinc-500'
+            "
+          >
+            控制哪些子域在转发到上游时不保留访问时的 Host
+          </div>
+          <div
+            v-if="!isHostResponseAvailable"
+            class="text-xs leading-5 text-zinc-500"
+          >
+            {{ hostResponseDisabledReason }}
+          </div>
+        </div>
+        <div class="flex justify-start lg:justify-end">
+          <Button
+            variant="outline"
+            :disabled="!isHostResponseAvailable"
+            @click="openHostResponseEditor"
+          >
+            编辑Host响应
           </Button>
         </div>
       </div>

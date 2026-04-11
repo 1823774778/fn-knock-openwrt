@@ -85,44 +85,38 @@ build_package_assets() {
 
   echo "[fn-knock] Syncing manifest version from server-admin app version..."
   sync_manifest_version
+  RUNTIME_DIR="${ROOT_DIR}/dist/fn-knock-runtime"
 
-  # These frontend apps import workspace source via Vite aliases.
-  # Force rebuild here so packaging never reuses a stale Turbo cache entry.
-  echo "[fn-knock] Building frontend apps (force rebuild to avoid stale workspace alias cache)..."
-  npx turbo run build --filter=server-admin-view --filter=server-auth-view --force
-
-  echo "[fn-knock] Building server-admin..."
-  npm run build --workspace server-admin
+  echo "[fn-knock] Building shared runtime assets..."
+  bash "${ROOT_DIR}/scripts/assemble-runtime.sh" "${RUNTIME_DIR}"
 
   PKG_DIR="${ROOT_DIR}/apps/fn-knock/app"
   ADMIN_WWW_DIR="${PKG_DIR}/ui/www"
   AUTH_DIST_DIR="${PKG_DIR}/server-auth-view/dist"
   SERVER_ADMIN_DIR="${PKG_DIR}/server/server-admin"
-  SERVER_ADMIN_RES_DIR="${SERVER_ADMIN_DIR}/resources"
-  ACME_RESOURCE_SRC="${ROOT_DIR}/apps/server-admin/resources/acmesh.zip"
+  SERVER_DIR="${PKG_DIR}/server"
 
   echo "[fn-knock] Preparing package directories..."
-  mkdir -p "${ADMIN_WWW_DIR}" "${AUTH_DIST_DIR}" "${SERVER_ADMIN_DIR}" "${SERVER_ADMIN_RES_DIR}"
+  mkdir -p "${ADMIN_WWW_DIR}" "${AUTH_DIST_DIR}" "${SERVER_ADMIN_DIR}" "${SERVER_DIR}"
 
   echo "[fn-knock] Syncing server-admin-view dist -> app/ui/www"
-  rsync -a --delete "${ROOT_DIR}/apps/server-admin-view/dist/" "${ADMIN_WWW_DIR}/"
+  rsync -a --delete "${RUNTIME_DIR}/ui/www/" "${ADMIN_WWW_DIR}/"
 
   echo "[fn-knock] Syncing server-auth-view dist -> app/server-auth-view/dist"
-  rsync -a --delete "${ROOT_DIR}/apps/server-auth-view/dist/" "${AUTH_DIST_DIR}/"
+  rsync -a --delete "${RUNTIME_DIR}/server-auth-view/dist/" "${AUTH_DIST_DIR}/"
 
   echo "[fn-knock] Syncing server-admin dist -> app/server/server-admin"
-  find "${SERVER_ADMIN_DIR}" -maxdepth 1 -type f \( -name '*.js' -o -name '*.mjs' -o -name '*.cjs' -o -name '*.map' \) -delete
-  rm -rf "${SERVER_ADMIN_DIR}/chunks"
-  rsync -a "${ROOT_DIR}/apps/server-admin/dist/" "${SERVER_ADMIN_DIR}/"
+  rsync -a --delete "${RUNTIME_DIR}/server/server-admin/" "${SERVER_ADMIN_DIR}/"
 
-  if [ ! -f "${ACME_RESOURCE_SRC}" ]; then
-    echo "[fn-knock] Missing acme resource: ${ACME_RESOURCE_SRC}" >&2
-    exit 1
-  fi
-  echo "[fn-knock] Copying bundled acme resource -> app/server/server-admin/resources/acmesh.zip"
-  cp "${ACME_RESOURCE_SRC}" "${SERVER_ADMIN_RES_DIR}/acmesh.zip"
+  echo "[fn-knock] Copying gateway binaries"
+  cp "${RUNTIME_DIR}/server/go-reauth-proxy-linux-amd64" "${SERVER_DIR}/go-reauth-proxy-linux-amd64"
+  cp "${RUNTIME_DIR}/server/go-reauth-proxy-linux-arm64" "${SERVER_DIR}/go-reauth-proxy-linux-arm64"
 
-  chmod +x "${ROOT_DIR}/apps/fn-knock/cmd/main" "${ROOT_DIR}/apps/fn-knock/app/ui/index.cgi"
+  chmod +x \
+    "${ROOT_DIR}/apps/fn-knock/cmd/main" \
+    "${ROOT_DIR}/apps/fn-knock/app/ui/index.cgi" \
+    "${SERVER_DIR}/go-reauth-proxy-linux-amd64" \
+    "${SERVER_DIR}/go-reauth-proxy-linux-arm64"
 
   echo "[fn-knock] Package assets are ready under apps/fn-knock/app"
 }

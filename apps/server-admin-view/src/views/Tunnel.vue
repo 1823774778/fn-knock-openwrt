@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, defineAsyncComponent, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   extractErrorMessage,
@@ -7,12 +7,15 @@ import {
 } from "@admin-shared/composables/useAsyncAction";
 import { useSyncedQueryTab } from "@admin-shared/composables/useSyncedQueryTab";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import FrpTunnel from "./tunnel/FrpTunnel.vue";
-import CloudflareTunnel from "./tunnel/CloudflareTunnel.vue";
 import { useConfigStore } from "../store/config";
 import DocsLinkButton from "@/components/DocsLinkButton.vue";
 import { docsUrls } from "../lib/docs";
 import { isCloudflaredTunnelAvailable } from "../lib/reverse-proxy-submode";
+
+const FrpTunnel = defineAsyncComponent(() => import("./tunnel/FrpTunnel.vue"));
+const CloudflareTunnel = defineAsyncComponent(
+  () => import("./tunnel/CloudflareTunnel.vue"),
+);
 
 const router = useRouter();
 const route = useRoute();

@@ -1,16 +1,19 @@
 import { Elysia, t } from "elysia";
 import {
+  DEFAULT_GATEWAY_HOST_RESPONSE_CONFIG,
   type AppConfig,
   configManager,
   DEFAULT_GATEWAY_PROXY_HEADERS_CONFIG,
   DEFAULT_GATEWAY_VISIBILITY_CONFIG,
   DEFAULT_REVERSE_PROXY_THROTTLE_CONFIG,
+  type GatewayHostResponseRuntimeState,
   type GatewayProxyHeadersRuntimeState,
   type GatewayVisibilityRuntimeState,
   type HostMapping,
   type LoginSession,
   type ProtocolMappingFeatureConfig,
   type ProxyMapping,
+  redis,
   type RunModePromptPreferences,
   type StreamMapping,
 } from "../lib/redis";
@@ -49,6 +52,13 @@ import {
 } from "../lib/host-mapping-bookmarks";
 import { getGatewayLoggingConfigForResponse } from "../lib/gateway-logging";
 import {
+  buildGatewayHostResponseSummary,
+  compileGatewayHostResponseState,
+  getGatewayHostResponseDetails,
+  syncGatewayHostResponseRuntimeForConfig,
+  syncGatewayHostResponseToGateway,
+} from "../lib/gateway-host-response";
+import {
   buildGatewayProxyHeadersSummary,
   compileGatewayProxyHeadersState,
   getGatewayProxyHeadersDetails,
@@ -76,6 +86,17 @@ import {
   MaintenanceBackupError,
   maintenanceBackupService,
 } from "../lib/maintenance-backup";
+import {
+  getCapabilityUnavailableMessage,
+  getRuntimeCapabilities,
+  getRuntimeProfile,
+} from "../lib/runtime-profile";
+import { getClientIp } from "../lib/auth-request";
+import { dockerAdminPanelManager } from "../lib/docker-admin-panel";
+import {
+  buildAdminPanelSessionClearCookie,
+  buildAdminPanelSessionCookie,
+} from "../lib/session-cookie";
 import { isValidHostPort } from "../../../../packages/admin-shared/src/utils/parseHostPort";
 import { routeDoc, withRouteDoc } from "../lib/openapi";
 
@@ -87,6 +108,17 @@ const parseIntSafe = (value: string | undefined, fallback: number) => {
 
 const clamp = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, value));
+
+const buildCapabilityBlockedResponse = (
+  set: { status?: number | string },
+  capability: Parameters<typeof getCapabilityUnavailableMessage>[0],
+) => {
+  set.status = 403;
+  return {
+    success: false,
+    message: getCapabilityUnavailableMessage(capability),
+  };
+};
 
 const getRunTypeLabel = (runType: 0 | 1 | 3) => {
   if (runType === 0) return "直连模式";
@@ -449,6 +481,31 @@ const rollbackGatewayProxyHeadersConfigAndRuntime = async (
   return null;
 };
 
+const rollbackGatewayHostResponseConfigAndRuntime = async (
+  previousConfig: AppConfig,
+  previousRuntime: GatewayHostResponseRuntimeState,
+): Promise<string | null> => {
+  try {
+    await configManager.saveConfig(previousConfig);
+  } catch (error: any) {
+    return error?.message || "恢复 Host 响应原始配置失败";
+  }
+
+  try {
+    await configManager.saveGatewayHostResponseRuntimeState(previousRuntime);
+  } catch (error: any) {
+    return error?.message || "恢复 Host 响应运行态失败";
+  }
+
+  try {
+    await syncGatewayHostResponseToGateway(previousRuntime);
+  } catch (error: any) {
+    return error?.message || "恢复网关 Host 响应运行态失败";
+  }
+
+  return null;
+};
+
 const buildGatewaySettingsResponse = (
   config: Pick<
     AppConfig,
@@ -456,10 +513,12 @@ const buildGatewaySettingsResponse = (
     | "reverse_proxy_throttle"
     | "gateway_visibility"
     | "gateway_proxy_headers"
+    | "gateway_host_response"
     | "host_mappings"
   >,
   visibilityRuntime: GatewayVisibilityRuntimeState,
   proxyHeadersRuntime: GatewayProxyHeadersRuntimeState,
+  hostResponseRuntime: GatewayHostResponseRuntimeState,
 ) => ({
   auth_cache_ttl_seconds: config.subdomain_mode?.auth_cache_ttl_seconds ?? 1,
   auth_cache_unauthorized_ttl_seconds:
@@ -482,6 +541,18 @@ const buildGatewaySettingsResponse = (
       config.gateway_proxy_headers ?? DEFAULT_GATEWAY_PROXY_HEADERS_CONFIG,
     ).items,
     proxyHeadersRuntime,
+  ),
+  host_response: buildGatewayHostResponseSummary(
+    compileGatewayHostResponseState(
+      {
+        run_type: 3,
+        host_mappings: config.host_mappings,
+        gateway_host_response:
+          config.gateway_host_response ?? DEFAULT_GATEWAY_HOST_RESPONSE_CONFIG,
+      },
+      config.gateway_host_response ?? DEFAULT_GATEWAY_HOST_RESPONSE_CONFIG,
+    ).items,
+    hostResponseRuntime,
   ),
 });
 
@@ -510,6 +581,9 @@ const syncHostMappingsRuntime = async (
   }
 
   await syncGatewayProxyHeadersRuntimeForConfig(nextConfig, {
+    saveConfig: true,
+  });
+  await syncGatewayHostResponseRuntimeForConfig(nextConfig, {
     saveConfig: true,
   });
 };
@@ -542,6 +616,268 @@ export const adminRoutes = new Elysia({
   tags: ["Admin"],
 })
   .get(
+    "/panel/bootstrap",
+    async ({ request }) => {
+      return {
+        success: true,
+        data: await dockerAdminPanelManager.buildBootstrapState(
+          request,
+          getRuntimeProfile().is_docker,
+        ),
+      };
+    },
+    routeDoc("获取 Docker 管理面板登录状态"),
+  )
+  .post(
+    "/panel/password",
+    async ({ request, body, set }) => {
+      if (!getRuntimeProfile().is_docker) {
+        set.status = 400;
+        return {
+          success: false,
+          message: "当前运行模式不需要设置 Docker 管理面板密码",
+        };
+      }
+
+      try {
+        await dockerAdminPanelManager.setPassword(body.password);
+      } catch (error) {
+        set.status = 400;
+        return {
+          success: false,
+          message:
+            error instanceof Error ? error.message : "设置管理面板密码失败",
+        };
+      }
+
+      const session = await dockerAdminPanelManager.createSession({
+        ip: getClientIp(request) || "unknown",
+        userAgent: request.headers.get("user-agent") || "",
+      });
+      await dockerAdminPanelManager.resetLoginFailures(getClientIp(request));
+      set.headers["set-cookie"] = buildAdminPanelSessionCookie(
+        session.id,
+        dockerAdminPanelManager.sessionTtlSeconds,
+        {
+          secure: dockerAdminPanelManager.isSecureRequest(request),
+        },
+      );
+
+      return {
+        success: true,
+        data: {
+          enabled: true,
+          password_configured: true,
+          authenticated: true,
+          session_expires_at: session.expires_at,
+        },
+      };
+    },
+    withRouteDoc("首次设置 Docker 管理面板密码", {
+      body: t.Object({
+        password: t.String(),
+      }),
+    }),
+  )
+  .post(
+    "/panel/password/change",
+    async ({ request, body, set }) => {
+      if (!getRuntimeProfile().is_docker) {
+        set.status = 400;
+        return {
+          success: false,
+          message: "当前运行模式不支持修改 Docker 管理面板密码",
+        };
+      }
+
+      try {
+        await dockerAdminPanelManager.changePassword(body.password);
+      } catch (error) {
+        set.status = 400;
+        return {
+          success: false,
+          message:
+            error instanceof Error ? error.message : "修改管理面板密码失败",
+        };
+      }
+
+      const session = await dockerAdminPanelManager.createSession({
+        ip: getClientIp(request) || "unknown",
+        userAgent: request.headers.get("user-agent") || "",
+      });
+      set.headers["set-cookie"] = buildAdminPanelSessionCookie(
+        session.id,
+        dockerAdminPanelManager.sessionTtlSeconds,
+        {
+          secure: dockerAdminPanelManager.isSecureRequest(request),
+        },
+      );
+
+      return {
+        success: true,
+        data: {
+          enabled: true,
+          password_configured: true,
+          authenticated: true,
+          session_expires_at: session.expires_at,
+        },
+      };
+    },
+    withRouteDoc("修改 Docker 管理面板密码", {
+      body: t.Object({
+        password: t.String(),
+      }),
+    }),
+  )
+  .post(
+    "/panel/login",
+    async ({ request, body, set }) => {
+      if (!getRuntimeProfile().is_docker) {
+        return {
+          success: true,
+          data: await dockerAdminPanelManager.buildBootstrapState(
+            request,
+            false,
+          ),
+        };
+      }
+
+      const clientIp = getClientIp(request) || "unknown";
+      const gate = await dockerAdminPanelManager.ensureLoginAllowed(clientIp);
+      if (!gate.allowed) {
+        set.status = 429;
+        if (gate.retryAfter) {
+          set.headers["Retry-After"] = String(gate.retryAfter);
+        }
+        return {
+          success: false,
+          message: gate.retryAfter
+            ? `尝试过于频繁，请在 ${gate.retryAfter} 秒后重试`
+            : "尝试过于频繁，请稍后重试",
+          retryAfter: gate.retryAfter,
+          blockedUntil: gate.blockedUntil,
+        };
+      }
+
+      const passwordConfigured =
+        await dockerAdminPanelManager.isPasswordConfigured();
+      if (!passwordConfigured) {
+        set.status = 409;
+        return {
+          success: false,
+          message: "当前还没有设置管理面板密码，请先完成首次设置",
+        };
+      }
+
+      const passwordValid = await dockerAdminPanelManager.verifyPassword(
+        body.password,
+      );
+      if (!passwordValid) {
+        const failure =
+          await dockerAdminPanelManager.registerLoginFailure(clientIp);
+        set.status = 429;
+        set.headers["Retry-After"] = String(failure.retryAfter);
+        return {
+          success: false,
+          message: `管理面板密码错误，请在 ${failure.retryAfter} 秒后重试`,
+          retryAfter: failure.retryAfter,
+          blockedUntil: failure.blockedUntil,
+        };
+      }
+
+      await dockerAdminPanelManager.resetLoginFailures(clientIp);
+      const session = await dockerAdminPanelManager.createSession({
+        ip: clientIp,
+        userAgent: request.headers.get("user-agent") || "",
+      });
+      set.headers["set-cookie"] = buildAdminPanelSessionCookie(
+        session.id,
+        dockerAdminPanelManager.sessionTtlSeconds,
+        {
+          secure: dockerAdminPanelManager.isSecureRequest(request),
+        },
+      );
+
+      return {
+        success: true,
+        data: {
+          enabled: true,
+          password_configured: true,
+          authenticated: true,
+          session_expires_at: session.expires_at,
+        },
+      };
+    },
+    withRouteDoc("登录 Docker 管理面板", {
+      body: t.Object({
+        password: t.String(),
+      }),
+    }),
+  )
+  .post(
+    "/panel/logout",
+    async ({ request, set }) => {
+      await dockerAdminPanelManager.deleteSessionFromRequest(request);
+      set.headers["set-cookie"] = buildAdminPanelSessionClearCookie({
+        secure: dockerAdminPanelManager.isSecureRequest(request),
+      });
+
+      return {
+        success: true,
+        data: await dockerAdminPanelManager.buildBootstrapState(
+          request,
+          getRuntimeProfile().is_docker,
+        ),
+      };
+    },
+    routeDoc("退出 Docker 管理面板"),
+  )
+  .get(
+    "/healthz",
+    async ({ set }) => {
+      let redisReachable = false;
+      let redisError: string | null = null;
+
+      try {
+        redisReachable = (await redis.ping()) === "PONG";
+      } catch (error) {
+        redisError =
+          error instanceof Error ? error.message : "Redis is unavailable";
+      }
+
+      const gatewayProbe = await goBackend.getServerInfo();
+      const isHealthy = redisReachable && gatewayProbe.success;
+
+      if (!isHealthy) {
+        set.status = 503;
+      }
+
+      return {
+        success: isHealthy,
+        data: {
+          node: {
+            alive: true,
+            pid: process.pid,
+          },
+          redis: {
+            reachable: redisReachable,
+            error: redisError,
+          },
+          runtime_profile: getRuntimeProfile(),
+          gateway_admin: {
+            reachable: gatewayProbe.success,
+            version: gatewayProbe.data?.version ?? null,
+            error:
+              gatewayProbe.success === true
+                ? null
+                : gatewayProbe.message || "Gateway admin probe failed",
+          },
+        },
+      };
+    },
+    routeDoc("获取运行时健康检查状态"),
+  )
+  .get(
     "/config",
     async () => {
       const [config, gatewayLogging] = await Promise.all([
@@ -562,6 +898,13 @@ export const adminRoutes = new Elysia({
   .post(
     "/config/run_type",
     async ({ body, set }) => {
+      if (
+        body.run_type === 0 &&
+        !getRuntimeCapabilities().direct_mode_available
+      ) {
+        return buildCapabilityBlockedResponse(set, "direct_mode_available");
+      }
+
       const [config, previousProtocolMappingFeature] = await Promise.all([
         configManager.getConfig(),
         configManager.getProtocolMappingFeatureConfig(),
@@ -625,7 +968,11 @@ export const adminRoutes = new Elysia({
   )
   .post(
     "/config/auto_manage_firewall",
-    async ({ body }) => {
+    async ({ body, set }) => {
+      if (!getRuntimeCapabilities().host_firewall_available) {
+        return buildCapabilityBlockedResponse(set, "host_firewall_available");
+      }
+
       const next = await configManager.updateAutoManageFirewall(
         body.auto_manage_firewall,
       );
@@ -645,6 +992,16 @@ export const adminRoutes = new Elysia({
   .post(
     "/firewall/reset",
     async ({ body, set }) => {
+      if (!getRuntimeCapabilities().host_firewall_available) {
+        return buildCapabilityBlockedResponse(set, "host_firewall_available");
+      }
+      if (
+        body.run_type === 0 &&
+        !getRuntimeCapabilities().direct_mode_available
+      ) {
+        return buildCapabilityBlockedResponse(set, "direct_mode_available");
+      }
+
       try {
         const result = await firewallService.resetFirewallForRunType(
           body.run_type,
@@ -680,6 +1037,10 @@ export const adminRoutes = new Elysia({
   .post(
     "/firewall/clear",
     async ({ set }) => {
+      if (!getRuntimeCapabilities().host_firewall_available) {
+        return buildCapabilityBlockedResponse(set, "host_firewall_available");
+      }
+
       try {
         const result = await firewallService.clearFirewall();
         return {
@@ -816,6 +1177,10 @@ export const adminRoutes = new Elysia({
   .post(
     "/config/smart_connect",
     async ({ body, set }) => {
+      if (!getRuntimeCapabilities().smart_connect_available) {
+        return buildCapabilityBlockedResponse(set, "smart_connect_available");
+      }
+
       const previousConfig = await configManager.getConfig();
       if (body.enabled === true && previousConfig.run_type !== 3) {
         set.status = 400;
@@ -892,18 +1257,24 @@ export const adminRoutes = new Elysia({
   .get(
     "/config/gateway",
     async () => {
-      const [config, visibilityRuntime, proxyHeadersRuntime] =
-        await Promise.all([
-          configManager.getConfig(),
-          configManager.getGatewayVisibilityRuntimeState(),
-          configManager.getGatewayProxyHeadersRuntimeState(),
-        ]);
+      const [
+        config,
+        visibilityRuntime,
+        proxyHeadersRuntime,
+        hostResponseRuntime,
+      ] = await Promise.all([
+        configManager.getConfig(),
+        configManager.getGatewayVisibilityRuntimeState(),
+        configManager.getGatewayProxyHeadersRuntimeState(),
+        configManager.getGatewayHostResponseRuntimeState(),
+      ]);
       return {
         success: true,
         data: buildGatewaySettingsResponse(
           config,
           visibilityRuntime,
           proxyHeadersRuntime,
+          hostResponseRuntime,
         ),
       };
     },
@@ -939,11 +1310,13 @@ export const adminRoutes = new Elysia({
         const [
           visibilityRuntime,
           proxyHeadersRuntime,
+          hostResponseRuntime,
           authConfigResult,
           reverseProxyThrottleResult,
         ] = await Promise.all([
           configManager.getGatewayVisibilityRuntimeState(),
           configManager.getGatewayProxyHeadersRuntimeState(),
+          configManager.getGatewayHostResponseRuntimeState(),
           goBackend.setAuthConfig(buildGatewayAuthConfig(updatedConfig)),
           goBackend.setReverseProxyThrottle(
             updatedConfig.reverse_proxy_throttle ??
@@ -984,6 +1357,7 @@ export const adminRoutes = new Elysia({
             updatedConfig,
             visibilityRuntime,
             proxyHeadersRuntime,
+            hostResponseRuntime,
           ),
         };
       } catch (error: any) {
@@ -1137,6 +1511,71 @@ export const adminRoutes = new Elysia({
       }
     },
     withRouteDoc("更新网关代理请求头配置", {
+      body: t.Object({
+        disabled_hosts: t.Array(t.String()),
+      }),
+    }),
+  )
+  .get(
+    "/config/gateway/host-response",
+    async () => {
+      const details = await getGatewayHostResponseDetails();
+      return {
+        success: true,
+        data: details,
+      };
+    },
+    routeDoc("获取网关 Host 响应配置"),
+  )
+  .post(
+    "/config/gateway/host-response",
+    async ({ body, set }) => {
+      const [previousConfig, previousRuntime] = await Promise.all([
+        configManager.getConfig(),
+        configManager.getGatewayHostResponseRuntimeState(),
+      ]);
+
+      if (previousConfig.run_type !== 3) {
+        set.status = 400;
+        return {
+          success: false,
+          message: "Host 响应仅可在子域模式下编辑",
+        };
+      }
+
+      try {
+        await syncGatewayHostResponseRuntimeForConfig(
+          {
+            run_type: previousConfig.run_type,
+            host_mappings: previousConfig.host_mappings,
+            gateway_host_response: {
+              disabled_hosts: body.disabled_hosts,
+            },
+          },
+          {
+            saveConfig: true,
+          },
+        );
+
+        return {
+          success: true,
+          data: await getGatewayHostResponseDetails(),
+        };
+      } catch (error: any) {
+        const rollbackError = await rollbackGatewayHostResponseConfigAndRuntime(
+          previousConfig,
+          previousRuntime,
+        );
+        set.status = 502;
+        return {
+          success: false,
+          message: rollbackError
+            ? `${error?.message || "更新网关 Host 响应失败"}；回滚失败：${rollbackError}`
+            : error?.message || "更新网关 Host 响应失败，已回滚配置",
+        };
+      }
+    },
+    withRouteDoc("更新网关 Host 响应配置", {
       body: t.Object({
         disabled_hosts: t.Array(t.String()),
       }),

@@ -127,6 +127,12 @@ export interface ForwardedHeadersConfig {
   updated_at?: string | null;
 }
 
+export interface PreserveHostConfig {
+  enabled: boolean;
+  omit_targets: string[];
+  updated_at?: string | null;
+}
+
 export interface ReverseProxyThrottleExemptIPsRuntime {
   enabled: boolean;
   ips: string[];
@@ -225,8 +231,8 @@ export class GoBackendService {
   };
 
   constructor(
-    baseUrl: string = `http://localhost:${process.env.GO_BACKEND_PORT || 7996}` ||
-      "http://localhost:7996",
+    baseUrl: string = process.env.GO_BACKEND_BASE_URL?.trim() ||
+      `http://localhost:${process.env.GO_BACKEND_PORT || 7996}`,
   ) {
     this.baseUrl = baseUrl;
     this.requestTimeoutMs = this.parseTimeout(
@@ -397,6 +403,26 @@ export class GoBackendService {
 
     return this.request<ForwardedHeadersConfig>(
       "/api/config/forwarded-headers",
+      "POST",
+      payload,
+    );
+  }
+
+  async getPreserveHostConfig(): Promise<GoResponse<PreserveHostConfig>> {
+    return this.request<PreserveHostConfig>("/api/config/preserve-host");
+  }
+
+  async setPreserveHostConfig(
+    config: PreserveHostConfig,
+  ): Promise<GoResponse<PreserveHostConfig>> {
+    const payload = {
+      enabled: config.enabled,
+      omit_targets: config.omit_targets,
+      ...(config.updated_at ? { updated_at: config.updated_at } : {}),
+    };
+
+    return this.request<PreserveHostConfig>(
+      "/api/config/preserve-host",
       "POST",
       payload,
     );

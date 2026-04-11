@@ -2,6 +2,7 @@ import NProgress from "nprogress";
 import { createRouter, createWebHashHistory } from "vue-router";
 import Layout from "../views/Layout.vue";
 import { useConfigStore } from "../store/config";
+import { useDockerAdminAuthStore } from "../store/dockerAdminAuth";
 import { pinia } from "../store";
 import { isRouteNavigating, pendingNavPath } from "./navigation-state";
 import { toast } from "@admin-shared/utils/toast";
@@ -107,6 +108,12 @@ const router = createRouter({
             import("../views/system-settings/GatewayProxyHeadersSettings.vue"),
         },
         {
+          path: "system/gateway-host-response",
+          name: "GatewayHostResponseSettings",
+          component: () =>
+            import("../views/system-settings/GatewayHostResponseSettings.vue"),
+        },
+        {
           path: "system/smart-connect",
           name: "SmartConnectSettings",
           component: () =>
@@ -156,13 +163,29 @@ router.beforeEach(async (to, from) => {
     NProgress.start();
   }
 
+  const dockerAdminAuthStore = useDockerAdminAuthStore(pinia);
+  if (!dockerAdminAuthStore.isBootstrapped) {
+    try {
+      await dockerAdminAuthStore.bootstrap();
+    } catch (error) {
+      console.error("Failed to bootstrap docker admin auth in router", error);
+      return true;
+    }
+  }
+
+  if (dockerAdminAuthStore.isEnabled && !dockerAdminAuthStore.isAuthenticated) {
+    return true;
+  }
+
   if (
     to.path !== "/" &&
     to.path !== "/dashboard" &&
     to.path !== "/streams" &&
     to.path !== "/proxy" &&
     to.path !== "/subdomains" &&
-    to.path !== "/tunnel"
+    to.path !== "/terminal" &&
+    to.path !== "/tunnel" &&
+    to.path !== "/system/smart-connect"
   ) {
     return true;
   }
@@ -198,6 +221,19 @@ router.beforeEach(async (to, from) => {
 
   if (to.path === "/tunnel" && configStore.config?.run_type !== 1) {
     return "/system";
+  }
+
+  if (to.path === "/terminal" && !configStore.canUseTerminal) {
+    return "/system";
+  }
+
+  if (to.path === "/system/smart-connect" && !configStore.canUseSmartConnect) {
+    return {
+      path: "/system",
+      query: {
+        tab: "features",
+      },
+    };
   }
 
   const isProtocolMappingVisible =

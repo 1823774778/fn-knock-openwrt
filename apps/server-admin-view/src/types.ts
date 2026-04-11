@@ -15,6 +15,32 @@ export interface WelcomeGuideStatus {
   completed_at: string | null;
 }
 
+export type DeploymentTarget = "fpk" | "docker" | "dev";
+
+export interface RuntimeProfile {
+  deployment_target: DeploymentTarget;
+  is_docker: boolean;
+  is_linux: boolean;
+  is_root_process: boolean;
+}
+
+export interface RuntimeCapabilities {
+  direct_mode_available: boolean;
+  host_firewall_available: boolean;
+  smart_connect_available: boolean;
+  system_clock_sync_available: boolean;
+  self_update_available: boolean;
+  terminal_available: boolean;
+  shared_root_available: boolean;
+}
+
+export interface DockerAdminBootstrapState {
+  enabled: boolean;
+  password_configured: boolean;
+  authenticated: boolean;
+  session_expires_at: string | null;
+}
+
 export type HostAccessMode = "login_first" | "strict_whitelist";
 export type HostServiceRole = "app" | "auth";
 export type StreamMappingProtocol = "tcp" | "udp";
@@ -443,6 +469,8 @@ export interface AppConfig {
   run_type: RunType;
   reverse_proxy_submode: ReverseProxySubmode;
   auto_manage_firewall: boolean;
+  runtime_profile?: RuntimeProfile;
+  capabilities?: RuntimeCapabilities;
   whitelist_ips: string[];
   default_route: string;
   proxy_mappings: ProxyMapping[];
@@ -454,6 +482,7 @@ export interface AppConfig {
   gateway_logging?: GatewayLoggingConfig;
   reverse_proxy_throttle?: ReverseProxyThrottleConfig;
   gateway_proxy_headers?: GatewayProxyHeadersConfig;
+  gateway_host_response?: GatewayHostResponseConfig;
   protocol_mapping_feature?: ProtocolMappingFeatureConfig;
   smart_connect?: SmartConnectConfig;
   auth_credential_settings?: AuthCredentialSettings;
@@ -625,12 +654,42 @@ export type GatewayProxyHeadersDetails = {
   summary: GatewayProxyHeadersSummary;
 };
 
+export type GatewayHostResponseConfig = {
+  disabled_hosts: string[];
+};
+
+export type GatewayHostResponseItem = {
+  host: string;
+  target: string;
+  title: string;
+  preserve_host: boolean;
+};
+
+export type GatewayHostResponseAvailability = {
+  available: boolean;
+  reason: string;
+};
+
+export type GatewayHostResponseSummary = {
+  total_count: number;
+  disabled_count: number;
+  updated_at: string | null;
+};
+
+export type GatewayHostResponseDetails = {
+  config: GatewayHostResponseConfig;
+  availability: GatewayHostResponseAvailability;
+  items: GatewayHostResponseItem[];
+  summary: GatewayHostResponseSummary;
+};
+
 export type GatewaySettings = {
   auth_cache_ttl_seconds: number;
   auth_cache_unauthorized_ttl_seconds: number;
   reverse_proxy_throttle: ReverseProxyThrottleConfig;
   visibility: GatewayVisibilitySummary;
   proxy_headers: GatewayProxyHeadersSummary;
+  host_response: GatewayHostResponseSummary;
 };
 
 export type TrafficStats = {

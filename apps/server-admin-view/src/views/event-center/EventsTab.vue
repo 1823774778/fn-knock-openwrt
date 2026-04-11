@@ -352,7 +352,8 @@ const detailItems = computed(() => {
 
   return buildDetailFields(detailRecord, detailFieldDefinitions, {
     format: (key, value) => {
-      if (key === "type") return formatSystemEventTypeLabel(value as SystemEventType);
+      if (key === "type")
+        return formatSystemEventTypeLabel(value as SystemEventType);
       if (key === "level")
         return formatSystemEventLevelLabel(value as SystemEventLevel);
       if (key === "source")
@@ -511,10 +512,19 @@ const describeEvent = (event: SystemEventRecord) => {
           : ""
       }`;
     }
-    case "FN_EVENT_AUTH_SESSION_IP_DRIFT":
-      return `会话 ${shortId(String(payload.session_id || ""), 14)} 从 ${String(
-        formatIpDisplay(payload.from_ip),
-      )} 漂移到 ${String(formatIpDisplay(payload.to_ip))}`;
+    case "FN_EVENT_AUTH_SESSION_IP_DRIFT": {
+      const credentialName = String(payload.credential_name ?? "").trim();
+      const linkedTotpName = String(payload.linked_totp_name ?? "").trim();
+      const hasCredentialContext = Boolean(credentialName || linkedTotpName);
+      const sessionLabel = hasCredentialContext
+        ? `${formatCredentialDisplay(
+            payload.credential_name,
+            payload.linked_totp_name,
+            payload.auth_method,
+          )} 会话`
+        : `会话 ${shortId(String(payload.session_id || ""), 14)}`;
+      return `${sessionLabel} 从 ${String(formatIpDisplay(payload.from_ip))} 漂移到 ${String(formatIpDisplay(payload.to_ip))}`;
+    }
     case "FN_EVENT_SECURITY_SCANNER_BLOCKED":
       return `${formatIpDisplay(payload.ip)} 因非常规路径命中 ${String(
         payload.hit_count || "-",

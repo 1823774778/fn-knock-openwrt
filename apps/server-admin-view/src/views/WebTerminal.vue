@@ -8,7 +8,6 @@ import {
   watch,
 } from "vue";
 import { useRouter } from "vue-router";
-import { init as initGhostty, Terminal, FitAddon } from "ghostty-web";
 import ConfirmDangerPopover from "@admin-shared/components/common/ConfirmDangerPopover.vue";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -46,14 +45,19 @@ import type {
 } from "../types";
 import { useConfigStore } from "../store/config";
 
-let ghosttyInitPromise: Promise<void> | null = null;
+type GhosttyModule = typeof import("ghostty-web");
+
+let ghosttyModulePromise: Promise<GhosttyModule> | null = null;
 const textEncoder = new TextEncoder();
 
-const ensureGhostty = () => {
-  if (!ghosttyInitPromise) {
-    ghosttyInitPromise = initGhostty();
+const ensureGhostty = async () => {
+  if (!ghosttyModulePromise) {
+    ghosttyModulePromise = import("ghostty-web").then(async (module) => {
+      await module.init();
+      return module;
+    });
   }
-  return ghosttyInitPromise;
+  return ghosttyModulePromise;
 };
 
 const RECENT_SESSION_KEY = "fn-knock:terminal:last-session";
@@ -128,8 +132,8 @@ const renameDialogOpen = ref(false);
 const renameDialogValue = ref("");
 const isRenamingSession = ref(false);
 
-let term: Terminal | null = null;
-let fitAddon: FitAddon | null = null;
+let term: InstanceType<GhosttyModule["Terminal"]> | null = null;
+let fitAddon: InstanceType<GhosttyModule["FitAddon"]> | null = null;
 let pollGeneration = 0;
 let lastOutputCursor = 0;
 let resizeTimer: number | null = null;
@@ -1367,7 +1371,7 @@ const destroySelectedSession = async () => {
 
 const initializeTerminal = async () => {
   if (!terminalMountRef.value || term) return;
-  await ensureGhostty();
+  const { Terminal, FitAddon } = await ensureGhostty();
   term = new Terminal({
     fontSize: terminalFontSize.value,
     cursorBlink: true,

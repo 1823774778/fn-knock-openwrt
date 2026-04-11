@@ -1,4 +1,4 @@
-import { Elysia, t } from "elysia";
+import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { openapi } from "@elysiajs/openapi";
 import { join, dirname } from "node:path";
@@ -41,7 +41,6 @@ import { registerDDNSCron } from "./cron/ddns";
 import { registerSystemMonitorCron } from "./cron/system-monitor";
 import { registerUpdateCron } from "./cron/update";
 import { dashboardRoutes } from "./routes/dashboard";
-import { dataPath } from "./lib/AppDirManager";
 import { initCleanScript } from "./lib/init-scripts";
 import { ipDetectorPlugin } from "./plugins/ip-detector";
 import { getRequiredEnv } from "./lib/env";
@@ -70,11 +69,38 @@ import { systemNotificationRuntime } from "./lib/system-notifications/runtime";
 import { systemClockManager } from "./lib/system-clock-manager";
 import { adminOpenApiTags, hideFromDocs } from "./lib/openapi";
 import { APP_LOCAL_VERSION } from "./lib/app-version";
+import {
+  getCapabilityUnavailableMessage,
+  getRuntimeCapabilities,
+  getRuntimeProfile,
+} from "./lib/runtime-profile";
+import {
+  DOCKER_ADMIN_PROXY_HEADER_NAME,
+  dockerAdminPanelManager,
+  isDockerAdminPublicPath,
+  getDockerAdminProxySecret,
+  isDockerAdminProtectedPath,
+  isPrivateNetworkClient,
+  isDockerAdminProxyRequest,
+  resolveClientIpFromIncomingMessage,
+} from "./lib/docker-admin-panel";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const runtimeProfile = getRuntimeProfile();
+const runtimeCapabilities = getRuntimeCapabilities(runtimeProfile);
 
 const BACKEND_PORT = process.env.BACKEND_PORT || 7998;
 const AUTH_PORT = process.env.AUTH_PORT || 7997;
+const ADMIN_VIEW_PORT = runtimeProfile.is_docker
+  ? process.env.ADMIN_VIEW_PORT?.trim() || "7991"
+  : "";
+const BACKEND_HOST =
+  process.env.BACKEND_HOST?.trim() ||
+  (runtimeProfile.is_docker ? "127.0.0.1" : "127.0.0.1");
+const AUTH_HOST = process.env.AUTH_HOST?.trim() || "127.0.0.1";
+const ADMIN_VIEW_HOST =
+  process.env.ADMIN_VIEW_HOST?.trim() ||
+  (runtimeProfile.is_docker ? "0.0.0.0" : BACKEND_HOST);
 
 const ADMIN_STATIC_PATH_FROM_ENV = process.env.ADMIN_STATIC_PATH?.trim();
 const DEV_STATIC_PATH = join(__dirname, "../../app/ui/www");
@@ -94,6 +120,9 @@ if (!existsSync(STATIC_PATH)) {
   );
 }
 console.log(`Serving static files from: ${STATIC_PATH}`);
+console.log(
+  `[runtime] deployment_target=${runtimeProfile.deployment_target} docker=${runtimeProfile.is_docker} linux=${runtimeProfile.is_linux} root=${runtimeProfile.is_root_process}`,
+);
 
 const RUNTIME_HMAC_SECRET = getRequiredEnv("HMAC_SECRET");
 const EXPOSE_RUNTIME_HMAC_SECRET =
@@ -116,6 +145,11 @@ const toPort = (value: string | number): number => {
   return port;
 };
 
+const toOptionalPort = (value: string): number | null => {
+  if (!value) return null;
+  return toPort(value);
+};
+
 const toHeaders = (rawHeaders: IncomingHttpHeaders): Headers => {
   const headers = new Headers();
   for (const [key, value] of Object.entries(rawHeaders)) {
@@ -129,12 +163,25 @@ const toHeaders = (rawHeaders: IncomingHttpHeaders): Headers => {
   return headers;
 };
 
-const toRequest = (req: IncomingMessage): Request => {
+const toRequest = (
+  req: IncomingMessage,
+  options?: {
+    url?: URL;
+    headerOverrides?: Record<string, string | null | undefined>;
+  },
+): Request => {
   const host = req.headers.host || "127.0.0.1";
   const rawUrl = req.url || "/";
-  const url = new URL(rawUrl, `http://${host}`);
+  const url = options?.url || new URL(rawUrl, `http://${host}`);
   const method = req.method || "GET";
   const headers = toHeaders(req.headers);
+  for (const [key, value] of Object.entries(options?.headerOverrides || {})) {
+    if (value == null || value === "") {
+      headers.delete(key);
+    } else {
+      headers.set(key, value);
+    }
+  }
   const init: RequestInit & { duplex?: "half" } = { method, headers };
   if (method !== "GET" && method !== "HEAD") {
     init.body = Readable.toWeb(req) as any;
@@ -205,6 +252,171 @@ const startNodeServer = (service: Elysia, port: number, hostname: string) => {
   return server;
 };
 
+const inferRequestProtocol = (req: IncomingMessage): "http" | "https" => {
+  const forwardedProto = String(req.headers["x-forwarded-proto"] || "")
+    .split(",")[0]
+    ?.trim()
+    ?.toLowerCase();
+  if (forwardedProto === "https") return "https";
+  if (forwardedProto === "http") return "http";
+  return "http";
+};
+
+const buildDockerAdminDeniedResponse = (
+  clientIp: string,
+  prefersJson: boolean,
+) => {
+  if (prefersJson) {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        message: "Docker 管理面板仅允许内网访问",
+      }),
+      {
+        status: 403,
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          "cache-control": "no-store",
+          "x-content-type-options": "nosniff",
+          "x-frame-options": "DENY",
+          "referrer-policy": "no-referrer",
+        },
+      },
+    );
+  }
+
+  const body = `<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>拒绝访问</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background:
+          radial-gradient(circle at top left, rgba(59, 130, 246, 0.16), transparent 28%),
+          radial-gradient(circle at bottom right, rgba(244, 63, 94, 0.12), transparent 30%),
+          #f5f7fb;
+        color: #111827;
+      }
+      .card {
+        width: min(92vw, 420px);
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        border-radius: 20px;
+        background: rgba(255, 255, 255, 0.94);
+        box-shadow: 0 22px 60px rgba(15, 23, 42, 0.12);
+        padding: 28px 24px;
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 48px;
+        height: 48px;
+        border-radius: 999px;
+        background: rgba(239, 68, 68, 0.12);
+        color: #dc2626;
+        font-size: 22px;
+        font-weight: 700;
+      }
+      h1 {
+        margin: 18px 0 10px;
+        font-size: 24px;
+      }
+      p {
+        margin: 0;
+        line-height: 1.7;
+        color: #475569;
+      }
+      .meta {
+        margin-top: 18px;
+        padding: 12px 14px;
+        border-radius: 14px;
+        background: #f8fafc;
+        color: #334155;
+        font-size: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <section class="card">
+      <div class="badge">!</div>
+      <h1>拒绝访问</h1>
+      <p>Docker 管理面板只允许从内网地址访问。请在局域网、VPN 或宿主机本地环境中打开该入口。</p>
+      <div class="meta">当前识别来源 IP：${clientIp || "unknown"}</div>
+    </section>
+  </body>
+</html>`;
+
+  return new Response(body, {
+    status: 403,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+      "content-security-policy":
+        "default-src 'none'; style-src 'unsafe-inline'; img-src 'none'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'",
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+      "referrer-policy": "no-referrer",
+    },
+  });
+};
+
+const startDockerAdminViewServer = (
+  service: Elysia,
+  port: number,
+  hostname: string,
+) => {
+  const server = createServer(async (req, res) => {
+    try {
+      const clientIp = resolveClientIpFromIncomingMessage(req);
+      const rawUrl = req.url || "/";
+      const accepts = String(req.headers.accept || "").toLowerCase();
+      const prefersJson =
+        rawUrl.startsWith("/api/") || accepts.includes("application/json");
+
+      if (!clientIp || !isPrivateNetworkClient(clientIp)) {
+        await writeResponse(
+          res,
+          buildDockerAdminDeniedResponse(clientIp, prefersJson),
+        );
+        return;
+      }
+
+      const protocol = inferRequestProtocol(req);
+      const host = req.headers.host?.trim() || `127.0.0.1:${port}`;
+      const request = toRequest(req, {
+        url: new URL(rawUrl, `${protocol}://${host}`),
+        headerOverrides: {
+          [DOCKER_ADMIN_PROXY_HEADER_NAME]: getDockerAdminProxySecret(),
+          "x-forwarded-for": clientIp,
+          "x-real-ip": clientIp,
+        },
+      });
+      const response = await service.fetch(request);
+      await writeResponse(res, response);
+    } catch (error) {
+      console.error("Failed to handle docker admin view request:", error);
+      res.statusCode = 500;
+      res.setHeader("content-type", "application/json; charset=utf-8");
+      res.end(
+        JSON.stringify({ success: false, message: "Internal Server Error" }),
+      );
+    }
+  });
+  server.listen(port, hostname);
+  return server;
+};
+
 const serveIndexHtml = (rootPath: string, injectRuntimeSecret = false) => {
   const indexPath = join(rootPath, "index.html");
   if (!existsSync(indexPath)) {
@@ -235,6 +447,41 @@ const buildRuntimeHmacSecretResponse = (set: {
 const app = new Elysia();
 
 const authApp = new Elysia();
+
+app.onBeforeHandle(async ({ request, set }) => {
+  if (!runtimeProfile.is_docker) {
+    return;
+  }
+
+  const requestPath = new URL(request.url).pathname;
+  if (!isDockerAdminProtectedPath(requestPath)) {
+    return;
+  }
+
+  applyNoStoreHeaders(set.headers);
+
+  if (!isDockerAdminProxyRequest(request)) {
+    set.status = 403;
+    return {
+      success: false,
+      message: "Docker 模式下请通过 7991 管理入口访问后台接口",
+    };
+  }
+
+  if (isDockerAdminPublicPath(requestPath)) {
+    return;
+  }
+
+  const session =
+    await dockerAdminPanelManager.resolveSessionFromRequest(request);
+  if (!session) {
+    set.status = 401;
+    return {
+      success: false,
+      message: "请先登录 Docker 管理面板",
+    };
+  }
+});
 
 const AUTH_STATIC_PATH_FROM_ENV = process.env.AUTH_STATIC_PATH?.trim();
 const AUTH_DEV_STATIC_PATH = join(__dirname, "../../server-auth-view/dist");
@@ -480,9 +727,25 @@ await cleanupLegacyAuthLogStorage().catch((error) => {
     error,
   );
 });
-await syncSmartConnectOnBoot().catch((error) => {
-  console.error("[smart-connect] failed to sync dnsmasq state on boot:", error);
-});
+const runtimeConstraintResult = await configManager.applyRuntimeConstraints();
+config = runtimeConstraintResult.config;
+if (runtimeConstraintResult.updated) {
+  console.log(
+    `[runtime] applied runtime config corrections: ${runtimeConstraintResult.corrected.join(", ")}`,
+  );
+}
+if (runtimeCapabilities.smart_connect_available) {
+  await syncSmartConnectOnBoot().catch((error) => {
+    console.error(
+      "[smart-connect] failed to sync dnsmasq state on boot:",
+      error,
+    );
+  });
+} else {
+  console.log(
+    `[smart-connect] skipped boot sync: ${getCapabilityUnavailableMessage("smart_connect_available")}`,
+  );
+}
 await firewallService.applyRunTypeConfig(config.run_type);
 syncGatewayLoggingToGateway(config.gateway_logging).catch((error) => {
   console.error(
@@ -502,12 +765,29 @@ systemNotificationRuntime.start();
 
 const backendPort = toPort(BACKEND_PORT);
 const authPort = toPort(AUTH_PORT);
+const adminViewPort = runtimeProfile.is_docker
+  ? toOptionalPort(ADMIN_VIEW_PORT)
+  : null;
 
-console.log(`Elysia Admin Backend is running at ${backendPort}`);
+console.log(
+  `Elysia Admin Backend is running at ${BACKEND_HOST}:${backendPort}`,
+);
+if (runtimeProfile.is_docker && adminViewPort !== null) {
+  console.log(
+    `Elysia Docker Admin View is running at ${ADMIN_VIEW_HOST}:${adminViewPort}`,
+  );
+  startDockerAdminViewServer(app, adminViewPort, ADMIN_VIEW_HOST);
+}
 
-startNodeServer(authApp, authPort, "127.0.0.1");
-console.log(`Elysia Auth Backend is running at ${authPort}`);
+startNodeServer(authApp, authPort, AUTH_HOST);
+console.log(`Elysia Auth Backend is running at ${AUTH_HOST}:${authPort}`);
 
-initCleanScript();
+if (runtimeCapabilities.host_firewall_available) {
+  initCleanScript();
+} else {
+  console.log(
+    `[runtime] skipped clean.sh generation: ${getCapabilityUnavailableMessage("host_firewall_available")}`,
+  );
+}
 
-startNodeServer(app, backendPort, "127.0.0.1");
+startNodeServer(app, backendPort, BACKEND_HOST);

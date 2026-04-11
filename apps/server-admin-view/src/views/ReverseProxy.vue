@@ -297,6 +297,9 @@
                     @change="onToggleAllDiscoverSelect"
                   />
                 </TableHead>
+                <TableHead v-if="showDiscoverHostColumn" class="w-[140px]">
+                  主机
+                </TableHead>
                 <TableHead class="w-[80px]">端口</TableHead>
                 <TableHead class="w-[100px]">状态</TableHead>
                 <TableHead>服务标识</TableHead>
@@ -316,9 +319,15 @@
                     v-model="selectedServices"
                   />
                 </TableCell>
+                <TableCell
+                  v-if="showDiscoverHostColumn"
+                  class="font-mono text-xs text-muted-foreground"
+                >
+                  {{ resolveDiscoveredServiceHost(svc) }}
+                </TableCell>
                 <TableCell class="font-medium">
                   <a
-                    :href="`http://${currentHostname}:${svc.port}`"
+                    :href="`http://${resolveDiscoveredServiceHost(svc)}:${svc.port}`"
                     target="_blank"
                     class="text-primary hover:underline hover:text-primary/80 transition-colors"
                     title="在新窗口打开"
@@ -370,6 +379,11 @@
             已扫描 {{ discoveredData.totalPortsScanned }} 个端口，选中
             {{ selectedServices.length }} /
             {{ discoveredData.services.length }} 项
+            <template
+              v-if="discoveredData.scannedHosts && discoveredData.scannedHosts > 1"
+            >
+              ，覆盖 {{ discoveredData.scanScope || `${discoveredData.scannedHosts} 台主机` }}
+            </template>
           </template>
         </span>
         <div class="space-x-2">
@@ -795,6 +809,16 @@ const {
 } = useDiscoverServicesSelection<DiscoveredServiceInfo, ScanDiscoverResponse>({
   getPath: (svc) => svc.detail.rule.path,
 });
+const showDiscoverHostColumn = computed(() => {
+  const hosts = new Set(
+    (discoveredData.value?.services || [])
+      .map((service) => service.host?.trim())
+      .filter(Boolean),
+  );
+  return hosts.size > 1;
+});
+const resolveDiscoveredServiceHost = (service: DiscoveredServiceInfo) =>
+  service.host?.trim() || discoveredData.value?.host?.trim() || currentHostname;
 
 const onToggleAllDiscoverSelect = (e: Event) => {
   const checked = (e.target as HTMLInputElement).checked;
@@ -828,10 +852,10 @@ async function triggerScan() {
 }
 
 async function saveDiscoveredServices() {
-  if (!isDiscoverSelectionValid.value) return;
+  if (!isDiscoverSelectionValid.value || !discoveredData.value) return;
   const candidates = selectedServices.value.map((svc) => ({
     path: svc.detail.rule.path?.trim() || "",
-    target: `http://127.0.0.1:${svc.port}/`.trim(),
+    target: `http://${resolveDiscoveredServiceHost(svc)}:${svc.port}/`.trim(),
   }));
   const { duplicatePaths, duplicateTargets } = validateBatchMappingDuplicates(
     allMappings.value,
@@ -854,9 +878,10 @@ async function saveDiscoveredServices() {
 
     for (const svc of selectedServices.value) {
       const rule = svc.detail.rule;
+      const discoveredHost = resolveDiscoveredServiceHost(svc);
       const newMap = buildProxyMapping({
         path: rule.path,
-        target: `http://127.0.0.1:${svc.port}/`,
+        target: `http://${discoveredHost}:${svc.port}/`,
         rewrite_html: rule.rewrite_html,
         use_auth: rule.use_auth,
         use_root_mode: rule.use_root_mode,

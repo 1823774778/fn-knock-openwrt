@@ -1,0 +1,667 @@
+import type { IncomingMessage } from "node:http";
+import { randomBytes, scrypt as scryptCallback } from "node:crypto";
+import { promisify } from "node:util";
+import { redis } from "./redis";
+import { getRequiredEnv } from "./env";
+import { getClientIp } from "./auth-request";
+import { normalizeIp, isWhitelistExemptIp } from "./ip-normalize";
+import { safeEqualString } from "./security";
+
+const scryptAsync = promisify(scryptCallback);
+
+const DOCKER_ADMIN_PASSWORD_KEY = "fn_knock:docker_admin:password:v1";
+const DOCKER_ADMIN_SESSION_PREFIX = "fn_knock:docker_admin:session:v1";
+const DOCKER_ADMIN_LOGIN_BACKOFF_PREFIX =
+  "fn_knock:docker_admin:login_backoff:v1";
+const DEFAULT_SESSION_TTL_SECONDS = 12 * 60 * 60;
+const SESSION_TTL_SECONDS = (() => {
+  const parsed = Number.parseInt(
+    process.env.DOCKER_ADMIN_SESSION_TTL_SECONDS || "",
+    10,
+  );
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_SESSION_TTL_SECONDS;
+  }
+  return Math.min(7 * 24 * 60 * 60, Math.max(15 * 60, parsed));
+})();
+const DOCKER_ADMIN_LOGIN_BACKOFF_TTL_SECONDS = 60 * 60;
+const DOCKER_ADMIN_LOGIN_BACKOFF_BASE_DELAY_MS = 2000;
+const DOCKER_ADMIN_LOGIN_BACKOFF_MAX_DELAY_MS = 15 * 60 * 1000;
+
+const SCRYPT_PARAMS = {
+  N: 16384,
+  r: 8,
+  p: 1,
+  keyLength: 64,
+  maxmem: 128 * 1024 * 1024,
+};
+
+const PROXY_PROTO_HEADERS = [
+  "ali-real-client-ip",
+  "x-forwarded-for",
+  "x-real-ip",
+] as const;
+
+export const DOCKER_ADMIN_SESSION_COOKIE_NAME = "fn-knock-admin-panel-session";
+export const DOCKER_ADMIN_PROXY_HEADER_NAME = "x-fn-knock-admin-proxy";
+
+const DOCKER_ADMIN_PROXY_SECRET = getRequiredEnv("ADMIN_PROXY_SECRET");
+
+export interface DockerAdminPasswordRecord {
+  algorithm: "scrypt";
+  salt: string;
+  hash: string;
+  n: number;
+  r: number;
+  p: number;
+  key_length: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DockerAdminSessionRecord {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  expires_at: string;
+  ip: string;
+  user_agent: string;
+}
+
+export interface DockerAdminBootstrapState {
+  enabled: boolean;
+  password_configured: boolean;
+  authenticated: boolean;
+  session_expires_at: string | null;
+}
+
+export interface DockerAdminResetSummary {
+  password_cleared: boolean;
+  sessions_cleared: number;
+  login_failures_cleared: number;
+}
+
+interface DockerAdminLoginAttemptRecord {
+  ip: string;
+  attempts: number;
+  last_attempt_at: string;
+  blocked_until: number;
+}
+
+const toIso = (value = Date.now()) => new Date(value).toISOString();
+
+const sessionKey = (sessionId: string) =>
+  `${DOCKER_ADMIN_SESSION_PREFIX}:${sessionId}`;
+
+const loginBackoffKey = (ip: string) =>
+  `${DOCKER_ADMIN_LOGIN_BACKOFF_PREFIX}:${ip}`;
+
+const scanKeysByPattern = async (pattern: string): Promise<string[]> => {
+  const keys: string[] = [];
+  let cursor = "0";
+
+  do {
+    const [nextCursor, batch] = await redis.scan(
+      cursor,
+      "MATCH",
+      pattern,
+      "COUNT",
+      200,
+    );
+    cursor = nextCursor;
+    if (batch.length > 0) {
+      keys.push(...batch);
+    }
+  } while (cursor !== "0");
+
+  return keys;
+};
+
+const deleteKeys = async (keys: string[]): Promise<number> => {
+  if (keys.length === 0) return 0;
+
+  let deleted = 0;
+  for (let index = 0; index < keys.length; index += 200) {
+    const batch = keys.slice(index, index + 200);
+    deleted += await redis.del(...batch);
+  }
+
+  return deleted;
+};
+
+const clearKeysByPattern = async (pattern: string): Promise<number> => {
+  const keys = await scanKeysByPattern(pattern);
+  return deleteKeys(keys);
+};
+
+const parseCookieValue = (
+  cookieHeader: string | null | undefined,
+  name: string,
+): string | null => {
+  const cookieSource = String(cookieHeader ?? "");
+  if (!cookieSource) return null;
+
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = cookieSource.match(
+    new RegExp(`(?:^|;\\s*)${escapedName}=([^;]+)`),
+  );
+  if (!match?.[1]) return null;
+
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return match[1];
+  }
+};
+
+const normalizeIncomingForwardedIp = (
+  headerValue: string | null | undefined,
+): string => {
+  const raw = String(headerValue ?? "").trim();
+  if (!raw) return "";
+
+  return normalizeIp(raw.split(",")[0]?.trim());
+};
+
+export const resolveClientIpFromIncomingMessage = (
+  request: IncomingMessage,
+): string => {
+  const socketIp = normalizeIp(request.socket.remoteAddress);
+  const forwardedIp = PROXY_PROTO_HEADERS.map((headerName) =>
+    normalizeIncomingForwardedIp(request.headers[headerName]),
+  ).find(Boolean);
+
+  if (socketIp && isWhitelistExemptIp(socketIp) && forwardedIp) {
+    return forwardedIp;
+  }
+
+  return socketIp || forwardedIp || "";
+};
+
+export const isPrivateNetworkClient = (ip: string | null | undefined) =>
+  isWhitelistExemptIp(ip);
+
+const normalizeDockerAdminTrackingIp = (ip: string | null | undefined) => {
+  const normalized = normalizeIp(ip);
+  if (normalized) return normalized;
+
+  const raw = String(ip ?? "").trim();
+  return raw || "unknown";
+};
+
+const normalizeDockerAdminUserAgent = (
+  userAgent: string | null | undefined,
+) => {
+  const normalized = String(userAgent ?? "")
+    .trim()
+    .slice(0, 512);
+  return normalized || "unknown";
+};
+
+const derivePasswordHash = async (
+  password: string,
+  saltHex: string,
+): Promise<string> => {
+  const derived = (await scryptAsync(
+    password,
+    Buffer.from(saltHex, "hex"),
+    SCRYPT_PARAMS.keyLength,
+    {
+      N: SCRYPT_PARAMS.N,
+      r: SCRYPT_PARAMS.r,
+      p: SCRYPT_PARAMS.p,
+      maxmem: SCRYPT_PARAMS.maxmem,
+    },
+  )) as Buffer;
+
+  return derived.toString("hex");
+};
+
+export const validateDockerAdminPassword = (
+  password: string,
+): string | null => {
+  if (password.length < 6) {
+    return "管理面板密码至少需要 6 位";
+  }
+  if (password.length > 128) {
+    return "管理面板密码不能超过 128 位";
+  }
+  if (/\s/.test(password)) {
+    return "管理面板密码不能包含空白字符";
+  }
+  if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) {
+    return "管理面板密码需要同时包含字母和数字";
+  }
+
+  return null;
+};
+
+const getPasswordRecord =
+  async (): Promise<DockerAdminPasswordRecord | null> => {
+    const raw = await redis.get(DOCKER_ADMIN_PASSWORD_KEY);
+    if (!raw) return null;
+
+    try {
+      const parsed = JSON.parse(raw) as Partial<DockerAdminPasswordRecord>;
+      if (
+        parsed.algorithm !== "scrypt" ||
+        typeof parsed.salt !== "string" ||
+        typeof parsed.hash !== "string" ||
+        typeof parsed.created_at !== "string" ||
+        typeof parsed.updated_at !== "string"
+      ) {
+        return null;
+      }
+
+      return {
+        algorithm: "scrypt",
+        salt: parsed.salt,
+        hash: parsed.hash,
+        n: parsed.n || SCRYPT_PARAMS.N,
+        r: parsed.r || SCRYPT_PARAMS.r,
+        p: parsed.p || SCRYPT_PARAMS.p,
+        key_length: parsed.key_length || SCRYPT_PARAMS.keyLength,
+        created_at: parsed.created_at,
+        updated_at: parsed.updated_at,
+      };
+    } catch {
+      return null;
+    }
+  };
+
+const getSessionRecord = async (
+  sessionId: string,
+): Promise<DockerAdminSessionRecord | null> => {
+  const raw = await redis.get(sessionKey(sessionId));
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<DockerAdminSessionRecord>;
+    if (
+      typeof parsed.id !== "string" ||
+      typeof parsed.created_at !== "string" ||
+      typeof parsed.updated_at !== "string" ||
+      typeof parsed.expires_at !== "string" ||
+      typeof parsed.ip !== "string" ||
+      typeof parsed.user_agent !== "string"
+    ) {
+      return null;
+    }
+
+    return {
+      id: parsed.id,
+      created_at: parsed.created_at,
+      updated_at: parsed.updated_at,
+      expires_at: parsed.expires_at,
+      ip: parsed.ip,
+      user_agent: parsed.user_agent,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const persistSessionRecord = async (
+  record: DockerAdminSessionRecord,
+): Promise<void> => {
+  const expiresAt = Date.parse(record.expires_at);
+  const ttlSeconds = Math.max(1, Math.ceil((expiresAt - Date.now()) / 1000));
+
+  await redis.set(
+    sessionKey(record.id),
+    JSON.stringify(record),
+    "EX",
+    ttlSeconds,
+  );
+};
+
+const isSecureRequest = (request: Request): boolean => {
+  const forwardedProto = request.headers
+    .get("x-forwarded-proto")
+    ?.split(",")[0]
+    ?.trim()
+    ?.toLowerCase();
+
+  if (forwardedProto === "https") return true;
+  if (forwardedProto === "http") return false;
+
+  try {
+    return new URL(request.url).protocol === "https:";
+  } catch {
+    return false;
+  }
+};
+
+export const isDockerAdminProxyRequest = (request: Request): boolean => {
+  const headerValue = request.headers
+    .get(DOCKER_ADMIN_PROXY_HEADER_NAME)
+    ?.trim();
+  if (!headerValue) return false;
+
+  return safeEqualString(headerValue, DOCKER_ADMIN_PROXY_SECRET);
+};
+
+export const getDockerAdminProxySecret = () => DOCKER_ADMIN_PROXY_SECRET;
+
+export const isDockerAdminPublicPath = (path: string): boolean =>
+  path === "/api/admin/healthz" ||
+  path === "/api/admin/panel/bootstrap" ||
+  path === "/api/admin/panel/login" ||
+  path === "/api/admin/panel/password" ||
+  path === "/api/admin/panel/logout";
+
+export const isDockerAdminProtectedPath = (path: string): boolean =>
+  path.startsWith("/api/admin") ||
+  path === "/docs" ||
+  path.startsWith("/docs/") ||
+  path.startsWith("/swagger-ui");
+
+const getLoginAttemptRecord = async (
+  ip: string,
+): Promise<DockerAdminLoginAttemptRecord | null> => {
+  const raw = await redis.get(loginBackoffKey(ip));
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<DockerAdminLoginAttemptRecord>;
+    if (
+      typeof parsed.ip !== "string" ||
+      !Number.isFinite(parsed.attempts) ||
+      typeof parsed.last_attempt_at !== "string" ||
+      !Number.isFinite(parsed.blocked_until)
+    ) {
+      return null;
+    }
+
+    return {
+      ip: parsed.ip,
+      attempts: Math.max(0, Math.trunc(parsed.attempts)),
+      last_attempt_at: parsed.last_attempt_at,
+      blocked_until: Math.trunc(parsed.blocked_until),
+    };
+  } catch {
+    return null;
+  }
+};
+
+const persistLoginAttemptRecord = async (
+  record: DockerAdminLoginAttemptRecord,
+): Promise<void> => {
+  await redis.set(
+    loginBackoffKey(record.ip),
+    JSON.stringify(record),
+    "EX",
+    DOCKER_ADMIN_LOGIN_BACKOFF_TTL_SECONDS,
+  );
+};
+
+const calculateLoginBackoffMs = (attempts: number): number => {
+  const exponent = Math.max(0, Math.trunc(attempts) - 1);
+  const delay = DOCKER_ADMIN_LOGIN_BACKOFF_BASE_DELAY_MS * 2 ** exponent;
+  return Math.min(DOCKER_ADMIN_LOGIN_BACKOFF_MAX_DELAY_MS, delay);
+};
+
+const requestMatchesSessionRecord = (
+  record: DockerAdminSessionRecord,
+  request: Request,
+): boolean => {
+  const requestIp = normalizeDockerAdminTrackingIp(getClientIp(request));
+  const requestUserAgent = normalizeDockerAdminUserAgent(
+    request.headers.get("user-agent"),
+  );
+
+  return (
+    safeEqualString(record.ip, requestIp) &&
+    safeEqualString(record.user_agent, requestUserAgent)
+  );
+};
+
+export const dockerAdminPanelManager = {
+  sessionTtlSeconds: SESSION_TTL_SECONDS,
+
+  async isPasswordConfigured(): Promise<boolean> {
+    return Boolean(await getPasswordRecord());
+  },
+
+  async verifyPassword(password: string): Promise<boolean> {
+    const record = await getPasswordRecord();
+    if (!record) return false;
+
+    const derivedHash = await derivePasswordHash(password, record.salt);
+    return safeEqualString(derivedHash, record.hash);
+  },
+
+  async setPassword(password: string): Promise<void> {
+    const passwordValidationMessage = validateDockerAdminPassword(password);
+    if (passwordValidationMessage) {
+      throw new Error(passwordValidationMessage);
+    }
+
+    const existingRecord = await getPasswordRecord();
+    if (existingRecord) {
+      throw new Error("管理面板密码已经设置过了");
+    }
+
+    const now = toIso();
+    const salt = randomBytes(16).toString("hex");
+    const hash = await derivePasswordHash(password, salt);
+    const nextRecord: DockerAdminPasswordRecord = {
+      algorithm: "scrypt",
+      salt,
+      hash,
+      n: SCRYPT_PARAMS.N,
+      r: SCRYPT_PARAMS.r,
+      p: SCRYPT_PARAMS.p,
+      key_length: SCRYPT_PARAMS.keyLength,
+      created_at: now,
+      updated_at: now,
+    };
+
+    await redis.set(DOCKER_ADMIN_PASSWORD_KEY, JSON.stringify(nextRecord));
+  },
+
+  async changePassword(password: string): Promise<void> {
+    const passwordValidationMessage = validateDockerAdminPassword(password);
+    if (passwordValidationMessage) {
+      throw new Error(passwordValidationMessage);
+    }
+
+    const existingRecord = await getPasswordRecord();
+    if (!existingRecord) {
+      throw new Error("当前还没有设置管理面板密码");
+    }
+
+    const isSamePassword = await this.verifyPassword(password);
+    if (isSamePassword) {
+      throw new Error("新密码不能与当前密码相同");
+    }
+
+    const now = toIso();
+    const salt = randomBytes(16).toString("hex");
+    const hash = await derivePasswordHash(password, salt);
+    const nextRecord: DockerAdminPasswordRecord = {
+      algorithm: "scrypt",
+      salt,
+      hash,
+      n: SCRYPT_PARAMS.N,
+      r: SCRYPT_PARAMS.r,
+      p: SCRYPT_PARAMS.p,
+      key_length: SCRYPT_PARAMS.keyLength,
+      created_at: existingRecord.created_at,
+      updated_at: now,
+    };
+
+    await redis.set(DOCKER_ADMIN_PASSWORD_KEY, JSON.stringify(nextRecord));
+    await Promise.all([this.clearAllSessions(), this.clearAllLoginFailures()]);
+  },
+
+  async createSession(args: {
+    ip: string;
+    userAgent: string;
+  }): Promise<DockerAdminSessionRecord> {
+    const now = Date.now();
+    const sessionId = randomBytes(32).toString("hex");
+    const record: DockerAdminSessionRecord = {
+      id: sessionId,
+      created_at: toIso(now),
+      updated_at: toIso(now),
+      expires_at: toIso(now + SESSION_TTL_SECONDS * 1000),
+      ip: normalizeDockerAdminTrackingIp(args.ip),
+      user_agent: normalizeDockerAdminUserAgent(args.userAgent),
+    };
+
+    await persistSessionRecord(record);
+    return record;
+  },
+
+  async deleteSessionById(sessionId: string | null | undefined): Promise<void> {
+    if (!sessionId) return;
+    await redis.del(sessionKey(sessionId));
+  },
+
+  async deleteSessionFromRequest(request: Request): Promise<void> {
+    const sessionId = parseCookieValue(
+      request.headers.get("cookie"),
+      DOCKER_ADMIN_SESSION_COOKIE_NAME,
+    );
+
+    await this.deleteSessionById(sessionId);
+  },
+
+  async resolveSessionFromRequest(
+    request: Request,
+  ): Promise<DockerAdminSessionRecord | null> {
+    const sessionId = parseCookieValue(
+      request.headers.get("cookie"),
+      DOCKER_ADMIN_SESSION_COOKIE_NAME,
+    );
+    if (!sessionId) return null;
+
+    const record = await getSessionRecord(sessionId);
+    if (!record) return null;
+
+    const expiresAt = Date.parse(record.expires_at);
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+      await this.deleteSessionById(sessionId);
+      return null;
+    }
+
+    if (!requestMatchesSessionRecord(record, request)) {
+      await this.deleteSessionById(sessionId);
+      return null;
+    }
+
+    const refreshedRecord: DockerAdminSessionRecord = {
+      ...record,
+      updated_at: toIso(),
+      expires_at: toIso(Date.now() + SESSION_TTL_SECONDS * 1000),
+    };
+    await persistSessionRecord(refreshedRecord);
+
+    return refreshedRecord;
+  },
+
+  async buildBootstrapState(
+    request: Request,
+    enabled: boolean,
+  ): Promise<DockerAdminBootstrapState> {
+    if (!enabled) {
+      return {
+        enabled: false,
+        password_configured: false,
+        authenticated: true,
+        session_expires_at: null,
+      };
+    }
+
+    const [passwordConfigured, session] = await Promise.all([
+      this.isPasswordConfigured(),
+      this.resolveSessionFromRequest(request),
+    ]);
+
+    return {
+      enabled: true,
+      password_configured: passwordConfigured,
+      authenticated: Boolean(session),
+      session_expires_at: session?.expires_at || null,
+    };
+  },
+
+  async ensureLoginAllowed(ip: string | null | undefined): Promise<{
+    allowed: boolean;
+    retryAfter?: number;
+    blockedUntil?: number;
+  }> {
+    const trackingIp = normalizeDockerAdminTrackingIp(ip);
+    const record = await getLoginAttemptRecord(trackingIp);
+    if (!record) {
+      return { allowed: true };
+    }
+
+    const now = Date.now();
+    if (!Number.isFinite(record.blocked_until) || record.blocked_until <= now) {
+      return { allowed: true };
+    }
+
+    return {
+      allowed: false,
+      retryAfter: Math.max(1, Math.ceil((record.blocked_until - now) / 1000)),
+      blockedUntil: record.blocked_until,
+    };
+  },
+
+  async registerLoginFailure(ip: string | null | undefined): Promise<{
+    attempts: number;
+    retryAfter: number;
+    blockedUntil: number;
+  }> {
+    const trackingIp = normalizeDockerAdminTrackingIp(ip);
+    const previousRecord = await getLoginAttemptRecord(trackingIp);
+    const attempts = (previousRecord?.attempts ?? 0) + 1;
+    const backoffMs = calculateLoginBackoffMs(attempts);
+    const blockedUntil = Date.now() + backoffMs;
+
+    await persistLoginAttemptRecord({
+      ip: trackingIp,
+      attempts,
+      last_attempt_at: toIso(),
+      blocked_until: blockedUntil,
+    });
+
+    return {
+      attempts,
+      retryAfter: Math.max(1, Math.ceil(backoffMs / 1000)),
+      blockedUntil,
+    };
+  },
+
+  async resetLoginFailures(ip: string | null | undefined): Promise<void> {
+    const trackingIp = normalizeDockerAdminTrackingIp(ip);
+    await redis.del(loginBackoffKey(trackingIp));
+  },
+
+  async clearAllSessions(): Promise<number> {
+    return clearKeysByPattern(`${DOCKER_ADMIN_SESSION_PREFIX}:*`);
+  },
+
+  async clearAllLoginFailures(): Promise<number> {
+    return clearKeysByPattern(`${DOCKER_ADMIN_LOGIN_BACKOFF_PREFIX}:*`);
+  },
+
+  async resetPasswordState(): Promise<DockerAdminResetSummary> {
+    const [passwordDeleted, sessionsCleared, loginFailuresCleared] =
+      await Promise.all([
+        redis.del(DOCKER_ADMIN_PASSWORD_KEY),
+        this.clearAllSessions(),
+        this.clearAllLoginFailures(),
+      ]);
+
+    return {
+      password_cleared: passwordDeleted > 0,
+      sessions_cleared: sessionsCleared,
+      login_failures_cleared: loginFailuresCleared,
+    };
+  },
+
+  isSecureRequest,
+};

@@ -62,7 +62,7 @@
                 class="w-auto min-w-28 justify-center px-5"
                 @click="navigateTo('/about')"
               >
-                系统更新
+                {{ aboutEntryLabel }}
               </Button>
             </div>
           </div>
@@ -117,7 +117,7 @@
                 class="h-8 w-auto min-w-0 justify-center px-2.5"
                 @click="navigateTo('/about')"
               >
-                系统更新
+                {{ aboutEntryLabel }}
               </Button>
             </div>
           </div>
@@ -165,6 +165,7 @@
                 刷新状态
               </Button>
               <Button
+                v-if="configStore.canSyncSystemClock"
                 size="sm"
                 :variant="
                   systemClockStore.status.timeMismatch
@@ -197,11 +198,7 @@
                 {{ updateStore.status.localVersion }}）
               </p>
               <p class="text-xs">
-                {{
-                  updateStore.isForceUpdate
-                    ? "重要更新，请尽快安装。"
-                    : "可前往关于页查看详情并更新。"
-                }}
+                {{ updateBannerDescription }}
               </p>
             </div>
             <div class="flex items-center gap-2">
@@ -214,6 +211,7 @@
                 查看详情
               </Button>
               <Button
+                v-if="configStore.canSelfUpdate"
                 size="sm"
                 :variant="updateStore.isForceUpdate ? 'destructive' : 'default'"
                 @click="startUpdateFromBanner"
@@ -335,6 +333,10 @@ watch(
 );
 
 const startUpdateFromBanner = async () => {
+  if (!configStore.canSelfUpdate) {
+    await navigateTo("/about");
+    return;
+  }
   await navigateTo("/about");
   await updateStore.checkAndDownload();
 };
@@ -400,7 +402,7 @@ const navItems = computed(() => {
   if (configStore.config?.gateway_logging?.enabled) {
     items.push({ name: "请求日志", path: "/request-logs", icon: ScrollText });
   }
-  if (configStore.config?.terminal_feature?.enabled) {
+  if (configStore.canUseTerminal && configStore.config?.terminal_feature?.enabled) {
     items.push({ name: "Web终端", path: "/terminal", icon: Terminal });
   }
   items.push({ name: "系统设置", path: "/system", icon: Settings });
@@ -416,6 +418,10 @@ const currentVersionLabel = computed(() => {
   const version = updateStore.status?.localVersion?.trim();
   return version ? `v${version}` : "";
 });
+
+const aboutEntryLabel = computed(() =>
+  configStore.canSelfUpdate ? "系统更新" : "版本信息",
+);
 
 const systemClockBannerTitle = computed(() => {
   const status = systemClockStore.status;
@@ -435,6 +441,9 @@ const systemClockBannerDescription = computed(() => {
   const messages = status.issues.map((issue) => issue.message);
   if (status.lastCheckError) {
     messages.push(`最近一次联网校验失败：${status.lastCheckError}`);
+  }
+  if (!configStore.canSyncSystemClock) {
+    messages.push("当前部署不支持宿主机时间同步，请在宿主机上处理。");
   }
   return messages.join(" ");
 });
@@ -457,5 +466,15 @@ const systemClockBannerMeta = computed(() => {
     parts.push(`校验来源：${status.networkSource}`);
   }
   return parts.join(" · ");
+});
+
+const updateBannerDescription = computed(() => {
+  if (configStore.canSelfUpdate) {
+    return updateStore.isForceUpdate
+      ? "重要更新，请尽快安装。"
+      : "可前往关于页查看详情并更新。";
+  }
+
+  return "可前往关于页查看版本信息与 Docker 升级说明。";
 });
 </script>

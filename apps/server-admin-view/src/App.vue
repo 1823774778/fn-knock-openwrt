@@ -2,12 +2,15 @@
 import { Toaster } from "@/components/ui/sonner";
 import { extractErrorMessage } from "@admin-shared/composables/useAsyncAction";
 import { toast } from "@admin-shared/utils/toast";
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import "vue-sonner/style.css";
+import DockerAdminAccessGate from "./components/DockerAdminAccessGate.vue";
 import WelcomeScreen from "./components/WelcomeScreen.vue";
 import { ConfigAPI } from "./lib/api";
+import { useDockerAdminAuthStore } from "./store/dockerAdminAuth";
 
 const WELCOME_GUIDE_STORAGE_KEY = "fn_knock:welcome-guide:completed";
+const dockerAdminAuthStore = useDockerAdminAuthStore();
 
 const readWelcomeGuideLocalFlag = () => {
   if (typeof window === "undefined") return false;
@@ -23,8 +26,32 @@ const hasLocalWelcomeGuideCompletion = readWelcomeGuideLocalFlag();
 const isWelcomeVisible = ref(false);
 const isWelcomeResolved = ref(hasLocalWelcomeGuideCompletion);
 const isSavingWelcomeStatus = ref(false);
+const hasLoadedWelcomeGuide = ref(false);
 const showWelcomeBootMask = computed(
-  () => !isWelcomeResolved.value && !isWelcomeVisible.value,
+  () =>
+    (!dockerAdminAuthStore.isBootstrapped &&
+      !dockerAdminAuthStore.bootstrapError) ||
+    (dockerAdminAuthStore.canEnterApp &&
+      !isWelcomeResolved.value &&
+      !isWelcomeVisible.value),
+);
+const shouldRenderRouter = computed(() => dockerAdminAuthStore.canEnterApp);
+const shouldShowDockerAdminGate = computed(() => {
+  if (dockerAdminAuthStore.bootstrapError) return true;
+  return (
+    dockerAdminAuthStore.isBootstrapped &&
+    dockerAdminAuthStore.isEnabled &&
+    !dockerAdminAuthStore.isAuthenticated
+  );
+});
+const dockerAdminGateMode = computed(() =>
+  dockerAdminAuthStore.needsPasswordSetup ? "setup" : "login",
+);
+const dockerAdminGateError = computed(
+  () => dockerAdminAuthStore.submitError || dockerAdminAuthStore.bootstrapError,
+);
+const dockerAdminGateShowRetry = computed(() =>
+  Boolean(dockerAdminAuthStore.bootstrapError),
 );
 
 const loadWelcomeGuideStatus = async () => {
@@ -43,6 +70,29 @@ const loadWelcomeGuideStatus = async () => {
   } finally {
     isWelcomeResolved.value = true;
   }
+};
+
+const initializeWelcomeGuide = async () => {
+  if (!dockerAdminAuthStore.canEnterApp || hasLoadedWelcomeGuide.value) {
+    return;
+  }
+
+  hasLoadedWelcomeGuide.value = true;
+
+  if (hasLocalWelcomeGuideCompletion) {
+    isWelcomeResolved.value = true;
+    void syncWelcomeGuideCompletion(false);
+    return;
+  }
+
+  isWelcomeResolved.value = false;
+  await loadWelcomeGuideStatus();
+};
+
+const resetWelcomeGuideGate = () => {
+  hasLoadedWelcomeGuide.value = false;
+  isWelcomeVisible.value = false;
+  isWelcomeResolved.value = true;
 };
 
 const syncWelcomeGuideCompletion = async (showErrorToast: boolean) => {
@@ -70,21 +120,90 @@ const handleWelcomeStart = () => {
   void syncWelcomeGuideCompletion(false);
 };
 
-onMounted(() => {
-  if (hasLocalWelcomeGuideCompletion) {
-    void syncWelcomeGuideCompletion(false);
+const bootstrapDockerAdmin = async (force = false) => {
+  try {
+    await dockerAdminAuthStore.bootstrap({ force });
+  } catch (error) {
+    console.error("Failed to bootstrap docker admin auth", error);
+    resetWelcomeGuideGate();
     return;
   }
 
-  void loadWelcomeGuideStatus();
+  if (dockerAdminAuthStore.canEnterApp) {
+    await initializeWelcomeGuide();
+    return;
+  }
+
+  resetWelcomeGuideGate();
+};
+
+const handleDockerAdminSubmit = async (password: string) => {
+  try {
+    await dockerAdminAuthStore.submitPassword(password);
+    await initializeWelcomeGuide();
+  } catch (error) {
+    console.error("Failed to submit docker admin password", error);
+  }
+};
+
+const handleDockerAdminRetry = async () => {
+  await bootstrapDockerAdmin(true);
+};
+
+const handleDockerAdminUnauthorized = () => {
+  dockerAdminAuthStore.handleUnauthorized();
+  resetWelcomeGuideGate();
+};
+
+onMounted(() => {
+  void bootstrapDockerAdmin();
+
+  if (typeof window !== "undefined") {
+    window.addEventListener(
+      "fn-knock:docker-admin-auth-required",
+      handleDockerAdminUnauthorized,
+    );
+  }
 });
+
+onUnmounted(() => {
+  if (typeof window !== "undefined") {
+    window.removeEventListener(
+      "fn-knock:docker-admin-auth-required",
+      handleDockerAdminUnauthorized,
+    );
+  }
+});
+
+watch(
+  () => dockerAdminAuthStore.canEnterApp,
+  (canEnterApp) => {
+    if (!canEnterApp) {
+      resetWelcomeGuideGate();
+      return;
+    }
+
+    void initializeWelcomeGuide();
+  },
+);
 </script>
 
 <template>
-  <RouterView />
+  <RouterView v-if="shouldRenderRouter" />
+  <DockerAdminAccessGate
+    v-else-if="shouldShowDockerAdminGate"
+    :mode="dockerAdminGateMode"
+    :loading="
+      dockerAdminAuthStore.isBootstrapping || dockerAdminAuthStore.isSubmitting
+    "
+    :error-message="dockerAdminGateError"
+    :show-retry="dockerAdminGateShowRetry"
+    @submit="handleDockerAdminSubmit"
+    @retry="handleDockerAdminRetry"
+  />
   <div v-if="showWelcomeBootMask" class="welcome-boot-mask"></div>
   <WelcomeScreen
-    :visible="isWelcomeVisible"
+    :visible="shouldRenderRouter && isWelcomeVisible"
     :pending="isSavingWelcomeStatus"
     @start="handleWelcomeStart"
   />

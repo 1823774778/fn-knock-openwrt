@@ -24,7 +24,7 @@ const isExcludedInterface = (name: string): boolean =>
 const isIpv4Family = (family: string | number): boolean =>
   family === "IPv4" || family === 4;
 
-const isPrivateIpv4 = (value: string): boolean => {
+export const isPrivateIpv4Address = (value: string): boolean => {
   const [a, b] = value.split(".").map((item) => Number.parseInt(item, 10));
   if (
     a === undefined ||
@@ -56,7 +56,7 @@ export const listPrivateIpv4Candidates = (): LocalIpv4Candidate[] => {
       }
 
       const address = String(item.address ?? "").trim();
-      if (!address || !isPrivateIpv4(address) || seen.has(address)) {
+      if (!address || !isPrivateIpv4Address(address) || seen.has(address)) {
         continue;
       }
 

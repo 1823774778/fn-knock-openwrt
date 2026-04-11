@@ -20,11 +20,13 @@ import type {
   TrafficStats,
   DashboardStats,
   ThreatOverview,
+  DockerAdminBootstrapState,
   SystemEventLevel,
   SystemEventListPayload,
   SystemEventSource,
   SystemEventType,
   FnosShareBypassConfig,
+  GatewayHostResponseDetails,
   GatewayProxyHeadersDetails,
   GatewaySettings,
   GatewayVisibilityDetails,
@@ -89,7 +91,20 @@ const adminApiBasePath = resolveAppRelativePath("./api/admin");
 
 export const apiClient = createApiClient({
   baseURL: adminApiBasePath,
+  withCredentials: true,
 });
+
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (typeof window !== "undefined" && error?.response?.status === 401) {
+      window.dispatchEvent(
+        new CustomEvent("fn-knock:docker-admin-auth-required"),
+      );
+    }
+    return Promise.reject(error);
+  },
+);
 
 const toHostMappingUpdatePayload = (
   mapping: HostMapping,
@@ -104,6 +119,30 @@ const toHostMappingUpdatePayload = (
 });
 
 export const ConfigAPI = {
+  async getDockerAdminBootstrap(): Promise<DockerAdminBootstrapState> {
+    const res = await apiClient.get("/panel/bootstrap");
+    return res.data.data;
+  },
+  async setDockerAdminPassword(
+    password: string,
+  ): Promise<DockerAdminBootstrapState> {
+    const res = await apiClient.post("/panel/password", { password });
+    return res.data.data;
+  },
+  async changeDockerAdminPassword(
+    password: string,
+  ): Promise<DockerAdminBootstrapState> {
+    const res = await apiClient.post("/panel/password/change", { password });
+    return res.data.data;
+  },
+  async loginDockerAdmin(password: string): Promise<DockerAdminBootstrapState> {
+    const res = await apiClient.post("/panel/login", { password });
+    return res.data.data;
+  },
+  async logoutDockerAdmin(): Promise<DockerAdminBootstrapState> {
+    const res = await apiClient.post("/panel/logout");
+    return res.data.data;
+  },
   async getConfig(): Promise<AppConfig> {
     const res = await apiClient.get("/config");
     return res.data.data;
@@ -328,6 +367,16 @@ export const ConfigAPI = {
     disabled_hosts: string[];
   }): Promise<GatewayProxyHeadersDetails> {
     const res = await apiClient.post("/config/gateway/proxy-headers", payload);
+    return res.data.data;
+  },
+  async getGatewayHostResponse(): Promise<GatewayHostResponseDetails> {
+    const res = await apiClient.get("/config/gateway/host-response");
+    return res.data.data;
+  },
+  async updateGatewayHostResponse(payload: {
+    disabled_hosts: string[];
+  }): Promise<GatewayHostResponseDetails> {
+    const res = await apiClient.post("/config/gateway/host-response", payload);
     return res.data.data;
   },
   async getProxyProtocolForce(): Promise<ProxyProtocolForce> {
@@ -1627,6 +1676,7 @@ export const DashboardAPI = {
 };
 
 export interface DiscoveredServiceInfo {
+  host?: string;
   port: number;
   httpStatus: number;
   detail: {
@@ -1648,6 +1698,8 @@ export interface ScanDiscoverResponse {
   host: string;
   totalPortsScanned: number;
   foundServices: number;
+  scannedHosts?: number;
+  scanScope?: string | null;
   services: DiscoveredServiceInfo[];
 }
 

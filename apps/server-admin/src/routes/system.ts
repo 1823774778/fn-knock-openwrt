@@ -6,6 +6,10 @@ import { resolveAccessEntryInfo } from "../lib/access-entry";
 import { dnsmasqManager } from "../lib/dnsmasq-manager";
 import { systemClockManager } from "../lib/system-clock-manager";
 import { routeDoc } from "../lib/openapi";
+import {
+  getCapabilityUnavailableMessage,
+  getRuntimeCapabilities,
+} from "../lib/runtime-profile";
 
 export const systemRoutes = new Elysia({
   prefix: "/api/admin/system",
@@ -29,6 +33,16 @@ export const systemRoutes = new Elysia({
   .post(
     "/clock/sync",
     async ({ set }) => {
+      if (!getRuntimeCapabilities().system_clock_sync_available) {
+        set.status = 403;
+        return {
+          success: false,
+          message: getCapabilityUnavailableMessage(
+            "system_clock_sync_available",
+          ),
+        };
+      }
+
       try {
         const result = await systemClockManager.syncNow();
         return { success: true, message: result.message, data: result.data };
@@ -125,7 +139,15 @@ export const systemRoutes = new Elysia({
   )
   .post(
     "/dnsmasq/install",
-    async () => {
+    async ({ set }) => {
+      if (!getRuntimeCapabilities().smart_connect_available) {
+        set.status = 403;
+        return {
+          success: false,
+          message: getCapabilityUnavailableMessage("smart_connect_available"),
+        };
+      }
+
       const state = await dnsmasqManager.startInstall();
       return { success: true, data: state };
     },

@@ -10,6 +10,10 @@ import {
   type SmartConnectConfig,
   type SmartConnectRuntimeState,
 } from "./redis";
+import {
+  getCapabilityUnavailableMessage,
+  getRuntimeCapabilities,
+} from "./runtime-profile";
 
 export interface SmartConnectAvailability {
   available: boolean;
@@ -58,6 +62,14 @@ const isPrivateIpv4 = (value: string): boolean => {
 };
 
 const getAvailability = (config: AppConfig): SmartConnectAvailability => {
+  const runtimeCapabilities = getRuntimeCapabilities();
+  if (!runtimeCapabilities.smart_connect_available) {
+    return {
+      available: false,
+      reason: getCapabilityUnavailableMessage("smart_connect_available"),
+    };
+  }
+
   if (config.run_type === 3) {
     return {
       available: true,
@@ -308,5 +320,19 @@ export const scheduleSmartConnectSyncAfterHostMappingsChange = (
 
 export const syncSmartConnectOnBoot = async (): Promise<void> => {
   const config = await configManager.getConfig();
+  if (!getRuntimeCapabilities().smart_connect_available) {
+    await configManager.saveSmartConnectRuntimeState(
+      buildRuntimeState({
+        selectedIpv4: config.smart_connect?.selected_ipv4 ?? "",
+        syncedDomains: [],
+        managedRuleCount: 0,
+        lastSyncAt: new Date().toISOString(),
+        lastSyncError: getCapabilityUnavailableMessage(
+          "smart_connect_available",
+        ),
+      }),
+    );
+    return;
+  }
   await syncSmartConnect(config);
 };

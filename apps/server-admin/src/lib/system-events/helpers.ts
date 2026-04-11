@@ -149,6 +149,10 @@ export const emitLoginFailureEvent = async (payload: {
 
 export const emitSessionIpDriftEvent = async (payload: {
   sessionId: string;
+  authMethod: AuthMethod;
+  credentialId: string;
+  credentialName: string;
+  linkedTotpName?: string;
   driftSource: SystemEventSessionDriftSource;
   fromIp: string;
   fromIpLocation?: string;
@@ -166,6 +170,12 @@ export const emitSessionIpDriftEvent = async (payload: {
     },
     payload: {
       session_id: payload.sessionId,
+      auth_method: payload.authMethod,
+      credential_id: payload.credentialId,
+      credential_name: payload.credentialName,
+      ...(payload.linkedTotpName
+        ? { linked_totp_name: payload.linkedTotpName }
+        : {}),
       drift_source: payload.driftSource,
       from_ip: payload.fromIp,
       ...(payload.fromIpLocation

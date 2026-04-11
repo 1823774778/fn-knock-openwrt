@@ -52,7 +52,6 @@ export const ddnsRoutes = new Elysia({
         void runAutomaticDDNSCheck({
           trigger: "enable",
           emitSkipLog: true,
-          emitNoopLog: true,
         });
       }
 

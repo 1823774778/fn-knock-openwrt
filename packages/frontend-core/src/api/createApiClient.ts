@@ -2,6 +2,7 @@ import axios, { type AxiosInstance } from "axios";
 
 export interface ApiClientOptions {
   baseURL: string;
+  withCredentials?: boolean;
 }
 
 export const attachApiErrorMessageInterceptor = (apiClient: AxiosInstance) => {
@@ -36,6 +37,7 @@ export function createApiClient(options: ApiClientOptions) {
   return attachApiErrorMessageInterceptor(
     axios.create({
       baseURL: options.baseURL,
+      withCredentials: options.withCredentials,
     }),
   );
 }

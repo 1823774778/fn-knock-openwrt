@@ -1,0 +1,59 @@
+services:
+  fn-knock:
+    image: ${FN_KNOCK_IMAGE:-fn-knock:local}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      FN_KNOCK_RUNTIME_TARGET: docker
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      FN_KNOCK_DATA_DIR: /var/lib/fn-knock
+      FN_KNOCK_GATEWAY_CONFIG_DIR: /usr/local/etc/fn-knock
+      ADMIN_VIEW_PORT: ${ADMIN_VIEW_PORT:-7991}
+      BACKEND_PORT: ${BACKEND_PORT:-7998}
+      AUTH_PORT: ${AUTH_PORT:-7997}
+      GO_BACKEND_PORT: ${GO_BACKEND_PORT:-7996}
+      GO_REPROXY_PORT: ${GO_REPROXY_PORT:-7999}
+      ADMIN_VIEW_HOST: 0.0.0.0
+      BACKEND_HOST: 127.0.0.1
+    ports:
+      - "${ADMIN_VIEW_PORT:-7991}:${ADMIN_VIEW_PORT:-7991}"
+      - "${GO_REPROXY_PORT:-7999}:${GO_REPROXY_PORT:-7999}"
+    volumes:
+      - fn_knock_data:/var/lib/fn-knock
+      - fn_knock_gateway:/usr/local/etc/fn-knock
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://127.0.0.1:${ADMIN_VIEW_PORT:-7991}/api/admin/healthz || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  redis:
+    image: redis:7-bookworm
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - fn_knock_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  fn_knock_data:
+  fn_knock_gateway:
+  fn_knock_redis:

@@ -35,6 +35,7 @@ import {
   normalizeAutoManageFirewall,
 } from "./firewall-automation";
 import { normalizeIp } from "./ip-normalize";
+import { getRuntimeCapabilities, getRuntimeProfile } from "./runtime-profile";
 import { normalizeCidrLines } from "../../../../packages/admin-shared/src/utils/cidr";
 
 const REDIS_CONFIG = {
@@ -250,6 +251,16 @@ export interface GatewayProxyHeadersRuntimeState {
   updated_at: string | null;
 }
 
+export interface GatewayHostResponseConfig {
+  disabled_hosts: string[];
+}
+
+export interface GatewayHostResponseRuntimeState {
+  enabled: boolean;
+  omit_targets: string[];
+  updated_at: string | null;
+}
+
 export interface ReverseProxyTrustedIPRuntimeItem {
   ip: string;
   sources: string[];
@@ -416,6 +427,7 @@ export interface AppConfig {
   reverse_proxy_throttle?: ReverseProxyThrottleConfig;
   gateway_visibility?: GatewayVisibilityConfig;
   gateway_proxy_headers?: GatewayProxyHeadersConfig;
+  gateway_host_response?: GatewayHostResponseConfig;
   smart_connect?: SmartConnectConfig;
   auth_credential_settings?: AuthCredentialSettings;
   event_system?: EventSystemConfig;
@@ -468,6 +480,17 @@ export const DEFAULT_GATEWAY_PROXY_HEADERS_CONFIG: GatewayProxyHeadersConfig = {
 };
 
 const DEFAULT_GATEWAY_PROXY_HEADERS_RUNTIME_STATE: GatewayProxyHeadersRuntimeState =
+  {
+    enabled: false,
+    omit_targets: [],
+    updated_at: null,
+  };
+
+export const DEFAULT_GATEWAY_HOST_RESPONSE_CONFIG: GatewayHostResponseConfig = {
+  disabled_hosts: [],
+};
+
+const DEFAULT_GATEWAY_HOST_RESPONSE_RUNTIME_STATE: GatewayHostResponseRuntimeState =
   {
     enabled: false,
     omit_targets: [],
@@ -608,9 +631,10 @@ export type PasskeyCredential = {
 };
 
 const DEFAULT_ROUTE_PLACEHOLDER = "/__select__";
+const DEFAULT_RUN_TYPE: RunType = getRuntimeProfile().is_docker ? 3 : 1;
 
 const DEFAULT_CONFIG: AppConfig = {
-  run_type: 1,
+  run_type: DEFAULT_RUN_TYPE,
   reverse_proxy_submode: DEFAULT_REVERSE_PROXY_SUBMODE,
   auto_manage_firewall: DEFAULT_AUTO_MANAGE_FIREWALL,
   whitelist_ips: [],
@@ -662,6 +686,10 @@ const DEFAULT_CONFIG: AppConfig = {
   },
   gateway_proxy_headers: {
     ...DEFAULT_GATEWAY_PROXY_HEADERS_CONFIG,
+    disabled_hosts: [],
+  },
+  gateway_host_response: {
+    ...DEFAULT_GATEWAY_HOST_RESPONSE_CONFIG,
     disabled_hosts: [],
   },
   smart_connect: {
@@ -971,6 +999,33 @@ const normalizeGatewayProxyHeadersConfig = (
 const normalizeGatewayProxyHeadersRuntimeState = (
   value?: Partial<GatewayProxyHeadersRuntimeState> | null,
 ): GatewayProxyHeadersRuntimeState => {
+  const raw = value ?? {};
+  const updatedAt = normalizeOptionalString(raw.updated_at);
+
+  return {
+    enabled: raw.enabled === true,
+    omit_targets: normalizeStringList(raw.omit_targets),
+    updated_at: updatedAt || null,
+  };
+};
+
+const normalizeGatewayHostResponseConfig = (
+  value?: Partial<GatewayHostResponseConfig> | null,
+): GatewayHostResponseConfig => {
+  const raw = value ?? {};
+
+  return {
+    disabled_hosts: Array.isArray(raw.disabled_hosts)
+      ? [
+          ...new Set(raw.disabled_hosts.map((item) => normalizeHost(item))),
+        ].filter(Boolean)
+      : [],
+  };
+};
+
+const normalizeGatewayHostResponseRuntimeState = (
+  value?: Partial<GatewayHostResponseRuntimeState> | null,
+): GatewayHostResponseRuntimeState => {
   const raw = value ?? {};
   const updatedAt = normalizeOptionalString(raw.updated_at);
 
@@ -1615,7 +1670,7 @@ const normalizeHostMapping = (
         : normalizeHostAccessMode(raw.access_mode),
     suppress_toolbar:
       serviceRole === "auth" ? false : raw.suppress_toolbar === true,
-    preserve_host: raw.preserve_host === true,
+    preserve_host: true,
     service_role: serviceRole,
     title: typeof raw.title === "string" ? raw.title.trim() : "",
     title_override:
@@ -1747,6 +1802,8 @@ export class ConfigManager {
   private gatewayVisibilityRuntimeKey = "fn_knock:gateway:visibility:runtime";
   private gatewayProxyHeadersRuntimeKey =
     "fn_knock:gateway:proxy-headers:runtime";
+  private gatewayHostResponseRuntimeKey =
+    "fn_knock:gateway:host-response:runtime";
   private reverseProxyTrustedIPsRuntimeKey =
     "fn_knock:reverse-proxy:trusted-ips:runtime";
   private smartConnectRuntimeKey = "fn_knock:smart-connect:runtime";
@@ -2095,7 +2152,9 @@ return actual
       if (data) {
         // 处理已有数据缺少 default_route 的兼容情况
         const parsed = JSON.parse(data) as AppConfig;
-        if (![0, 1, 3].includes(parsed.run_type)) parsed.run_type = 1;
+        if (![0, 1, 3].includes(parsed.run_type)) {
+          parsed.run_type = DEFAULT_RUN_TYPE;
+        }
         parsed.reverse_proxy_submode = normalizeReverseProxySubmode(
           parsed.reverse_proxy_submode,
         );
@@ -2126,6 +2185,9 @@ return actual
         );
         parsed.gateway_proxy_headers = normalizeGatewayProxyHeadersConfig(
           parsed.gateway_proxy_headers,
+        );
+        parsed.gateway_host_response = normalizeGatewayHostResponseConfig(
+          parsed.gateway_host_response,
         );
         parsed.smart_connect = normalizeSmartConnectConfig(
           parsed.smart_connect,
@@ -2164,6 +2226,10 @@ return actual
         ...DEFAULT_GATEWAY_PROXY_HEADERS_CONFIG,
         disabled_hosts: [],
       },
+      gateway_host_response: {
+        ...DEFAULT_GATEWAY_HOST_RESPONSE_CONFIG,
+        disabled_hosts: [],
+      },
       smart_connect: {
         ...DEFAULT_SMART_CONNECT_CONFIG,
       },
@@ -2181,9 +2247,13 @@ return actual
       this.getConfig(),
       this.getProtocolMappingFeatureConfig(),
     ]);
+    const runtimeProfile = getRuntimeProfile();
+    const runtimeCapabilities = getRuntimeCapabilities(runtimeProfile);
     const { ssl, ...rest } = config;
     return {
       ...rest,
+      runtime_profile: runtimeProfile,
+      capabilities: runtimeCapabilities,
       protocol_mapping_feature: protocolMappingFeature,
       ssl: {
         enabled: !!(ssl.cert && ssl.key),
@@ -2192,6 +2262,52 @@ return actual
         certificate_count: ssl.certificates?.length || 0,
       },
       terminal_feature: normalizeTerminalFeatureConfig(config.terminal_feature),
+    };
+  }
+
+  async applyRuntimeConstraints(): Promise<{
+    updated: boolean;
+    config: AppConfig;
+    corrected: string[];
+  }> {
+    const config = await this.getConfig();
+    const capabilities = getRuntimeCapabilities();
+    const corrected: string[] = [];
+
+    if (!capabilities.direct_mode_available && config.run_type === 0) {
+      config.run_type = DEFAULT_RUN_TYPE;
+      corrected.push(`run_type=0 -> run_type=${DEFAULT_RUN_TYPE}`);
+    }
+
+    config.smart_connect = normalizeSmartConnectConfig(config.smart_connect);
+    if (
+      !capabilities.smart_connect_available &&
+      config.smart_connect.enabled === true
+    ) {
+      config.smart_connect.enabled = false;
+      corrected.push("smart_connect.enabled -> false");
+    }
+
+    const normalizedAutoManageFirewall = normalizeAutoManageFirewall(
+      config.auto_manage_firewall,
+    );
+    if (!capabilities.host_firewall_available) {
+      if (normalizedAutoManageFirewall !== false) {
+        corrected.push("auto_manage_firewall -> false");
+      }
+      config.auto_manage_firewall = false;
+    } else {
+      config.auto_manage_firewall = normalizedAutoManageFirewall;
+    }
+
+    if (corrected.length > 0) {
+      await this.saveConfig(config);
+    }
+
+    return {
+      updated: corrected.length > 0,
+      config,
+      corrected,
     };
   }
 
@@ -3911,6 +4027,11 @@ return actual
     return normalizeGatewayProxyHeadersConfig(config.gateway_proxy_headers);
   }
 
+  async getGatewayHostResponseConfig(): Promise<GatewayHostResponseConfig> {
+    const config = await this.getConfig();
+    return normalizeGatewayHostResponseConfig(config.gateway_host_response);
+  }
+
   async getGatewayVisibilityRuntimeState(): Promise<GatewayVisibilityRuntimeState> {
     try {
       const raw = await this.redis.get(this.gatewayVisibilityRuntimeKey);
@@ -3942,6 +4063,25 @@ return actual
 
     return {
       ...DEFAULT_GATEWAY_PROXY_HEADERS_RUNTIME_STATE,
+      omit_targets: [],
+    };
+  }
+
+  async getGatewayHostResponseRuntimeState(): Promise<GatewayHostResponseRuntimeState> {
+    try {
+      const raw = await this.redis.get(this.gatewayHostResponseRuntimeKey);
+      if (raw) {
+        return normalizeGatewayHostResponseRuntimeState(JSON.parse(raw));
+      }
+    } catch (error) {
+      console.error(
+        "Failed to parse gateway host response runtime state",
+        error,
+      );
+    }
+
+    return {
+      ...DEFAULT_GATEWAY_HOST_RESPONSE_RUNTIME_STATE,
       omit_targets: [],
     };
   }
@@ -4066,6 +4206,16 @@ return actual
     return next;
   }
 
+  async updateGatewayHostResponseConfig(
+    nextValue: GatewayHostResponseConfig,
+  ): Promise<GatewayHostResponseConfig> {
+    const config = await this.getConfig();
+    const next = normalizeGatewayHostResponseConfig(nextValue);
+    config.gateway_host_response = next;
+    await this.saveConfig(config);
+    return next;
+  }
+
   async saveGatewayVisibilityRuntimeState(
     nextValue: GatewayVisibilityRuntimeState,
   ): Promise<GatewayVisibilityRuntimeState> {
@@ -4083,6 +4233,17 @@ return actual
     const next = normalizeGatewayProxyHeadersRuntimeState(nextValue);
     await this.redis.set(
       this.gatewayProxyHeadersRuntimeKey,
+      JSON.stringify(next),
+    );
+    return next;
+  }
+
+  async saveGatewayHostResponseRuntimeState(
+    nextValue: GatewayHostResponseRuntimeState,
+  ): Promise<GatewayHostResponseRuntimeState> {
+    const next = normalizeGatewayHostResponseRuntimeState(nextValue);
+    await this.redis.set(
+      this.gatewayHostResponseRuntimeKey,
       JSON.stringify(next),
     );
     return next;

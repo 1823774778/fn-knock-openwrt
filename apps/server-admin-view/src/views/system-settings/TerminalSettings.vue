@@ -109,6 +109,11 @@ const isDirty = computed(() => {
   if (!settings.value) return false;
   return JSON.stringify(settings.value) !== JSON.stringify(form);
 });
+const terminalDescription = computed(() =>
+  configStore.isDockerDeployment
+    ? "使用 tmux 承载可恢复的 Web 终端会话。Docker 部署下连接的是当前应用容器，而不是宿主机。"
+    : "使用 tmux 承载可恢复的 Web 终端会话。",
+);
 
 const { isInitializing: isInitializingStatus, refresh: refreshStatus } =
   usePollingResourceStatus<TerminalRuntimeStatus | null>({
@@ -213,9 +218,7 @@ onMounted(loadSettings);
             <span>Web终端</span>
             <Badge :variant="tmuxStatusVariant">{{ tmuxStatusLabel }}</Badge>
           </CardTitle>
-          <CardDescription>
-            使用 <code>tmux</code> 承载可恢复的 Web 终端会话。
-          </CardDescription>
+          <CardDescription>{{ terminalDescription }}</CardDescription>
         </div>
         <RefreshButton
           :loading="isLoadingConfig || isFetchingStatus"

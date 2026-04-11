@@ -1,12 +1,28 @@
 import { ScanOptions, ScanResult } from "./types";
 import net from "node:net";
 
+export const buildScanPortList = (options: ScanOptions): number[] => {
+  let portsToScan: number[] = [];
+  if (options.portRanges && options.portRanges.length > 0) {
+    for (const range of options.portRanges) {
+      for (let port = range.start; port <= range.end; port++) {
+        portsToScan.push(port);
+      }
+    }
+  } else {
+    portsToScan = Array.from({ length: 28000 }, (_, i) => i + 1000);
+  }
+
+  const skipSet = new Set(options.skipPorts || []);
+  return portsToScan.filter((port) => !skipSet.has(port));
+};
+
 export class ScannerLogic {
   private timeout: number;
   private maxConcurrent: number;
 
   constructor(options: ScanOptions = {}) {
-    this.timeout = options.timeout || 50;
+    this.timeout = options.timeout || 70;
     this.maxConcurrent = options.maxConcurrent || 100;
   }
 
@@ -66,19 +82,7 @@ export class ScannerLogic {
   }
 
   async runScan(host: string, options: ScanOptions): Promise<ScanResult[]> {
-    let portsToScan: number[] = [];
-    if (options.portRanges && options.portRanges.length > 0) {
-      for (const range of options.portRanges) {
-        for (let p = range.start; p <= range.end; p++) {
-          portsToScan.push(p);
-        }
-      }
-    } else {
-      portsToScan = Array.from({ length: 28000 }, (_, i) => i + 1000); 
-    }
-
-    const skipSet = new Set(options.skipPorts || []);
-    portsToScan = portsToScan.filter((p) => !skipSet.has(p));
+    const portsToScan = buildScanPortList(options);
 
     const finalResults: ScanResult[] = [];
     const batchSize = this.maxConcurrent;
@@ -108,5 +112,28 @@ export class ScannerLogic {
     }
 
     return finalResults;
+  }
+
+  async runScanMany(
+    hosts: string[],
+    options: ScanOptions = {},
+  ): Promise<ScanResult[]> {
+    const normalizedHosts = hosts.map((host) => host.trim()).filter(Boolean);
+    if (normalizedHosts.length === 0) {
+      return [];
+    }
+
+    const hostBatchSize = Math.max(1, options.hostConcurrency || 1);
+    const results: ScanResult[] = [];
+
+    for (let index = 0; index < normalizedHosts.length; index += hostBatchSize) {
+      const hostBatch = normalizedHosts.slice(index, index + hostBatchSize);
+      const batchResults = await Promise.all(
+        hostBatch.map((host) => this.runScan(host, options)),
+      );
+      results.push(...batchResults.flat());
+    }
+
+    return results;
   }
 }

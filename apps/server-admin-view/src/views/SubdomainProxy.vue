@@ -109,13 +109,17 @@
               class="flex items-start justify-between gap-4 rounded-lg border px-4 py-3"
             >
               <div class="space-y-1">
-                <Label for="aliyun-esa-enabled">阿里云ESA / 腾讯云Edge One支持</Label>
+                <Label for="aliyun-esa-enabled"
+                  >阿里云ESA / 腾讯云Edge One支持</Label
+                >
                 <p class="text-xs text-muted-foreground">仅对子域模式生效</p>
                 <p class="text-xs text-muted-foreground">
-                  启用后，公开鉴权地址不再自动补访问端口，并优先使用ESA/Edge One提供的客户端真实 IP 功能
+                  启用后，公开鉴权地址不再自动补访问端口，并优先使用ESA/Edge
+                  One提供的客户端真实 IP 功能
                 </p>
                 <p class="text-xs text-muted-foreground">
-                  如果使用ESA，请确保 ESA 站点已开启托管转换中的“添加真实客户端 IP 标头”。
+                  如果使用ESA，请确保 ESA 站点已开启托管转换中的“添加真实客户端
+                  IP 标头”。
                 </p>
                 <p
                   v-if="!isAliyunESAModeEditable"
@@ -707,6 +711,9 @@
                       @change="onToggleAllDiscoverSelect"
                     />
                   </TableHead>
+                  <TableHead v-if="showDiscoverHostColumn" class="w-[140px]">
+                    主机
+                  </TableHead>
                   <TableHead class="w-[80px]">端口</TableHead>
                   <TableHead class="w-[100px]">状态</TableHead>
                   <TableHead class="min-w-[10rem]">服务标识</TableHead>
@@ -718,7 +725,7 @@
               <TableBody>
                 <TableRow
                   v-for="(svc, index) in discoveredData.services"
-                  :key="`${svc.port}-${index}`"
+                  :key="`${resolveDiscoveredServiceHost(svc)}-${svc.port}-${index}`"
                 >
                   <TableCell class="text-center">
                     <input
@@ -727,6 +734,12 @@
                       :value="svc"
                       v-model="selectedServices"
                     />
+                  </TableCell>
+                  <TableCell
+                    v-if="showDiscoverHostColumn"
+                    class="font-mono text-xs text-muted-foreground"
+                  >
+                    {{ resolveDiscoveredServiceHost(svc) }}
                   </TableCell>
                   <TableCell class="font-medium">{{ svc.port }}</TableCell>
                   <TableCell>
@@ -780,6 +793,17 @@
               {{ selectedServices.length }} /
               {{ discoveredData.services.length }}
               项
+              <template
+                v-if="
+                  discoveredData.scannedHosts && discoveredData.scannedHosts > 1
+                "
+              >
+                ，覆盖
+                {{
+                  discoveredData.scanScope ||
+                  `${discoveredData.scannedHosts} 台主机`
+                }}
+              </template>
             </template>
           </span>
           <div class="space-x-2">
@@ -1003,6 +1027,10 @@ const buildSuggestedSubdomain = (service: DiscoveredServiceInfo): string => {
   return `app-${service.port}`;
 };
 
+const resolveDiscoveredServiceHost = (
+  service: Pick<DiscoveredServiceInfo, "host">,
+) => service.host?.trim() || discoveredData.value?.host?.trim() || "127.0.0.1";
+
 const parseTargetPort = (target: string): number | null => {
   const normalizedTarget = target.trim();
   if (!normalizedTarget) return null;
@@ -1052,7 +1080,7 @@ const createDefaultMapping = (): HostMapping => ({
   use_auth: true,
   access_mode: DEFAULT_ACCESS_MODE,
   suppress_toolbar: false,
-  preserve_host: false,
+  preserve_host: true,
   service_role: "app",
   title: "",
   title_override: "",
@@ -1568,6 +1596,14 @@ const {
     getPath: (service) => service.suggestedSubdomain,
   },
 );
+const showDiscoverHostColumn = computed(() => {
+  const hosts = new Set(
+    (discoveredData.value?.services || [])
+      .map((service) => service.host?.trim())
+      .filter(Boolean),
+  );
+  return hosts.size > 1;
+});
 
 onMounted(async () => {
   if (!configStore.config) {
@@ -1956,7 +1992,7 @@ async function addAuthService() {
         use_auth: false,
         access_mode: DEFAULT_ACCESS_MODE,
         suppress_toolbar: false,
-        preserve_host: false,
+        preserve_host: true,
         service_role: "auth",
         title: "",
         title_override: "",
@@ -2192,7 +2228,13 @@ const collectDuplicateValues = (values: string[]): string[] => {
 };
 
 async function saveDiscoveredServices() {
-  if (!isDiscoverSelectionValid.value || !savedRootDomain.value) return;
+  if (
+    !isDiscoverSelectionValid.value ||
+    !savedRootDomain.value ||
+    !discoveredData.value
+  ) {
+    return;
+  }
 
   const candidateHosts = selectedServices.value.map((service) =>
     composeHostFromSubdomain(service.suggestedSubdomain, savedRootDomain.value),
@@ -2221,11 +2263,11 @@ async function saveDiscoveredServices() {
           service.suggestedSubdomain,
           savedRootDomain.value,
         ),
-        target: `http://127.0.0.1:${service.port}/`,
+        target: `http://${resolveDiscoveredServiceHost(service)}:${service.port}/`,
         use_auth: service.detail.rule.use_auth,
         access_mode: DEFAULT_ACCESS_MODE,
         suppress_toolbar: false,
-        preserve_host: false,
+        preserve_host: true,
         service_role: "app",
         title: "",
         title_override: "",

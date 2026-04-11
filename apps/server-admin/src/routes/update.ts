@@ -1,6 +1,10 @@
 import { Elysia } from "elysia";
 import { updateManager } from "../lib/update-manager";
 import { routeDoc } from "../lib/openapi";
+import {
+  getCapabilityUnavailableMessage,
+  getRuntimeCapabilities,
+} from "../lib/runtime-profile";
 
 export const updateRoutes = new Elysia({
   prefix: "/api/admin/update",
@@ -26,6 +30,14 @@ export const updateRoutes = new Elysia({
   .post(
     "/download",
     async ({ set }) => {
+      if (!getRuntimeCapabilities().self_update_available) {
+        set.status = 403;
+        return {
+          success: false,
+          message: getCapabilityUnavailableMessage("self_update_available"),
+        };
+      }
+
       try {
         await updateManager.triggerDownload();
         const data = await updateManager.getStatus();
@@ -43,6 +55,14 @@ export const updateRoutes = new Elysia({
   .post(
     "/install",
     async ({ set }) => {
+      if (!getRuntimeCapabilities().self_update_available) {
+        set.status = 403;
+        return {
+          success: false,
+          message: getCapabilityUnavailableMessage("self_update_available"),
+        };
+      }
+
       try {
         await updateManager.triggerInstall();
         return { success: true, message: "更新安装流程已启动" };
@@ -59,6 +79,14 @@ export const updateRoutes = new Elysia({
   .post(
     "/check-and-download",
     async ({ set }) => {
+      if (!getRuntimeCapabilities().self_update_available) {
+        set.status = 403;
+        return {
+          success: false,
+          message: getCapabilityUnavailableMessage("self_update_available"),
+        };
+      }
+
       try {
         await updateManager.checkNow("manual-check-and-download");
         await updateManager.triggerDownload();

@@ -6,17 +6,36 @@ import {
 import { goBackend, type GoResponse } from "./go-backend";
 import { buildGatewayAuthConfig } from "./subdomain-mode";
 import { syncGatewayProxyHeadersRuntimeForConfig } from "./gateway-proxy-headers";
+import { syncGatewayHostResponseRuntimeForConfig } from "./gateway-host-response";
 import { syncGatewayVisibilityToGateway } from "./gateway-visibility";
 import { syncReverseProxyTrustedIPsNow } from "./reverse-proxy-trusted-ips";
 import { whitelistManager } from "./whitelist-manager";
 import { isReverseProxySubdomainMode } from "./reverse-proxy-submode";
 import { shouldAutoManageFirewallForRunType } from "./firewall-automation";
 import { SMART_CONNECT_DNS_PORT } from "./dnsmasq-manager";
+import {
+  getCapabilityUnavailableMessage,
+  getRuntimeCapabilities,
+} from "./runtime-profile";
 
 const DISABLED_DEFAULT_ROUTE = "/__select__";
 
 export class FirewallService {
   private readonly legacyRedirectedHttpPorts = [80, 443] as const;
+
+  private ensureHostFirewallAvailable() {
+    if (!getRuntimeCapabilities().host_firewall_available) {
+      throw new Error(
+        getCapabilityUnavailableMessage("host_firewall_available"),
+      );
+    }
+  }
+
+  private ensureDirectModeAvailable() {
+    if (!getRuntimeCapabilities().direct_mode_available) {
+      throw new Error(getCapabilityUnavailableMessage("direct_mode_available"));
+    }
+  }
 
   private assertGoBackendSuccess<T>(
     result: GoResponse<T>,
@@ -173,6 +192,11 @@ export class FirewallService {
   }
 
   async resetFirewallForRunType(runType: 0 | 1 | 3) {
+    this.ensureHostFirewallAvailable();
+    if (runType === 0) {
+      this.ensureDirectModeAvailable();
+    }
+
     const [config, protocolMappingFeature] = await Promise.all([
       configManager.getConfig(),
       configManager.getProtocolMappingFeatureConfig(),
@@ -219,6 +243,7 @@ export class FirewallService {
   }
 
   async clearFirewall() {
+    this.ensureHostFirewallAvailable();
     const gatewayPort = this.resolveGatewayPort();
     await this.clearLegacyGatewayRedirects(gatewayPort, true);
     await this.runGoBackendOrThrow(
@@ -231,19 +256,11 @@ export class FirewallService {
     };
   }
 
-  async applyRunTypeConfig(runType: 0 | 1 | 3, previousRunType?: 0 | 1 | 3) {
-    void previousRunType;
-    const [config, protocolMappingFeature] = await Promise.all([
-      configManager.getConfig(),
-      configManager.getProtocolMappingFeatureConfig(),
-    ]);
-    const protocolMappingEnabled =
-      runType === 3 && protocolMappingFeature.enabled === true;
-    const gatewayPort = this.resolveGatewayPort();
-    const autoManageFirewall = shouldAutoManageFirewallForRunType(
-      runType,
-      config,
-    );
+  private async syncGatewayRuntimeConfig(
+    config: AppConfig,
+    protocolMappingEnabled: boolean,
+    runType: 0 | 1 | 3,
+  ) {
     await this.runGoBackend(
       goBackend.setAuthConfig(buildGatewayAuthConfig(config)),
       "同步鉴权网关配置失败",
@@ -270,21 +287,17 @@ export class FirewallService {
     } catch (error) {
       console.error("Go 后端接口调用失败: 同步网关协议头配置失败", error);
     }
+    try {
+      await syncGatewayHostResponseRuntimeForConfig(config);
+    } catch (error) {
+      console.error("Go 后端接口调用失败: 同步网关 Host 响应配置失败", error);
+    }
 
     if (runType === 1) {
-      if (autoManageFirewall) {
-        await this.clearLegacyGatewayRedirects(gatewayPort);
-      }
       await this.runGoBackend(
         goBackend.setProxyProtocolForce(true),
         "开启 Proxy Protocol 强制模式失败",
       );
-      if (autoManageFirewall) {
-        await this.runGoBackend(
-          goBackend.cleanIptables(),
-          "清理防火墙规则失败",
-        );
-      }
       await this.runGoBackend(
         goBackend.flushStreamRules(),
         "关闭 协议映射监听失败",
@@ -320,10 +333,6 @@ export class FirewallService {
         goBackend.setProxyProtocolForce(false),
         "关闭 Proxy Protocol 强制模式失败",
       );
-      if (autoManageFirewall) {
-        await this.initDefaultFirewall(config, protocolMappingEnabled, runType);
-        await this.clearLegacyGatewayRedirects(gatewayPort);
-      }
       await this.runGoBackend(goBackend.flushRules(), "清空路径路由失败");
       await this.runGoBackend(
         goBackend.setHostRules(config.host_mappings),
@@ -347,9 +356,6 @@ export class FirewallService {
       return;
     }
 
-    if (autoManageFirewall) {
-      await this.clearLegacyGatewayRedirects(gatewayPort);
-    }
     await this.runGoBackend(
       goBackend.setProxyProtocolForce(false),
       "关闭 Proxy Protocol 强制模式失败",
@@ -359,14 +365,8 @@ export class FirewallService {
       goBackend.flushStreamRules(),
       "关闭 协议映射监听失败",
     );
-    if (autoManageFirewall) {
-      await this.initDefaultFirewall(config, false, runType);
-    }
 
     if (runType === 0) {
-      if (autoManageFirewall) {
-        await this.syncActiveWhitelistRecords();
-      }
       if (config.proxy_mappings) {
         await this.runGoBackend(
           goBackend.setRules(config.proxy_mappings),
@@ -397,6 +397,64 @@ export class FirewallService {
         "同步鉴权默认路由失败",
       );
     }
+  }
+
+  private async applyHostFirewallConfig(
+    config: AppConfig,
+    protocolMappingEnabled: boolean,
+    runType: 0 | 1 | 3,
+    autoManageFirewall: boolean,
+  ) {
+    if (!autoManageFirewall) {
+      return;
+    }
+
+    const gatewayPort = this.resolveGatewayPort();
+
+    if (runType === 1) {
+      await this.clearLegacyGatewayRedirects(gatewayPort);
+      await this.runGoBackend(goBackend.cleanIptables(), "清理防火墙规则失败");
+      return;
+    }
+
+    if (runType === 3) {
+      await this.initDefaultFirewall(config, protocolMappingEnabled, runType);
+      await this.clearLegacyGatewayRedirects(gatewayPort);
+      return;
+    }
+
+    await this.clearLegacyGatewayRedirects(gatewayPort);
+    await this.initDefaultFirewall(config, false, runType);
+    await this.syncActiveWhitelistRecords();
+  }
+
+  async applyRunTypeConfig(runType: 0 | 1 | 3, previousRunType?: 0 | 1 | 3) {
+    void previousRunType;
+    if (runType === 0) {
+      this.ensureDirectModeAvailable();
+    }
+
+    const [config, protocolMappingFeature] = await Promise.all([
+      configManager.getConfig(),
+      configManager.getProtocolMappingFeatureConfig(),
+    ]);
+    const protocolMappingEnabled =
+      runType === 3 && protocolMappingFeature.enabled === true;
+    const autoManageFirewall =
+      getRuntimeCapabilities().host_firewall_available &&
+      shouldAutoManageFirewallForRunType(runType, config);
+
+    await this.syncGatewayRuntimeConfig(
+      config,
+      protocolMappingEnabled,
+      runType,
+    );
+    await this.applyHostFirewallConfig(
+      config,
+      protocolMappingEnabled,
+      runType,
+      autoManageFirewall,
+    );
   }
 }
 

@@ -50,7 +50,10 @@ const { isPending: isSaving, run: runSaveSettings } = useAsyncAction({
 const isProtocolMappingAvailable = computed(
   () => configStore.config?.run_type === 3,
 );
-const isSmartConnectAvailable = isProtocolMappingAvailable;
+const isSmartConnectAvailable = computed(
+  () => configStore.canUseSmartConnect && configStore.config?.run_type === 3,
+);
+const showSmartConnectEntry = computed(() => !configStore.isDockerDeployment);
 const currentRunTypeLabel = computed(() => {
   const runType = configStore.config?.run_type;
   if (runType === 0 || runType === 1 || runType === 3) {
@@ -64,6 +67,11 @@ const protocolMappingDisabledReason = computed(() => {
 });
 const smartConnectDisabledReason = computed(() => {
   if (isSmartConnectAvailable.value) return "";
+  if (!configStore.canUseSmartConnect) {
+    return configStore.isDockerDeployment
+      ? "Docker 部署暂不支持 Smart Connect，它依赖宿主机 dnsmasq 与 53 端口。"
+      : "当前运行环境暂不支持 Smart Connect。";
+  }
   return `仅子域模式可用，当前为${currentRunTypeLabel.value}。`;
 });
 
@@ -186,6 +194,7 @@ watch(
       </div>
 
       <button
+        v-if="showSmartConnectEntry"
         type="button"
         class="flex w-full items-center justify-between p-6 text-left transition-colors"
         :class="

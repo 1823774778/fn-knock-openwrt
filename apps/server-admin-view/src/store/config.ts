@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import type {
   AppConfig,
   HostMapping,
@@ -10,6 +10,10 @@ import type {
   SubdomainModeConfig,
 } from "../types";
 import { ConfigAPI } from "../lib/api";
+import {
+  getEffectiveRuntimeCapabilities,
+  getEffectiveRuntimeProfile,
+} from "../lib/docker-debug";
 
 export const useConfigStore = defineStore("config", () => {
   const config = ref<AppConfig | null>(null);
@@ -172,10 +176,49 @@ export const useConfigStore = defineStore("config", () => {
     return result;
   }
 
+  const runtimeProfile = computed(() =>
+    getEffectiveRuntimeProfile(config.value?.runtime_profile),
+  );
+  const capabilities = computed(() =>
+    getEffectiveRuntimeCapabilities(config.value?.capabilities),
+  );
+  const isDockerDeployment = computed(
+    () => runtimeProfile.value?.is_docker === true,
+  );
+  const canUseDirectMode = computed(
+    () => capabilities.value?.direct_mode_available === true,
+  );
+  const canManageHostFirewall = computed(
+    () => capabilities.value?.host_firewall_available === true,
+  );
+  const canUseSmartConnect = computed(
+    () => capabilities.value?.smart_connect_available === true,
+  );
+  const canSelfUpdate = computed(
+    () => capabilities.value?.self_update_available === true,
+  );
+  const canSyncSystemClock = computed(
+    () => capabilities.value?.system_clock_sync_available === true,
+  );
+  const canUseTerminal = computed(
+    () => capabilities.value?.terminal_available === true,
+  );
+  const hasSharedRoot = computed(
+    () => capabilities.value?.shared_root_available === true,
+  );
+
   return {
     config,
     isLoading,
     isError,
+    isDockerDeployment,
+    canUseDirectMode,
+    canManageHostFirewall,
+    canUseSmartConnect,
+    canSelfUpdate,
+    canSyncSystemClock,
+    canUseTerminal,
+    hasSharedRoot,
     loadConfig,
     setRunType,
     saveAutoManageFirewall,
