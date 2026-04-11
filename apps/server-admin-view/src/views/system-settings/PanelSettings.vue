@@ -27,11 +27,11 @@ const dockerAdminAuthStore = useDockerAdminAuthStore();
 const newPassword = ref("");
 const confirmPassword = ref("");
 
-const localResetCommand = "npm run fn-knock:docker:reset-panel-password";
-const rawLocalResetCommand =
-  "docker compose --env-file deploy/docker/.env -f deploy/docker/compose.yaml -f deploy/docker/compose.override.yaml exec -T fn-knock fn-knock-reset-panel-password";
-const remoteResetCommand =
-  "npm run fn-knock:docker:remote-reset-panel-password";
+const sshCommand = "ssh root@<docker-host>";
+const composeResetCommand =
+  "cd /opt/fn-knock-docker && docker compose exec -T fn-knock fn-knock-reset-panel-password";
+const dockerExecResetCommand =
+  "docker exec -it \"$(docker ps --filter label=com.docker.compose.service=fn-knock --format '{{.Names}}' | head -n 1)\" fn-knock-reset-panel-password";
 
 const isDockerMode = computed(() => configStore.isDockerDeployment);
 const isFormFilled = computed(
@@ -156,24 +156,26 @@ const savePassword = async () => {
         </Alert>
 
         <div class="space-y-2">
-          <p class="text-sm font-medium">本地 compose 环境</p>
+          <p class="text-sm font-medium">1. 先登录 Docker 主机</p>
           <pre
             class="overflow-x-auto rounded-lg border bg-muted/40 px-3 py-3 text-sm leading-6"
-          ><code>{{ localResetCommand }}</code></pre>
+          ><code>{{ sshCommand }}</code></pre>
         </div>
 
         <div class="space-y-2">
-          <p class="text-sm font-medium">等价原生命令</p>
+          <p class="text-sm font-medium">2. 推荐：在 compose 部署目录执行</p>
           <pre
             class="overflow-x-auto rounded-lg border bg-muted/40 px-3 py-3 text-sm leading-6"
-          ><code>{{ rawLocalResetCommand }}</code></pre>
+          ><code>{{ composeResetCommand }}</code></pre>
         </div>
 
         <div class="space-y-2">
-          <p class="text-sm font-medium">远端 compose 环境</p>
+          <p class="text-sm font-medium">
+            3. 如果只知道容器在跑 Docker，可直接执行
+          </p>
           <pre
             class="overflow-x-auto rounded-lg border bg-muted/40 px-3 py-3 text-sm leading-6"
-          ><code>{{ remoteResetCommand }}</code></pre>
+          ><code>{{ dockerExecResetCommand }}</code></pre>
         </div>
       </CardContent>
     </Card>

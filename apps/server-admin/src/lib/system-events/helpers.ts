@@ -42,6 +42,7 @@ export const emitLoginSuccessEvent = async (payload: {
   credentialId: string;
   credentialName: string;
   linkedTotpName?: string;
+  sessionComment?: string;
   grantType: "browser_session" | "login_ip_grant";
   postLoginIpGrantMode?: "follow_session" | "disabled" | "custom" | null;
   whitelistRecordId?: string | null;
@@ -66,6 +67,9 @@ export const emitLoginSuccessEvent = async (payload: {
       ...(payload.linkedTotpName
         ? { linked_totp_name: payload.linkedTotpName }
         : {}),
+      ...(payload.sessionComment
+        ? { session_comment: payload.sessionComment }
+        : {}),
       grant_type: payload.grantType,
       post_login_ip_grant_mode: payload.postLoginIpGrantMode,
       whitelist_record_id: payload.whitelistRecordId,
@@ -83,6 +87,7 @@ export const emitLogoutEvent = async (payload: {
   credentialId: string;
   credentialName: string;
   linkedTotpName?: string;
+  sessionComment?: string;
   ip: string;
   ipLocation?: string;
   userAgent: string;
@@ -104,6 +109,9 @@ export const emitLogoutEvent = async (payload: {
       credential_name: payload.credentialName,
       ...(payload.linkedTotpName
         ? { linked_totp_name: payload.linkedTotpName }
+        : {}),
+      ...(payload.sessionComment
+        ? { session_comment: payload.sessionComment }
         : {}),
       ip: payload.ip,
       ...(payload.ipLocation ? { ip_location: payload.ipLocation } : {}),
@@ -153,6 +161,7 @@ export const emitSessionIpDriftEvent = async (payload: {
   credentialId: string;
   credentialName: string;
   linkedTotpName?: string;
+  sessionComment?: string;
   driftSource: SystemEventSessionDriftSource;
   fromIp: string;
   fromIpLocation?: string;
@@ -175,6 +184,9 @@ export const emitSessionIpDriftEvent = async (payload: {
       credential_name: payload.credentialName,
       ...(payload.linkedTotpName
         ? { linked_totp_name: payload.linkedTotpName }
+        : {}),
+      ...(payload.sessionComment
+        ? { session_comment: payload.sessionComment }
         : {}),
       drift_source: payload.driftSource,
       from_ip: payload.fromIp,

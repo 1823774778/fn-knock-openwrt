@@ -390,6 +390,7 @@ export const handleLoginSuccess = async ({
     ...(resolvedLinkedTotpName
       ? { linkedTotpName: resolvedLinkedTotpName }
       : {}),
+    ...(sessionComment ? { sessionComment } : {}),
     grantType,
     postLoginIpGrantMode:
       grantType === "login_ip_grant" ? postLoginIpGrantMode : null,

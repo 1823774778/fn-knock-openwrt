@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-screen flex flex-col bg-muted/40 p-4">
+  <div class="auth-safe-shell flex flex-col bg-muted/40">
     <div class="flex flex-1 items-center justify-center">
       <Card class="w-full max-w-sm">
         <CardHeader>

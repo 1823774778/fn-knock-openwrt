@@ -155,6 +155,7 @@ const detailFieldDefinitions = [
   { key: "subject", label: "主题" },
   { key: "credential_name", label: "凭证名称" },
   { key: "linked_totp_name", label: "关联 TOTP 设备" },
+  { key: "session_comment", label: "会话备注" },
   { key: "credential_id", label: "凭证 ID" },
   { key: "auth_method", label: "认证方式" },
   { key: "grant_type", label: "授权方式" },
@@ -334,6 +335,11 @@ const formatCredentialDisplay = (
   return credential;
 };
 
+const formatSessionCommentInline = (value: unknown) => {
+  const comment = String(value ?? "").trim();
+  return comment ? `，备注「${comment}」` : "";
+};
+
 const detailItems = computed(() => {
   const event = activeEvent.value;
   if (!event) return [];
@@ -482,7 +488,7 @@ const describeEvent = (event: SystemEventRecord) => {
       )} 通过 ${
         AUTH_METHOD_LABELS[String(payload.auth_method)] ||
         String(payload.auth_method || "-")
-      } 登录，来源 IP ${formatIpDisplay(payload.ip)}`;
+      } 登录，来源 IP ${formatIpDisplay(payload.ip)}${formatSessionCommentInline(payload.session_comment)}`;
     case "FN_EVENT_AUTH_LOGOUT":
       return `${formatCredentialDisplay(
         payload.credential_name,
@@ -491,7 +497,7 @@ const describeEvent = (event: SystemEventRecord) => {
       )} 已退出登录，来源 ${
         LOGOUT_SOURCE_LABELS[String(payload.logout_source)] ||
         String(payload.logout_source || "-")
-      }，会话 IP ${formatIpDisplay(payload.ip)}`;
+      }，会话 IP ${formatIpDisplay(payload.ip)}${formatSessionCommentInline(payload.session_comment)}`;
     case "FN_EVENT_AUTH_LOGIN_FAILURE": {
       const attempts = String(payload.attempts || "-");
       const retryAfterSeconds = Number(payload.retry_after_seconds);
@@ -523,7 +529,7 @@ const describeEvent = (event: SystemEventRecord) => {
             payload.auth_method,
           )} 会话`
         : `会话 ${shortId(String(payload.session_id || ""), 14)}`;
-      return `${sessionLabel} 从 ${String(formatIpDisplay(payload.from_ip))} 漂移到 ${String(formatIpDisplay(payload.to_ip))}`;
+      return `${sessionLabel} 从 ${String(formatIpDisplay(payload.from_ip))} 漂移到 ${String(formatIpDisplay(payload.to_ip))}${formatSessionCommentInline(payload.session_comment)}`;
     }
     case "FN_EVENT_SECURITY_SCANNER_BLOCKED":
       return `${formatIpDisplay(payload.ip)} 因非常规路径命中 ${String(

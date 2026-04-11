@@ -43,6 +43,7 @@ export type SystemEventAuthLoginSuccessPayload = {
   credential_id: string;
   credential_name: string;
   linked_totp_name?: string;
+  session_comment?: string;
   grant_type: "browser_session" | "login_ip_grant";
   post_login_ip_grant_mode?: "follow_session" | "disabled" | "custom" | null;
   whitelist_record_id?: string | null;
@@ -59,6 +60,7 @@ export type SystemEventAuthLogoutPayload = {
   credential_id: string;
   credential_name: string;
   linked_totp_name?: string;
+  session_comment?: string;
   ip: string;
   ip_location?: string;
   user_agent: string;
@@ -83,6 +85,7 @@ export type SystemEventSessionIpDriftPayload = {
   credential_id?: string;
   credential_name?: string;
   linked_totp_name?: string;
+  session_comment?: string;
   drift_source: SystemEventSessionDriftSource;
   from_ip: string;
   from_ip_location?: string;

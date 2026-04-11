@@ -45,7 +45,8 @@ const PROXY_PROTO_HEADERS = [
 export const DOCKER_ADMIN_SESSION_COOKIE_NAME = "fn-knock-admin-panel-session";
 export const DOCKER_ADMIN_PROXY_HEADER_NAME = "x-fn-knock-admin-proxy";
 
-const DOCKER_ADMIN_PROXY_SECRET = getRequiredEnv("ADMIN_PROXY_SECRET");
+const getDockerAdminProxySecretValue = () =>
+  getRequiredEnv("ADMIN_PROXY_SECRET");
 
 export interface DockerAdminPasswordRecord {
   algorithm: "scrypt";
@@ -338,10 +339,10 @@ export const isDockerAdminProxyRequest = (request: Request): boolean => {
     ?.trim();
   if (!headerValue) return false;
 
-  return safeEqualString(headerValue, DOCKER_ADMIN_PROXY_SECRET);
+  return safeEqualString(headerValue, getDockerAdminProxySecretValue());
 };
 
-export const getDockerAdminProxySecret = () => DOCKER_ADMIN_PROXY_SECRET;
+export const getDockerAdminProxySecret = () => getDockerAdminProxySecretValue();
 
 export const isDockerAdminPublicPath = (path: string): boolean =>
   path === "/api/admin/healthz" ||

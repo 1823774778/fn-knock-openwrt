@@ -80,25 +80,34 @@ npm run fn-knock:docker:down
 
 ### 忘记管理面板密码
 
-如果已经无法登录 Docker 管理面板，可以直接执行重置命令：
+如果你是在开发仓库里操作本地 compose 环境，可以直接执行：
 
 ```bash
 npm run fn-knock:docker:reset-panel-password
 ```
 
-等价的原生命令：
+如果是最终客户机上的 Docker 主机，先登录到主机：
 
 ```bash
-docker compose --env-file deploy/docker/.env \
-  -f deploy/docker/compose.yaml \
-  -f deploy/docker/compose.override.yaml \
-  exec -T fn-knock fn-knock-reset-panel-password
+ssh root@<docker-host>
 ```
 
-如果是远端 Docker 部署：
+然后执行推荐命令：
 
 ```bash
-npm run fn-knock:docker:remote-reset-panel-password
+cd /opt/fn-knock-docker && docker compose exec -T fn-knock fn-knock-reset-panel-password
+```
+
+如果只知道容器已经在跑 Docker，但不确定 compose 目录，也可以直接执行：
+
+```bash
+docker exec -it "$(docker ps --filter label=com.docker.compose.service=fn-knock --format '{{.Names}}' | head -n 1)" fn-knock-reset-panel-password
+```
+
+当前 `root@192.168.31.135` 上我已实际确认可用的命令就是：
+
+```bash
+cd /opt/fn-knock-docker && docker compose exec -T fn-knock fn-knock-reset-panel-password
 ```
 
 这个命令只会清除：

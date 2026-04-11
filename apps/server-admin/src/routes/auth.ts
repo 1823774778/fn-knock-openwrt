@@ -1,10 +1,7 @@
 import { Elysia, t } from "elysia";
 import { configManager } from "../lib/redis";
 import { verifySync } from "otplib";
-import {
-  getRpInfo,
-  handleLoginSuccess,
-} from "../lib/auth-utils";
+import { getRpInfo, handleLoginSuccess } from "../lib/auth-utils";
 import {
   applyNoStoreHeaders,
   applyAuthResponseHeaders,
@@ -388,6 +385,7 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
         ...(session.linkedTotpName
           ? { linkedTotpName: session.linkedTotpName }
           : {}),
+        ...(session.comment ? { sessionComment: session.comment } : {}),
         ip: session.ip,
         ...(session.ipLocation ? { ipLocation: session.ipLocation } : {}),
         userAgent: session.userAgent,

@@ -118,7 +118,15 @@ const disabledHosts = computed(() =>
 const displayAccessEntryPort = computed(
   () => accessEntryPort.value.trim() || "7999",
 );
+const isAliyunESAEnabled = computed(
+  () =>
+    configStore.config?.run_type === 3 &&
+    configStore.config?.subdomain_mode?.aliyun_esa_enabled === true,
+);
 const shouldOmitAccessEntryPort = computed(() => {
+  if (isAliyunESAEnabled.value) {
+    return true;
+  }
   const parsedPort = Number.parseInt(displayAccessEntryPort.value, 10);
   return parsedPort === 80 || parsedPort === 443;
 });

@@ -123,6 +123,12 @@ const formatCredentialContext = (event: SystemEventEnvelope, fallback = "") => {
   return fallback;
 };
 
+const formatSessionCommentCompact = (value: string) =>
+  value ? `备注：${value}` : "";
+
+const appendSessionComment = (text: string, sessionComment: string) =>
+  sessionComment ? `${text}（备注：${sessionComment}）` : text;
+
 const formatEventLevelLabel = (level: SystemEventEnvelope["level"]) =>
   EVENT_LEVEL_LABELS[level] || level;
 
@@ -238,6 +244,7 @@ const buildNotificationDetails = (args: {
       const credentialName =
         readPayloadValue(event, "credential_name") || "未知凭证";
       const linkedTotpName = readPayloadValue(event, "linked_totp_name");
+      const sessionComment = readPayloadValue(event, "session_comment");
       const ip = readPayloadValue(event, "ip") || "未知 IP";
       const ipLocation = readPayloadValue(event, "ip_location");
       const authMethod =
@@ -257,14 +264,18 @@ const buildNotificationDetails = (args: {
       const rememberMe = formatBoolean(readPayloadValue(event, "remember_me"));
       const expiresAt = formatDateTime(readPayloadValue(event, "expires_at"));
 
-      summary = linkedTotpName
-        ? `Passkey「${credentialName}」关联 TOTP「${linkedTotpName}」从 ${ip} 登录成功`
-        : `凭证「${credentialName}」从 ${ip} 登录成功`;
-      overview = `本次登录使用 ${authMethod || "未知方式"} 完成认证，授权方式为 ${grantType || "未知"}${ipLocation ? `，登录位置为 ${ipLocation}` : ""}。`;
+      summary = appendSessionComment(
+        linkedTotpName
+          ? `Passkey「${credentialName}」关联 TOTP「${linkedTotpName}」从 ${ip} 登录成功`
+          : `凭证「${credentialName}」从 ${ip} 登录成功`,
+        sessionComment,
+      );
+      overview = `本次登录使用 ${authMethod || "未知方式"} 完成认证，授权方式为 ${grantType || "未知"}${ipLocation ? `，登录位置为 ${ipLocation}` : ""}。${sessionComment ? `当前会话备注为「${sessionComment}」。` : ""}`;
       advice = "如该登录并非本人操作，建议尽快撤销会话并检查访问策略。";
 
       pushFact(facts, "凭证名称", credentialName);
       pushFact(facts, "关联 TOTP", linkedTotpName);
+      pushFact(facts, "会话备注", sessionComment);
       pushFact(facts, "登录 IP", ip);
       pushFact(facts, "IP 位置", ipLocation);
       pushFact(facts, "认证方式", authMethod);
@@ -278,6 +289,7 @@ const buildNotificationDetails = (args: {
       const credentialName =
         readPayloadValue(event, "credential_name") || "未知凭证";
       const linkedTotpName = readPayloadValue(event, "linked_totp_name");
+      const sessionComment = readPayloadValue(event, "session_comment");
       const ip = readPayloadValue(event, "ip") || "未知 IP";
       const ipLocation = readPayloadValue(event, "ip_location");
       const logoutSource =
@@ -288,14 +300,18 @@ const buildNotificationDetails = (args: {
           ) as keyof typeof LOGOUT_SOURCE_LABELS
         ] || readPayloadValue(event, "logout_source");
 
-      summary = linkedTotpName
-        ? `Passkey「${credentialName}」关联 TOTP「${linkedTotpName}」已退出登录`
-        : `凭证「${credentialName}」已退出登录`;
-      overview = `该会话已从 ${ip}${ipLocation ? `（${ipLocation}）` : ""} 退出，退出方式为 ${logoutSource || "未知"}。`;
+      summary = appendSessionComment(
+        linkedTotpName
+          ? `Passkey「${credentialName}」关联 TOTP「${linkedTotpName}」已退出登录`
+          : `凭证「${credentialName}」已退出登录`,
+        sessionComment,
+      );
+      overview = `该会话已从 ${ip}${ipLocation ? `（${ipLocation}）` : ""} 退出，退出方式为 ${logoutSource || "未知"}。${sessionComment ? `当前会话备注为「${sessionComment}」。` : ""}`;
       advice = "如该退出不符合预期，请核查是否存在管理员下线或异常会话清理。";
 
       pushFact(facts, "凭证名称", credentialName);
       pushFact(facts, "关联 TOTP", linkedTotpName);
+      pushFact(facts, "会话备注", sessionComment);
       pushFact(facts, "登录 IP", ip);
       pushFact(facts, "IP 位置", ipLocation);
       pushFact(facts, "退出方式", logoutSource);
@@ -338,6 +354,7 @@ const buildNotificationDetails = (args: {
     case "FN_EVENT_AUTH_SESSION_IP_DRIFT": {
       const credentialName = readPayloadValue(event, "credential_name");
       const linkedTotpName = readPayloadValue(event, "linked_totp_name");
+      const sessionComment = readPayloadValue(event, "session_comment");
       const authMethod =
         AUTH_METHOD_LABELS[
           readPayloadValue(
@@ -356,13 +373,17 @@ const buildNotificationDetails = (args: {
         ] || readPayloadValue(event, "drift_source");
       const sessionLabel = formatCredentialContext(event, "当前会话");
 
-      summary = `${sessionLabel} IP 从 ${fromIp} 切换到 ${toIp}`;
-      overview = `检测到${sessionLabel}的访问来源 IP 发生变化，来源判定为 ${source || "未知"}。这通常与网络切换、代理变化或会话异常有关。`;
+      summary = appendSessionComment(
+        `${sessionLabel} IP 从 ${fromIp} 切换到 ${toIp}`,
+        sessionComment,
+      );
+      overview = `检测到${sessionLabel}的访问来源 IP 发生变化，来源判定为 ${source || "未知"}。${sessionComment ? `当前会话备注为「${sessionComment}」。` : ""}这通常与网络切换、代理变化或会话异常有关。`;
       advice =
         "若这次 IP 变化并不符合预期，请尽快核查当前会话是否存在被接管风险。";
 
       pushFact(facts, "凭证名称", credentialName);
       pushFact(facts, "关联 TOTP", linkedTotpName);
+      pushFact(facts, "会话备注", sessionComment);
       pushFact(facts, "认证方式", authMethod);
       pushFact(facts, "原始 IP", fromIp);
       pushFact(facts, "原始位置", readPayloadValue(event, "from_ip_location"));
@@ -620,11 +641,13 @@ const formatEventSummary = (event: SystemEventEnvelope) => {
     case "FN_EVENT_AUTH_LOGIN_SUCCESS":
       return joinCompactParts(
         readPayloadValue(event, "credential_name") || "未知凭证",
+        formatSessionCommentCompact(readPayloadValue(event, "session_comment")),
         readPayloadValue(event, "ip"),
       );
     case "FN_EVENT_AUTH_LOGOUT":
       return joinCompactParts(
         readPayloadValue(event, "credential_name") || "未知凭证",
+        formatSessionCommentCompact(readPayloadValue(event, "session_comment")),
         readPayloadValue(event, "ip"),
       );
     case "FN_EVENT_AUTH_LOGIN_FAILURE":
@@ -637,6 +660,7 @@ const formatEventSummary = (event: SystemEventEnvelope) => {
     case "FN_EVENT_AUTH_SESSION_IP_DRIFT":
       return joinCompactParts(
         formatCredentialContext(event),
+        formatSessionCommentCompact(readPayloadValue(event, "session_comment")),
         formatIpTransition(
           readPayloadValue(event, "from_ip"),
           readPayloadValue(event, "to_ip"),

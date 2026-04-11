@@ -138,19 +138,37 @@ npm run fn-knock:docker:down
 
 #### 忘记管理面板密码
 
-本地 Docker 栈可以直接执行：
+如果你是在开发仓库里操作本地 compose 环境，可以直接执行：
 
 ```bash
 npm run fn-knock:docker:reset-panel-password
 ```
 
-远端 Docker 栈可以执行：
+如果是客户机上的 Docker 主机，先登录到主机：
 
 ```bash
-npm run fn-knock:docker:remote-reset-panel-password
+ssh root@<docker-host>
 ```
 
-这两个命令都会进入运行中的 `fn-knock` 容器，清除 Docker 管理面板密码、面板会话和登录退避状态。业务配置和数据卷不会被删除。执行后再次访问 `7991`，会重新进入首次设置管理面板密码的流程。
+然后执行推荐命令：
+
+```bash
+cd /opt/fn-knock-docker && docker compose exec -T fn-knock fn-knock-reset-panel-password
+```
+
+如果只知道容器已经在跑 Docker，但不确定 compose 目录，也可以直接执行：
+
+```bash
+docker exec -it "$(docker ps --filter label=com.docker.compose.service=fn-knock --format '{{.Names}}' | head -n 1)" fn-knock-reset-panel-password
+```
+
+当前 `root@192.168.31.135` 上我已实际确认可用的命令就是：
+
+```bash
+cd /opt/fn-knock-docker && docker compose exec -T fn-knock fn-knock-reset-panel-password
+```
+
+这些命令都会进入运行中的 `fn-knock` 容器，清除 Docker 管理面板密码、面板会话和登录退避状态。业务配置和数据卷不会被删除。执行后再次访问 `7991`，会重新进入首次设置管理面板密码的流程。
 
 #### 本地前端调试 Docker 模式
 

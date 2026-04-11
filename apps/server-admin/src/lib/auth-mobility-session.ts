@@ -462,6 +462,7 @@ export class AuthMobilitySessionManager {
         ...(session.linkedTotpName
           ? { linkedTotpName: session.linkedTotpName }
           : {}),
+        ...(session.comment ? { sessionComment: session.comment } : {}),
         driftSource: args.source,
         fromIp: previousIp,
         ...(previousIpLocation ? { fromIpLocation: previousIpLocation } : {}),

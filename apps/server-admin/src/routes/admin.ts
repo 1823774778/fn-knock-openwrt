@@ -2594,6 +2594,7 @@ export const adminRoutes = new Elysia({
           ...(sess.linkedTotpName
             ? { linkedTotpName: sess.linkedTotpName }
             : {}),
+          ...(sess.comment ? { sessionComment: sess.comment } : {}),
           ip: sess.ip,
           ...(sess.ipLocation ? { ipLocation: sess.ipLocation } : {}),
           userAgent: sess.userAgent,
