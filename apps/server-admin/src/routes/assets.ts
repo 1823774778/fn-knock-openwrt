@@ -4,6 +4,7 @@ import { isIP } from "node:net";
 import { portScannerPlugin } from "../plugins/scanner";
 import { acmePlugin } from "../plugins/acme";
 import { ConfigManager } from "../lib/redis";
+import { DOCKER_ADMIN_DISCOVER_IP_HEADER_NAME } from "../lib/docker-admin-panel";
 import { isPrivateIpv4Address } from "../lib/local-network";
 import { routeDoc } from "../lib/openapi";
 import { getRuntimeProfile } from "../lib/runtime-profile";
@@ -70,9 +71,35 @@ const isUsablePrivateIpv4 = (value: string): boolean =>
   isPrivateIpv4Address(value) &&
   !value.startsWith("127.");
 
+const DOCKER_DISCOVER_LAN_IP = (() => {
+  const raw = process.env.DOCKER_DISCOVER_LAN_IP?.trim() || "";
+  return isUsablePrivateIpv4(raw) ? raw : "";
+})();
+
+if (
+  runtimeProfile.is_docker &&
+  process.env.DOCKER_DISCOVER_LAN_IP &&
+  !DOCKER_DISCOVER_LAN_IP
+) {
+  console.warn(
+    `[scan] ignoring invalid DOCKER_DISCOVER_LAN_IP=${process.env.DOCKER_DISCOVER_LAN_IP}`,
+  );
+}
+
 const resolveDockerDiscoverTargetHost = async (
   request: Request,
 ): Promise<string | null> => {
+  const forwardedDiscoverIp = String(
+    request.headers.get(DOCKER_ADMIN_DISCOVER_IP_HEADER_NAME) || "",
+  ).trim();
+  if (isUsablePrivateIpv4(forwardedDiscoverIp)) {
+    return forwardedDiscoverIp;
+  }
+
+  if (DOCKER_DISCOVER_LAN_IP) {
+    return DOCKER_DISCOVER_LAN_IP;
+  }
+
   const candidateValues = [
     request.headers.get("x-forwarded-host"),
     request.headers.get("host"),
@@ -170,7 +197,7 @@ export const assetsRoutes = new Elysia({
         return {
           success: false,
           message:
-            "Docker 模式下未能识别当前机器的局域网 IP，请通过该机器的局域网地址访问管理面板后重试。",
+            "Docker 模式下未能识别当前机器的局域网 IP。若当前是通过第三方反向代理访问，请改用会透传局域网提示的代理链路，或临时设置 DOCKER_DISCOVER_LAN_IP 后重试。",
         };
       }
       const envPorts = [

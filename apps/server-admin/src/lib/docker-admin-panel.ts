@@ -1,6 +1,8 @@
 import type { IncomingMessage } from "node:http";
+import { BlockList, isIP } from "node:net";
 import { randomBytes, scrypt as scryptCallback } from "node:crypto";
 import { promisify } from "node:util";
+import { normalizeCidrLines } from "../../../../packages/admin-shared/src/utils/cidr";
 import { redis } from "./redis";
 import { getRequiredEnv } from "./env";
 import { getClientIp } from "./auth-request";
@@ -42,8 +44,78 @@ const PROXY_PROTO_HEADERS = [
   "x-real-ip",
 ] as const;
 
+const normalizeTrustedProxyEntry = (value: string): string => {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+
+  if (!raw.includes("/")) {
+    const normalizedIp = normalizeIp(raw);
+    if (!normalizedIp) return "";
+    return `${normalizedIp}/${isIP(normalizedIp) === 6 ? "128" : "32"}`;
+  }
+
+  const [rawAddress, rawPrefix] = raw.split("/", 2);
+  const normalizedIp = normalizeIp(rawAddress);
+  if (!normalizedIp || !/^\d+$/.test(rawPrefix?.trim() || "")) {
+    return "";
+  }
+
+  const prefix = Number.parseInt(rawPrefix.trim(), 10);
+  if (!Number.isFinite(prefix) || prefix < 0) {
+    return "";
+  }
+
+  const family = isIP(normalizedIp);
+  if (family === 4 && prefix > 32) return "";
+  if (family === 6 && prefix > 128) return "";
+  if (family === 0) return "";
+
+  return `${normalizedIp}/${prefix}`;
+};
+
+const parseTrustedProxyCidrs = (
+  value: string | null | undefined,
+): string[] => {
+  const tokens = String(value ?? "")
+    .split(/[\s,]+/u)
+    .map((item) => normalizeTrustedProxyEntry(item))
+    .filter(Boolean);
+
+  return normalizeCidrLines(tokens);
+};
+
+const TRUSTED_DOCKER_ADMIN_PROXY_CIDRS = parseTrustedProxyCidrs(
+  process.env.DOCKER_ADMIN_TRUSTED_PROXY_CIDRS,
+);
+
+const trustedDockerAdminProxyBlockList = (() => {
+  const blockList = new BlockList();
+
+  for (const cidr of TRUSTED_DOCKER_ADMIN_PROXY_CIDRS) {
+    const [rawAddress, rawPrefix] = cidr.split("/", 2);
+    const normalizedIp = normalizeIp(rawAddress);
+    const prefix = Number.parseInt(rawPrefix || "", 10);
+    const family = isIP(normalizedIp);
+    if (!normalizedIp || !Number.isFinite(prefix) || family === 0) {
+      continue;
+    }
+
+    blockList.addSubnet(
+      normalizedIp,
+      prefix,
+      family === 6 ? "ipv6" : "ipv4",
+    );
+  }
+
+  return blockList;
+})();
+
 export const DOCKER_ADMIN_SESSION_COOKIE_NAME = "fn-knock-admin-panel-session";
 export const DOCKER_ADMIN_PROXY_HEADER_NAME = "x-fn-knock-admin-proxy";
+export const DOCKER_ADMIN_DISCOVER_IP_HEADER_NAME =
+  "x-fn-knock-docker-discover-ip";
+export const UPSTREAM_PRIVATE_IPV4_HEADER_NAME =
+  "x-reauth-upstream-private-ipv4";
 
 const getDockerAdminProxySecretValue = () =>
   getRequiredEnv("ADMIN_PROXY_SECRET");
@@ -179,8 +251,76 @@ export const resolveClientIpFromIncomingMessage = (
   return socketIp || forwardedIp || "";
 };
 
+const isTrustedDockerAdminIngressIp = (
+  ip: string | null | undefined,
+): boolean => {
+  const normalizedIp = normalizeIp(ip);
+  if (!normalizedIp) return false;
+  if (isWhitelistExemptIp(normalizedIp)) return true;
+
+  const family = isIP(normalizedIp);
+  if (family === 4) {
+    return trustedDockerAdminProxyBlockList.check(normalizedIp, "ipv4");
+  }
+  if (family === 6) {
+    return trustedDockerAdminProxyBlockList.check(normalizedIp, "ipv6");
+  }
+  return false;
+};
+
+export interface DockerAdminIncomingRequestContext {
+  socketIp: string;
+  forwardedIp: string;
+  clientIp: string;
+  trustedIngress: boolean;
+  viaForwardedHeaders: boolean;
+}
+
+export const resolveDockerAdminIncomingRequestContext = (
+  request: IncomingMessage,
+): DockerAdminIncomingRequestContext => {
+  const socketIp = normalizeIp(request.socket.remoteAddress);
+  const forwardedIp = PROXY_PROTO_HEADERS.map((headerName) =>
+    normalizeIncomingForwardedIp(request.headers[headerName]),
+  ).find(Boolean);
+  const trustedIngress = isTrustedDockerAdminIngressIp(socketIp);
+  const viaForwardedHeaders = Boolean(trustedIngress && forwardedIp);
+  const clientIp =
+    (viaForwardedHeaders ? forwardedIp : socketIp) || forwardedIp || "";
+
+  return {
+    socketIp,
+    forwardedIp: forwardedIp || "",
+    clientIp,
+    trustedIngress,
+    viaForwardedHeaders,
+  };
+};
+
 export const isPrivateNetworkClient = (ip: string | null | undefined) =>
   isWhitelistExemptIp(ip);
+
+export const getDockerAdminTrustedProxyCidrs = (): string[] => [
+  ...TRUSTED_DOCKER_ADMIN_PROXY_CIDRS,
+];
+
+export const resolveDockerAdminDiscoverIpFromIncomingMessage = (
+  request: IncomingMessage,
+  context: DockerAdminIncomingRequestContext,
+): string => {
+  if (!context.trustedIngress || !context.viaForwardedHeaders) {
+    return "";
+  }
+
+  const headerValue = request.headers[UPSTREAM_PRIVATE_IPV4_HEADER_NAME];
+  const raw = Array.isArray(headerValue) ? headerValue[0] : headerValue;
+  const normalized = normalizeIp(String(raw ?? "").split(",")[0]?.trim());
+  if (!normalized || isIP(normalized) !== 4) {
+    return "";
+  }
+
+  return isWhitelistExemptIp(normalized) ? normalized : "";
+};
 
 const normalizeDockerAdminTrackingIp = (ip: string | null | undefined) => {
   const normalized = normalizeIp(ip);

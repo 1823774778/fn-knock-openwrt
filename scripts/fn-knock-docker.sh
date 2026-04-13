@@ -266,6 +266,10 @@ build_default_remote_tag_base() {
   echo "${version}-${timestamp}"
 }
 
+build_default_publish_tag_base() {
+  parse_app_version
+}
+
 normalize_tag_base() {
   local tag_base="$1"
 
@@ -288,6 +292,19 @@ build_arch_image_ref() {
   local arch="$3"
 
   echo "${image_repo}:${tag_base}-${arch}"
+}
+
+require_publish_image_repo() {
+  local image_repo="$1"
+
+  case "${image_repo}" in
+    */*)
+      return 0
+      ;;
+    *)
+      fail "publish target must include namespace, for example FN_KNOCK_DOCKER_IMAGE_REPO=kcilnk/fn-knock"
+      ;;
+  esac
 }
 
 upsert_env_file() {
@@ -407,16 +424,18 @@ finalize_cache_dir() {
   fi
 }
 
-buildx_image() {
+run_buildx_image() {
   local arch="$1"
   local image_ref="$2"
-  local cache_dir="${CACHE_ROOT}/${arch}"
+  local output_mode="$3"
+  local cache_scope="${4:-${arch}}"
+  local cache_dir="${CACHE_ROOT}/${cache_scope}"
   local cache_next="${cache_dir}-next"
   local build_args=()
   local cache_export_enabled=1
 
   configure_build_proxy
-  log "Building image ${image_ref} for linux/${arch}"
+  log "Building image ${image_ref} for linux/${arch} (${output_mode})"
   ensure_buildx_builder
 
   mkdir -p "${CACHE_ROOT}"
@@ -448,11 +467,22 @@ buildx_image() {
     build_args+=(--cache-from "type=local,src=${cache_dir}")
   fi
 
+  case "${output_mode}" in
+    load)
+      build_args+=(--load)
+      ;;
+    push)
+      build_args+=(--push)
+      ;;
+    *)
+      fail "unsupported buildx output mode: ${output_mode}"
+      ;;
+  esac
+
   build_args+=(
     --platform "linux/${arch}" \
     -f "${DOCKER_DIR}/Dockerfile" \
     -t "${image_ref}" \
-    --load \
     .
   )
 
@@ -464,6 +494,14 @@ buildx_image() {
   if [ "${cache_export_enabled}" = "1" ]; then
     finalize_cache_dir "${cache_dir}" "${cache_next}"
   fi
+}
+
+buildx_image() {
+  run_buildx_image "$1" "$2" load "$1"
+}
+
+pushx_image() {
+  run_buildx_image "$1" "$2" push "$1"
 }
 
 build_local_image() {
@@ -486,6 +524,29 @@ stream_image_to_remote() {
 
   log "Streaming image ${image_ref} to ${REMOTE_HOST}"
   docker save "${image_ref}" | ssh "${REMOTE_HOST}" "docker load"
+}
+
+create_manifest_tag() {
+  local target_ref="$1"
+  shift
+
+  log "Creating multi-arch manifest ${target_ref}"
+  docker buildx imagetools create -t "${target_ref}" "$@"
+}
+
+verify_manifest_platforms() {
+  local target_ref="$1"
+  local inspect_output
+
+  inspect_output="$(docker buildx imagetools inspect "${target_ref}")" || \
+    fail "failed to inspect manifest ${target_ref}"
+
+  printf '%s\n' "${inspect_output}" | grep -q 'linux/amd64' || \
+    fail "manifest ${target_ref} is missing linux/amd64"
+  printf '%s\n' "${inspect_output}" | grep -q 'linux/arm64' || \
+    fail "manifest ${target_ref} is missing linux/arm64"
+
+  log "Verified manifest ${target_ref} includes linux/amd64 and linux/arm64"
 }
 
 upload_remote_bundle() {
@@ -668,6 +729,42 @@ cmd_local_deploy() {
   print_remote_access_hint
 }
 
+cmd_publish_hub() {
+  local image_repo
+  local tag_base
+  local image_ref
+  local manifest_ref
+  local latest_ref
+  local arch_refs=()
+  local arch
+
+  require_cmd docker
+
+  image_repo="${FN_KNOCK_DOCKER_IMAGE_REPO:-}"
+  [ -n "${image_repo}" ] || fail "FN_KNOCK_DOCKER_IMAGE_REPO is required, for example kcilnk/fn-knock"
+  require_publish_image_repo "${image_repo}"
+
+  tag_base="${FN_KNOCK_DOCKER_IMAGE_TAG:-$(build_default_publish_tag_base)}"
+  tag_base="$(normalize_tag_base "${tag_base}")"
+  manifest_ref="${image_repo}:${tag_base}"
+  latest_ref="${image_repo}:latest"
+
+  log "Publishing Docker Hub images for ${image_repo}"
+  log "Version tag ${manifest_ref}"
+  log "Additional tag ${latest_ref}"
+
+  for arch in amd64 arm64; do
+    image_ref="$(build_arch_image_ref "${image_repo}" "${tag_base}" "${arch}")"
+    arch_refs+=("${image_ref}")
+    pushx_image "${arch}" "${image_ref}"
+  done
+
+  create_manifest_tag "${manifest_ref}" "${arch_refs[@]}"
+  verify_manifest_platforms "${manifest_ref}"
+  create_manifest_tag "${latest_ref}" "${arch_refs[@]}"
+  verify_manifest_platforms "${latest_ref}"
+}
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -680,6 +777,7 @@ Commands:
   logs-local    Tail local fn-knock container logs
   reset-panel-password-local   Clear Docker admin panel password for the local compose stack
   local-deploy  Build amd64 and arm64 images, upload both via SSH, and restart remote compose
+  publish-hub   Push amd64 and arm64 images to a registry and create a multi-arch manifest tag
   remote-ps     Show remote compose status
   remote-logs   Tail remote fn-knock container logs
   reset-panel-password-remote  Clear Docker admin panel password on the remote compose stack
@@ -687,7 +785,7 @@ Commands:
 Optional env overrides:
   FN_KNOCK_DOCKER_ENV_FILE        (default: deploy/docker/.env, fallback: deploy/docker/.env.example)
   FN_KNOCK_DOCKER_IMAGE           (override local build image)
-  FN_KNOCK_DOCKER_IMAGE_REPO      (default: fn-knock)
+  FN_KNOCK_DOCKER_IMAGE_REPO      (default: fn-knock; publish-hub requires namespace/repo)
   FN_KNOCK_DOCKER_IMAGE_TAG       (base tag; final publish tags append -amd64 and -arm64)
   FN_KNOCK_DOCKER_LOCAL_ARCH      (override local build arch; default: host arch)
   FN_KNOCK_DOCKER_CACHE_DIR       (default: $HOME/.cache/fn-knock-buildx)
@@ -725,6 +823,9 @@ case "${1:-}" in
     ;;
   local-deploy)
     cmd_local_deploy
+    ;;
+  publish-hub)
+    cmd_publish_hub
     ;;
   remote-ps)
     cmd_remote_ps

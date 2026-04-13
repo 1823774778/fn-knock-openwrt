@@ -75,14 +75,16 @@ import {
   getRuntimeProfile,
 } from "./lib/runtime-profile";
 import {
+  DOCKER_ADMIN_DISCOVER_IP_HEADER_NAME,
   DOCKER_ADMIN_PROXY_HEADER_NAME,
   dockerAdminPanelManager,
+  getDockerAdminTrustedProxyCidrs,
   isDockerAdminPublicPath,
   getDockerAdminProxySecret,
   isDockerAdminProtectedPath,
-  isPrivateNetworkClient,
   isDockerAdminProxyRequest,
-  resolveClientIpFromIncomingMessage,
+  resolveDockerAdminDiscoverIpFromIncomingMessage,
+  resolveDockerAdminIncomingRequestContext,
 } from "./lib/docker-admin-panel";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -123,6 +125,14 @@ console.log(`Serving static files from: ${STATIC_PATH}`);
 console.log(
   `[runtime] deployment_target=${runtimeProfile.deployment_target} docker=${runtimeProfile.is_docker} linux=${runtimeProfile.is_linux} root=${runtimeProfile.is_root_process}`,
 );
+if (runtimeProfile.is_docker) {
+  const trustedProxyCidrs = getDockerAdminTrustedProxyCidrs();
+  if (trustedProxyCidrs.length > 0) {
+    console.log(
+      `[docker-admin] trusted reverse proxies enabled via DOCKER_ADMIN_TRUSTED_PROXY_CIDRS=${trustedProxyCidrs.join(",")}`,
+    );
+  }
+}
 
 const RUNTIME_HMAC_SECRET = getRequiredEnv("HMAC_SECRET");
 const EXPOSE_RUNTIME_HMAC_SECRET =
@@ -270,7 +280,7 @@ const buildDockerAdminDeniedResponse = (
     return new Response(
       JSON.stringify({
         success: false,
-        message: "Docker 管理面板仅允许内网访问",
+        message: "Docker 管理面板仅允许内网或可信反代访问",
       }),
       {
         status: 403,
@@ -351,7 +361,7 @@ const buildDockerAdminDeniedResponse = (
     <section class="card">
       <div class="badge">!</div>
       <h1>拒绝访问</h1>
-      <p>Docker 管理面板只允许从内网地址访问。请在局域网、VPN 或宿主机本地环境中打开该入口。</p>
+      <p>Docker 管理面板默认只允许宿主机本地、局域网、VPN 或已配置的可信反向代理访问。公网直连会被拒绝。</p>
       <div class="meta">当前识别来源 IP：${clientIp || "unknown"}</div>
     </section>
   </body>
@@ -378,16 +388,24 @@ const startDockerAdminViewServer = (
 ) => {
   const server = createServer(async (req, res) => {
     try {
-      const clientIp = resolveClientIpFromIncomingMessage(req);
+      const accessContext = resolveDockerAdminIncomingRequestContext(req);
+      const clientIp = accessContext.clientIp;
+      const discoverIp = resolveDockerAdminDiscoverIpFromIncomingMessage(
+        req,
+        accessContext,
+      );
       const rawUrl = req.url || "/";
       const accepts = String(req.headers.accept || "").toLowerCase();
       const prefersJson =
         rawUrl.startsWith("/api/") || accepts.includes("application/json");
 
-      if (!clientIp || !isPrivateNetworkClient(clientIp)) {
+      if (!accessContext.trustedIngress) {
         await writeResponse(
           res,
-          buildDockerAdminDeniedResponse(clientIp, prefersJson),
+          buildDockerAdminDeniedResponse(
+            accessContext.socketIp || clientIp,
+            prefersJson,
+          ),
         );
         return;
       }
@@ -398,6 +416,7 @@ const startDockerAdminViewServer = (
         url: new URL(rawUrl, `${protocol}://${host}`),
         headerOverrides: {
           [DOCKER_ADMIN_PROXY_HEADER_NAME]: getDockerAdminProxySecret(),
+          [DOCKER_ADMIN_DISCOVER_IP_HEADER_NAME]: discoverIp || null,
           "x-forwarded-for": clientIp,
           "x-real-ip": clientIp,
         },
