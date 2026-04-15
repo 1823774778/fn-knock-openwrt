@@ -117,6 +117,7 @@ const activeTransport = ref<TerminalTransport | null>(null);
 const activeAttachment = ref<TerminalAttachmentRecord | null>(null);
 const terminalMountRef = ref<HTMLElement | null>(null);
 const terminalShellRef = ref<HTMLElement | null>(null);
+const terminalPanelRef = ref<HTMLElement | null>(null);
 const terminalFrameRef = ref<HTMLElement | null>(null);
 const mobileAccessoryBarRef = ref<HTMLElement | null>(null);
 const terminalStatusRef = ref<HTMLElement | null>(null);
@@ -131,6 +132,7 @@ const isSendingDialogPayload = ref(false);
 const renameDialogOpen = ref(false);
 const renameDialogValue = ref("");
 const isRenamingSession = ref(false);
+const isTerminalFullscreen = ref(false);
 
 let term: InstanceType<GhosttyModule["Terminal"]> | null = null;
 let fitAddon: InstanceType<GhosttyModule["FitAddon"]> | null = null;
@@ -161,6 +163,9 @@ let trackedTerminalTouchMoved = false;
 let trackedTerminalTouchScrolling = false;
 let outputTextDecoder = new TextDecoder();
 let pendingLegacyTitleSequence = "";
+let pageScrollLocked = false;
+let previousHtmlOverflow = "";
+let previousBodyOverflow = "";
 
 const selectedSession = computed(
   () =>
@@ -205,16 +210,41 @@ const toolbarDisabled = computed(() => !activeAttachment.value);
 const armedModifierLabel = computed(() =>
   armedModifier.value ? toolbarModifierLabels[armedModifier.value] : "",
 );
-const terminalFrameStyle = computed(() =>
-  compactViewport.value
+const terminalFullscreenLabel = computed(() =>
+  isTerminalFullscreen.value ? "退出最大化" : "最大化终端",
+);
+const terminalPanelClass = computed(() =>
+  isTerminalFullscreen.value
+    ? "fixed z-50 flex overflow-hidden rounded-[24px] bg-background/94 p-2 shadow-[0_24px_96px_rgba(15,23,42,0.34)] backdrop-blur-md sm:p-3"
+    : "",
+);
+const terminalPanelStyle = computed(() =>
+  isTerminalFullscreen.value
+    ? {
+        top: "max(env(safe-area-inset-top), 0.5rem)",
+        right: "max(env(safe-area-inset-right), 0.5rem)",
+        bottom: "max(env(safe-area-inset-bottom), 0.5rem)",
+        left: "max(env(safe-area-inset-left), 0.5rem)",
+      }
+    : undefined,
+);
+const terminalFrameStyle = computed(() => {
+  if (isTerminalFullscreen.value) {
+    return {
+      minHeight: "0",
+      maxHeight: "none",
+    };
+  }
+
+  return compactViewport.value
     ? {
         height: terminalHeight.value,
         minHeight: terminalHeight.value,
       }
     : {
         maxHeight: terminalHeight.value,
-      },
-);
+      };
+});
 
 const statusTone = computed(() => {
   if (connectionState.value === "connected") return "已连接";
@@ -313,6 +343,55 @@ const getVisualViewportMetrics = () => {
     visibleBottom,
     keyboardInset,
   };
+};
+
+const copyTextToClipboard = async (text: string) => {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  if (typeof document === "undefined") {
+    throw new Error("Clipboard API unavailable");
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.top = "0";
+  textarea.style.left = "0";
+  textarea.style.opacity = "0";
+
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
+
+  const copied = document.execCommand("copy");
+  document.body.removeChild(textarea);
+
+  if (!copied) {
+    throw new Error("execCommand copy failed");
+  }
+};
+
+const lockPageScroll = () => {
+  if (typeof document === "undefined" || pageScrollLocked) return;
+
+  previousHtmlOverflow = document.documentElement.style.overflow;
+  previousBodyOverflow = document.body.style.overflow;
+  document.documentElement.style.overflow = "hidden";
+  document.body.style.overflow = "hidden";
+  pageScrollLocked = true;
+};
+
+const unlockPageScroll = () => {
+  if (typeof document === "undefined" || !pageScrollLocked) return;
+
+  document.documentElement.style.overflow = previousHtmlOverflow;
+  document.body.style.overflow = previousBodyOverflow;
+  pageScrollLocked = false;
 };
 
 const clampTerminalFontSize = (value: number): number =>
@@ -809,6 +888,60 @@ const focusTerminal = () => {
   void nextTick(() => term?.focus());
 };
 
+const setTerminalFullscreen = async (nextFullscreen: boolean) => {
+  if (nextFullscreen === isTerminalFullscreen.value) {
+    if (nextFullscreen) {
+      focusTerminal();
+    }
+    return;
+  }
+
+  isTerminalFullscreen.value = nextFullscreen;
+  if (nextFullscreen) {
+    lockPageScroll();
+  } else {
+    unlockPageScroll();
+  }
+
+  await nextTick();
+  syncViewportHeight();
+  focusTerminal();
+};
+
+const toggleTerminalFullscreen = () => {
+  void setTerminalFullscreen(!isTerminalFullscreen.value);
+};
+
+const handleWindowKeydown = (event: KeyboardEvent) => {
+  if (event.key !== "Escape" || !isTerminalFullscreen.value) return;
+
+  event.preventDefault();
+  void setTerminalFullscreen(false);
+};
+
+const handleTerminalContextMenu = async (event: MouseEvent) => {
+  event.preventDefault();
+
+  const selectedText = term?.getSelection() || "";
+  if (!selectedText.length) {
+    toast.info("当前没有选中内容");
+    focusTerminal();
+    return;
+  }
+
+  try {
+    await copyTextToClipboard(selectedText);
+    toast.success("已复制选中内容");
+    term?.clearSelection();
+    focusTerminal();
+  } catch (error) {
+    toast.error("复制失败", {
+      description:
+        error instanceof Error ? error.message : "无法将选中内容复制到剪贴板",
+    });
+  }
+};
+
 const keepTerminalFocused = (event: Event) => {
   if (event instanceof PointerEvent && event.pointerType !== "mouse") {
     return;
@@ -869,7 +1002,9 @@ const applyOutputChunk = (chunk: TerminalOutputChunk) => {
 const syncViewportHeight = () => {
   compactViewport.value = detectCompactViewport();
   syncTerminalTextInputAnchor();
-  const measurementTarget = terminalFrameRef.value || terminalShellRef.value;
+  const measurementTarget = isTerminalFullscreen.value
+    ? terminalPanelRef.value
+    : terminalFrameRef.value || terminalShellRef.value;
   if (!measurementTarget) return;
 
   const rect = measurementTarget.getBoundingClientRect();
@@ -897,6 +1032,7 @@ const syncViewportHeight = () => {
   scheduleTerminalFit();
 
   if (
+    !isTerminalFullscreen.value &&
     compactViewport.value &&
     viewportMetrics.keyboardInset >= MOBILE_KEYBOARD_INSET_THRESHOLD_PX
   ) {
@@ -1495,6 +1631,7 @@ onMounted(async () => {
   loadTerminalFontSize();
   await bootstrapPage();
   window.addEventListener("resize", syncViewportHeight);
+  window.addEventListener("keydown", handleWindowKeydown);
   window.visualViewport?.addEventListener("resize", syncViewportHeight);
   window.visualViewport?.addEventListener("scroll", syncViewportHeight);
 });
@@ -1505,6 +1642,7 @@ watch(
     connectionState,
     connectionError,
     showMobileAccessoryBar,
+    isTerminalFullscreen,
   ],
   () => {
     void nextTick().then(() => {
@@ -1516,8 +1654,10 @@ watch(
 onBeforeUnmount(() => {
   unbindTerminalTouchGestures();
   window.removeEventListener("resize", syncViewportHeight);
+  window.removeEventListener("keydown", handleWindowKeydown);
   window.visualViewport?.removeEventListener("resize", syncViewportHeight);
   window.visualViewport?.removeEventListener("scroll", syncViewportHeight);
+  unlockPageScroll();
   if (terminalFitFrame !== null) {
     window.cancelAnimationFrame(terminalFitFrame);
     terminalFitFrame = null;
@@ -1725,7 +1865,12 @@ onBeforeUnmount(() => {
 
           <div
             v-if="!isBooting && sessions.length > 0"
-            class="flex min-h-0 flex-1 flex-col gap-2.5 sm:gap-3"
+            ref="terminalPanelRef"
+            :class="[
+              'flex min-h-0 flex-1 flex-col gap-2.5 sm:gap-3',
+              terminalPanelClass,
+            ]"
+            :style="terminalPanelStyle"
           >
             <div
               ref="terminalFrameRef"
@@ -1751,9 +1896,17 @@ onBeforeUnmount(() => {
                   <span
                     class="h-[11px] w-[11px] rounded-full border border-black/18 bg-[#febc2e] shadow-[inset_0_1px_0.5px_rgba(255,255,255,0.18)]"
                   />
-                  <span
-                    class="h-[11px] w-[11px] rounded-full border border-black/18 bg-[#28c840] shadow-[inset_0_1px_0.5px_rgba(255,255,255,0.18)]"
-                  />
+                  <button
+                    type="button"
+                    class="h-[11px] w-[11px] rounded-full border border-black/18 bg-[#28c840] shadow-[inset_0_1px_0.5px_rgba(255,255,255,0.18)] transition-transform hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7ee78d]/70"
+                    :class="isTerminalFullscreen ? 'ring-1 ring-white/35' : ''"
+                    :aria-label="terminalFullscreenLabel"
+                    :aria-pressed="isTerminalFullscreen"
+                    :title="terminalFullscreenLabel"
+                    @click="toggleTerminalFullscreen"
+                  >
+                    <span class="sr-only">{{ terminalFullscreenLabel }}</span>
+                  </button>
                 </div>
 
                 <div
@@ -1774,6 +1927,7 @@ onBeforeUnmount(() => {
                 <div
                   ref="terminalMountRef"
                   class="absolute inset-0 box-border min-h-0 min-w-0 overflow-hidden px-1.5 py-2.5 sm:px-2.5 sm:py-3"
+                  @contextmenu="handleTerminalContextMenu"
                 />
               </div>
             </div>
