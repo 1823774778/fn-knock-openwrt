@@ -513,12 +513,14 @@ export async function requestTencentCloudJson<T>(
   if (!response.ok) {
     const errorCode = payload.Error?.Code || `HTTP ${response.status}`;
     const errorMessage = payload.Error?.Message || "请求失败";
-    throw new Error(`${errorCode}: ${errorMessage}`);
+    throw new Error(
+      `${errorCode}: ${errorMessage}${payload.RequestId ? ` (RequestId: ${payload.RequestId})` : ""}`,
+    );
   }
 
   if (payload.Error?.Code) {
     throw new Error(
-      `${payload.Error.Code}: ${payload.Error.Message || "请求失败"}`,
+      `${payload.Error.Code}: ${payload.Error.Message || "请求失败"}${payload.RequestId ? ` (RequestId: ${payload.RequestId})` : ""}`,
     );
   }
 

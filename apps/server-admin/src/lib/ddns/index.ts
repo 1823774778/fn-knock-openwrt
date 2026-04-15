@@ -16,6 +16,7 @@ import type {
   DDNSUpdateScope,
 } from "./types";
 import { providerDefinitions, providerUpdaters } from "./providers";
+import { ensureEdgeOneOverseasAccessSynced } from "./providers/edgeone-overseas-access";
 import {
   applyUpdateScope,
   DDNS_UPDATE_SCOPE_FIELD,
@@ -23,6 +24,11 @@ import {
   getUpdateScopeUnavailableMessage,
   normalizeUpdateScope,
 } from "./providers/helpers";
+import {
+  EDGEONE_OVERSEAS_ACCESS_MODE_FIELD,
+  isEdgeOneDDNSProvider,
+  normalizeEdgeOneOverseasAccessMode,
+} from "./providers/edgeone-shared";
 import {
   DDNS_INTERFACE_IPV4_INDEX_FIELD,
   DDNS_INTERFACE_IPV6_INDEX_FIELD,
@@ -106,6 +112,14 @@ export class DDNSManager {
       [DDNS_INTERFACE_IPV6_INDEX_FIELD]: normalizeInterfaceAddressIndex(
         data?.[DDNS_INTERFACE_IPV6_INDEX_FIELD],
       ),
+      ...(isEdgeOneDDNSProvider(providerName)
+        ? {
+            [EDGEONE_OVERSEAS_ACCESS_MODE_FIELD]:
+              normalizeEdgeOneOverseasAccessMode(
+                data?.[EDGEONE_OVERSEAS_ACCESS_MODE_FIELD],
+              ),
+          }
+        : {}),
     };
   }
 
@@ -130,6 +144,14 @@ export class DDNSManager {
       [DDNS_INTERFACE_IPV6_INDEX_FIELD]: normalizeInterfaceAddressIndex(
         config[DDNS_INTERFACE_IPV6_INDEX_FIELD],
       ),
+      ...(isEdgeOneDDNSProvider(providerName)
+        ? {
+            [EDGEONE_OVERSEAS_ACCESS_MODE_FIELD]:
+              normalizeEdgeOneOverseasAccessMode(
+                config[EDGEONE_OVERSEAS_ACCESS_MODE_FIELD],
+              ),
+          }
+        : {}),
     };
     if (ipSource === DEFAULT_DDNS_IP_SOURCE) {
       delete normalizedConfig[DDNS_IP_SOURCE_FIELD];
@@ -144,6 +166,12 @@ export class DDNSManager {
       if (!normalizedConfig[DDNS_INTERFACE_IPV6_INDEX_FIELD]) {
         delete normalizedConfig[DDNS_INTERFACE_IPV6_INDEX_FIELD];
       }
+    }
+    if (
+      !isEdgeOneDDNSProvider(providerName) ||
+      normalizedConfig[EDGEONE_OVERSEAS_ACCESS_MODE_FIELD] === "off"
+    ) {
+      delete normalizedConfig[EDGEONE_OVERSEAS_ACCESS_MODE_FIELD];
     }
     await redis.del(key);
     if (Object.keys(normalizedConfig).length > 0) {
@@ -291,6 +319,60 @@ export class DDNSManager {
     await ddnsLogBuffer.clear();
   }
 
+  private async ensureProviderAuxiliaryStateWithContext(
+    providerName: string,
+    config: Record<string, string>,
+    http = createDDNSHttpClient({
+      networkInterface: config[DDNS_NETWORK_INTERFACE_FIELD],
+    }),
+    options: { emitLog?: boolean; logPrefix?: string } = {},
+  ): Promise<void> {
+    if (!isEdgeOneDDNSProvider(providerName)) {
+      return;
+    }
+
+    const result = await ensureEdgeOneOverseasAccessSynced({
+      providerName,
+      context: {
+        config,
+        http,
+      },
+    });
+
+    if (options.emitLog && result.changed && result.message) {
+      await this.appendLog(
+        "info",
+        options.logPrefix
+          ? `${options.logPrefix}: ${result.message}`
+          : result.message,
+      );
+    }
+  }
+
+  async ensureProviderAuxiliaryState(
+    options: {
+      emitLog?: boolean;
+      logPrefix?: string;
+      providerName?: string | null;
+    } = {},
+  ): Promise<void> {
+    const providerName = options.providerName ?? (await this.getProvider());
+    if (!providerName) {
+      return;
+    }
+
+    const config = await this.getConfig(providerName);
+    await this.ensureProviderAuxiliaryStateWithContext(
+      providerName,
+      config,
+      undefined,
+      {
+        emitLog: options.emitLog,
+        logPrefix: options.logPrefix,
+      },
+    );
+  }
+
   async executeUpdate(
     ipv4: string | null,
     ipv6: string | null,
@@ -306,6 +388,9 @@ export class DDNSManager {
     }
 
     const config = await this.getConfig(providerName);
+    const http = createDDNSHttpClient({
+      networkInterface: config[DDNS_NETWORK_INTERFACE_FIELD],
+    });
     const updateScope = normalizeUpdateScope(config[DDNS_UPDATE_SCOPE_FIELD]);
     const scopedIPs = applyUpdateScope(updateScope, ipv4, ipv6);
     if (!scopedIPs.ipv4 && !scopedIPs.ipv6) {
@@ -318,11 +403,13 @@ export class DDNSManager {
     const retryCount = Number(process.env.DDNS_RETRY_COUNT || "1");
     const maxAttempts = Math.max(1, retryCount + 1);
     const delayMs = Number(process.env.DDNS_RETRY_DELAY_MS || "600");
-    const http = createDDNSHttpClient({
-      networkInterface: config[DDNS_NETWORK_INTERFACE_FIELD],
-    });
 
     try {
+      await this.ensureProviderAuxiliaryStateWithContext(
+        providerName,
+        config,
+        http,
+      );
       return await runWithRetry(
         () => updater({ config, http }, scopedIPs.ipv4, scopedIPs.ipv6),
         { maxAttempts, delayMs },

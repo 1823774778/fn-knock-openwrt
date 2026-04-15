@@ -77,6 +77,11 @@ export const runAutomaticDDNSCheck = async (
     }
 
     const config = await ddnsManager.getConfig(provider);
+    await ddnsManager.ensureProviderAuxiliaryState({
+      providerName: provider,
+      emitLog: true,
+      logPrefix: triggerLabel,
+    });
     const updateScope = normalizeUpdateScope(config[DDNS_UPDATE_SCOPE_FIELD]);
     const ips = await resolveDDNSTargetIPs({
       updateScope,
@@ -154,7 +159,7 @@ export const runAutomaticDDNSCheck = async (
     await ddnsManager.appendLog("error", message);
   } catch (e: any) {
     const message = `${triggerLabel}: 任务异常: ${e?.message || String(e)}`;
-    console.error("[ddns][auto-check] error:", e?.message || String(e));
+    console.error("[ddns][auto-check] error:", e);
     await ddnsManager.setLastCheck("error", message);
     await ddnsManager.appendLog("error", message);
   }

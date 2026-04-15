@@ -3,16 +3,11 @@ import type {
   DDNSProviderDefinition,
   DDNSUpdateResult,
 } from "../types";
+import { normalizeDomain, toPositiveInt, updateDualStack } from "./helpers";
 import {
-  normalizeDomain,
-  requestTencentCloudJson,
-  toPositiveInt,
-  updateDualStack,
-} from "./helpers";
-
-const EDGEONE_API_HOST = "teo.tencentcloudapi.com";
-const EDGEONE_API_VERSION = "2022-09-01";
-const EDGEONE_SERVICE = "teo";
+  EDGEONE_OVERSEAS_ACCESS_MODE_FIELD,
+  requestEdgeOneJson,
+} from "./edgeone-shared";
 
 type EdgeOneDnsRecord = {
   RecordId?: string;
@@ -83,6 +78,18 @@ export const edgeoneProvider: DDNSProviderDefinition = {
       description: "默认 300 秒，EdgeOne 允许 60-86400",
     },
     {
+      key: EDGEONE_OVERSEAS_ACCESS_MODE_FIELD,
+      label: "海外访问控制",
+      type: "select",
+      required: false,
+      options: [
+        { label: "不使用", value: "off" },
+        { label: "屏蔽海外IP", value: "block_overseas" },
+      ],
+      description:
+        "当开启时，将调用 EdgeOne 安全策略 API 屏蔽海外 IP 访问；港澳台不属于海外。该设置只会在配置变更时同步一次，不会随每次 DDNS 更新重复执行。",
+    },
+    {
       key: "endpoint",
       label: "API Endpoint",
       type: "text",
@@ -95,25 +102,12 @@ export const edgeoneProvider: DDNSProviderDefinition = {
       key: "region",
       label: "Region",
       type: "text",
-      placeholder: "ap-guangzhou",
+      placeholder: "留空",
       required: false,
       description: "可选；大多数场景可留空",
     },
   ],
 };
-
-function resolveEdgeOneApiHost(endpoint: string | undefined): string {
-  const value = endpoint?.trim();
-  if (!value) {
-    return EDGEONE_API_HOST;
-  }
-
-  if (/^https?:\/\//i.test(value)) {
-    return new URL(value).host || EDGEONE_API_HOST;
-  }
-
-  return value.replace(/\/+$/, "") || EDGEONE_API_HOST;
-}
 
 function normalizeEdgeOneLocation(value: string | undefined): string {
   const trimmed = value?.trim();
@@ -128,23 +122,14 @@ async function edgeoneRequest<T>(
   action: string,
   payload: Record<string, unknown>,
 ): Promise<T> {
-  const { config, http } = context;
+  const { config } = context;
   const secretId = config.secret_id?.trim();
   const secretKey = config.secret_key?.trim();
   if (!secretId || !secretKey) {
     throw new Error("腾讯云 EdgeOne 配置不完整");
   }
 
-  return requestTencentCloudJson<T>(http, {
-    action,
-    host: resolveEdgeOneApiHost(config.endpoint),
-    payload,
-    region: config.region?.trim() || undefined,
-    secretId,
-    secretKey,
-    service: EDGEONE_SERVICE,
-    version: EDGEONE_API_VERSION,
-  });
+  return requestEdgeOneJson<T>(context, action, payload);
 }
 
 export async function edgeoneUpdate(
@@ -164,75 +149,82 @@ export async function edgeoneUpdate(
   const ttl = toPositiveInt(config.ttl, 300);
   const desiredLocation = normalizeEdgeOneLocation(config.location);
 
-  return updateDualStack("腾讯云 EdgeOne", ipv4, ipv6, async (recordType, ip) => {
-    const list = await edgeoneRequest<EdgeOneDescribeDnsRecordsResponse>(
-      context,
-      "DescribeDnsRecords",
-      {
-        ZoneId: zoneId,
-        Offset: 0,
-        Limit: 100,
-        Match: "all",
-        Filters: [
-          {
-            Name: "name",
-            Values: [domain],
-            Fuzzy: false,
-          },
-        ],
-      },
-    );
+  return updateDualStack(
+    "腾讯云 EdgeOne",
+    ipv4,
+    ipv6,
+    async (recordType, ip) => {
+      const list = await edgeoneRequest<EdgeOneDescribeDnsRecordsResponse>(
+        context,
+        "DescribeDnsRecords",
+        {
+          ZoneId: zoneId,
+          Offset: 0,
+          Limit: 100,
+          Match: "all",
+          Filters: [
+            {
+              Name: "name",
+              Values: [domain],
+              Fuzzy: false,
+            },
+          ],
+        },
+      );
 
-    const existing = (list.DnsRecords || []).find((record) => {
-      return normalizeDomain(record.Name || "") === domain
-        && (record.Type || "").toUpperCase() === recordType
-        && normalizeEdgeOneLocation(record.Location) === desiredLocation;
-    });
+      const existing = (list.DnsRecords || []).find((record) => {
+        return (
+          normalizeDomain(record.Name || "") === domain &&
+          (record.Type || "").toUpperCase() === recordType &&
+          normalizeEdgeOneLocation(record.Location) === desiredLocation
+        );
+      });
 
-    if (existing) {
-      if (existing.Content === ip) {
+      if (existing) {
+        if (existing.Content === ip) {
+          return;
+        }
+
+        if (!existing.RecordId) {
+          throw new Error("EdgeOne 返回的记录缺少 RecordId");
+        }
+
+        await edgeoneRequest(context, "ModifyDnsRecords", {
+          ZoneId: zoneId,
+          DnsRecords: [
+            {
+              RecordId: existing.RecordId,
+              Name: domain,
+              Type: recordType,
+              Content: ip,
+              TTL: ttl,
+              ...(desiredLocation !== "default"
+                ? { Location: config.location?.trim() }
+                : {}),
+            },
+          ],
+        });
         return;
       }
 
-      if (!existing.RecordId) {
-        throw new Error("EdgeOne 返回的记录缺少 RecordId");
+      const result = await edgeoneRequest<EdgeOneCreateDnsRecordResponse>(
+        context,
+        "CreateDnsRecord",
+        {
+          ZoneId: zoneId,
+          Name: domain,
+          Type: recordType,
+          Content: ip,
+          TTL: ttl,
+          ...(desiredLocation !== "default"
+            ? { Location: config.location?.trim() }
+            : {}),
+        },
+      );
+
+      if (!result.RecordId) {
+        throw new Error("EdgeOne 未返回创建后的 RecordId");
       }
-
-      await edgeoneRequest(context, "ModifyDnsRecords", {
-        ZoneId: zoneId,
-        DnsRecords: [
-          {
-            RecordId: existing.RecordId,
-            Name: domain,
-            Type: recordType,
-            Content: ip,
-            TTL: ttl,
-            ...(desiredLocation !== "default"
-              ? { Location: config.location?.trim() }
-              : {}),
-          },
-        ],
-      });
-      return;
-    }
-
-    const result = await edgeoneRequest<EdgeOneCreateDnsRecordResponse>(
-      context,
-      "CreateDnsRecord",
-      {
-        ZoneId: zoneId,
-        Name: domain,
-        Type: recordType,
-        Content: ip,
-        TTL: ttl,
-        ...(desiredLocation !== "default"
-          ? { Location: config.location?.trim() }
-          : {}),
-      },
-    );
-
-    if (!result.RecordId) {
-      throw new Error("EdgeOne 未返回创建后的 RecordId");
-    }
-  });
+    },
+  );
 }

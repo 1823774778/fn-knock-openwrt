@@ -146,6 +146,11 @@ export const ddnsRoutes = new Elysia({
         );
 
         const config = await ddnsManager.getConfig(provider);
+        await ddnsManager.ensureProviderAuxiliaryState({
+          providerName: provider,
+          emitLog: true,
+          logPrefix: "手动测试",
+        });
         const updateScope = normalizeUpdateScope(
           config[DDNS_UPDATE_SCOPE_FIELD],
         );
@@ -207,6 +212,7 @@ export const ddnsRoutes = new Elysia({
         };
       } catch (e: any) {
         const msg = e?.message || String(e);
+        console.error("[ddns][manual-test] error:", e);
         await ddnsManager.appendLog("error", `测试异常: ${msg}`);
         set.status = 500;
         return { success: false, message: msg };
