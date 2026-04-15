@@ -233,6 +233,10 @@ export interface ProtocolMappingFeatureConfig {
   enabled: boolean;
 }
 
+export interface DashboardDisplayConfig {
+  show_entry_status_module: boolean;
+}
+
 export interface SmartConnectConfig {
   enabled: boolean;
   selected_ipv4: string;
@@ -484,6 +488,7 @@ export interface AppConfig {
   gateway_proxy_headers?: GatewayProxyHeadersConfig;
   gateway_host_response?: GatewayHostResponseConfig;
   protocol_mapping_feature?: ProtocolMappingFeatureConfig;
+  dashboard_display?: DashboardDisplayConfig;
   smart_connect?: SmartConnectConfig;
   auth_credential_settings?: AuthCredentialSettings;
   terminal_feature?: TerminalFeatureConfig;

@@ -1637,6 +1637,14 @@ export const adminRoutes = new Elysia({
     },
     routeDoc("获取认证凭据配置"),
   )
+  .get(
+    "/config/dashboard_display",
+    async () => {
+      const settings = await configManager.getDashboardDisplayConfig();
+      return { success: true, data: settings };
+    },
+    routeDoc("获取首页展示配置"),
+  )
   .post(
     "/config/auth_credential_settings",
     async ({ body }) => {
@@ -1657,6 +1665,18 @@ export const adminRoutes = new Elysia({
         post_login_ip_grant_ttl_seconds: t.Optional(
           t.Union([t.Number(), t.Null()]),
         ),
+      }),
+    }),
+  )
+  .post(
+    "/config/dashboard_display",
+    async ({ body }) => {
+      const next = await configManager.updateDashboardDisplayConfig(body);
+      return { success: true, data: next };
+    },
+    withRouteDoc("更新首页展示配置", {
+      body: t.Object({
+        show_entry_status_module: t.Optional(t.Boolean()),
       }),
     }),
   )

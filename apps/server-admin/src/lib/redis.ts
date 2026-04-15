@@ -276,6 +276,10 @@ export interface ProtocolMappingFeatureConfig {
   enabled: boolean;
 }
 
+export interface DashboardDisplayConfig {
+  show_entry_status_module: boolean;
+}
+
 export interface SmartConnectConfig {
   enabled: boolean;
   selected_ipv4: string;
@@ -428,6 +432,7 @@ export interface AppConfig {
   gateway_visibility?: GatewayVisibilityConfig;
   gateway_proxy_headers?: GatewayProxyHeadersConfig;
   gateway_host_response?: GatewayHostResponseConfig;
+  dashboard_display?: DashboardDisplayConfig;
   smart_connect?: SmartConnectConfig;
   auth_credential_settings?: AuthCredentialSettings;
   event_system?: EventSystemConfig;
@@ -488,6 +493,10 @@ const DEFAULT_GATEWAY_PROXY_HEADERS_RUNTIME_STATE: GatewayProxyHeadersRuntimeSta
 
 export const DEFAULT_GATEWAY_HOST_RESPONSE_CONFIG: GatewayHostResponseConfig = {
   disabled_hosts: [],
+};
+
+export const DEFAULT_DASHBOARD_DISPLAY_CONFIG: DashboardDisplayConfig = {
+  show_entry_status_module: true,
 };
 
 const DEFAULT_GATEWAY_HOST_RESPONSE_RUNTIME_STATE: GatewayHostResponseRuntimeState =
@@ -691,6 +700,9 @@ const DEFAULT_CONFIG: AppConfig = {
   gateway_host_response: {
     ...DEFAULT_GATEWAY_HOST_RESPONSE_CONFIG,
     disabled_hosts: [],
+  },
+  dashboard_display: {
+    ...DEFAULT_DASHBOARD_DISPLAY_CONFIG,
   },
   smart_connect: {
     ...DEFAULT_SMART_CONNECT_CONFIG,
@@ -1080,6 +1092,16 @@ const normalizeProtocolMappingFeatureConfig = (
 
   return {
     enabled: raw.enabled === true,
+  };
+};
+
+const normalizeDashboardDisplayConfig = (
+  value?: Partial<DashboardDisplayConfig> | null,
+): DashboardDisplayConfig => {
+  const raw = value ?? {};
+
+  return {
+    show_entry_status_module: raw.show_entry_status_module !== false,
   };
 };
 
@@ -2189,6 +2211,9 @@ return actual
         parsed.gateway_host_response = normalizeGatewayHostResponseConfig(
           parsed.gateway_host_response,
         );
+        parsed.dashboard_display = normalizeDashboardDisplayConfig(
+          parsed.dashboard_display,
+        );
         parsed.smart_connect = normalizeSmartConnectConfig(
           parsed.smart_connect,
         );
@@ -2229,6 +2254,9 @@ return actual
       gateway_host_response: {
         ...DEFAULT_GATEWAY_HOST_RESPONSE_CONFIG,
         disabled_hosts: [],
+      },
+      dashboard_display: {
+        ...DEFAULT_DASHBOARD_DISPLAY_CONFIG,
       },
       smart_connect: {
         ...DEFAULT_SMART_CONNECT_CONFIG,
@@ -4032,6 +4060,11 @@ return actual
     return normalizeGatewayHostResponseConfig(config.gateway_host_response);
   }
 
+  async getDashboardDisplayConfig(): Promise<DashboardDisplayConfig> {
+    const config = await this.getConfig();
+    return normalizeDashboardDisplayConfig(config.dashboard_display);
+  }
+
   async getGatewayVisibilityRuntimeState(): Promise<GatewayVisibilityRuntimeState> {
     try {
       const raw = await this.redis.get(this.gatewayVisibilityRuntimeKey);
@@ -4212,6 +4245,19 @@ return actual
     const config = await this.getConfig();
     const next = normalizeGatewayHostResponseConfig(nextValue);
     config.gateway_host_response = next;
+    await this.saveConfig(config);
+    return next;
+  }
+
+  async updateDashboardDisplayConfig(
+    patch: Partial<DashboardDisplayConfig>,
+  ): Promise<DashboardDisplayConfig> {
+    const config = await this.getConfig();
+    const next = normalizeDashboardDisplayConfig({
+      ...config.dashboard_display,
+      ...patch,
+    });
+    config.dashboard_display = next;
     await this.saveConfig(config);
     return next;
   }

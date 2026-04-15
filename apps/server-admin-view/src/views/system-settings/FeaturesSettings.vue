@@ -13,8 +13,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { ChevronRight } from "lucide-vue-next";
 import { toast } from "@admin-shared/utils/toast";
-import { SystemAPI } from "../../lib/api";
-import type { ProtocolMappingFeatureConfig } from "../../types";
+import { ConfigAPI, SystemAPI } from "../../lib/api";
+import type {
+  DashboardDisplayConfig,
+  ProtocolMappingFeatureConfig,
+} from "../../types";
 import {
   extractErrorMessage,
   useAsyncAction,
@@ -24,8 +27,8 @@ import { useConfigStore } from "../../store/config";
 
 const router = useRouter();
 const configStore = useConfigStore();
-const settings = ref<ProtocolMappingFeatureConfig | null>(null);
 const protocolMappingEnabled = ref(false);
+const showEntryStatusModule = ref(true);
 const runTypeLabelMap = {
   0: "直连模式",
   1: "反代模式",
@@ -54,6 +57,9 @@ const isSmartConnectAvailable = computed(
   () => configStore.canUseSmartConnect && configStore.config?.run_type === 3,
 );
 const showSmartConnectEntry = computed(() => !configStore.isDockerDeployment);
+const isDashboardDisplaySwitchDisabled = computed(
+  () => isSaving.value || configStore.isLoading || configStore.isError,
+);
 const currentRunTypeLabel = computed(() => {
   const runType = configStore.config?.run_type;
   if (runType === 0 || runType === 1 || runType === 3) {
@@ -75,15 +81,30 @@ const smartConnectDisabledReason = computed(() => {
   return `仅子域模式可用，当前为${currentRunTypeLabel.value}。`;
 });
 
-const applyFromSettings = (data: ProtocolMappingFeatureConfig) => {
-  settings.value = data;
+const applyProtocolMappingSettings = (data: ProtocolMappingFeatureConfig) => {
   protocolMappingEnabled.value = data.enabled;
+};
+
+const applyDashboardDisplaySettings = (data: DashboardDisplayConfig) => {
+  showEntryStatusModule.value = data.show_entry_status_module;
+};
+
+const syncDashboardDisplayFromConfig = () => {
+  if (!configStore.config) {
+    return;
+  }
+
+  applyDashboardDisplaySettings({
+    show_entry_status_module:
+      configStore.config.dashboard_display?.show_entry_status_module !== false,
+  });
 };
 
 const fetchSettings = async () => {
   await runLoadSettings(async () => {
-    const data = await SystemAPI.getProtocolMappingFeatureConfig();
-    applyFromSettings(data);
+    const protocolMappingSettings =
+      await SystemAPI.getProtocolMappingFeatureConfig();
+    applyProtocolMappingSettings(protocolMappingSettings);
   });
 };
 
@@ -102,7 +123,7 @@ const saveProtocolMappingEnabled = async (nextValue: boolean) => {
       }),
     {
       onSuccess: async (data) => {
-        applyFromSettings(data);
+        applyProtocolMappingSettings(data);
         toast.success("功能设置已更新");
         await configStore.loadConfig();
       },
@@ -114,6 +135,33 @@ const saveProtocolMappingEnabled = async (nextValue: boolean) => {
   }
 };
 
+const saveShowEntryStatusModule = async (nextValue: boolean) => {
+  if (isDashboardDisplaySwitchDisabled.value || !configStore.config) {
+    return;
+  }
+
+  const previousValue = showEntryStatusModule.value;
+  showEntryStatusModule.value = nextValue;
+
+  const result = await runSaveSettings(
+    () =>
+      ConfigAPI.updateDashboardDisplayConfig({
+        show_entry_status_module: nextValue,
+      }),
+    {
+      onSuccess: async (data) => {
+        applyDashboardDisplaySettings(data);
+        toast.success("功能设置已更新");
+        await configStore.loadConfig();
+      },
+    },
+  );
+
+  if (!result) {
+    showEntryStatusModule.value = previousValue;
+  }
+};
+
 const openSmartConnect = () => {
   if (!isSmartConnectAvailable.value) {
     return;
@@ -122,7 +170,18 @@ const openSmartConnect = () => {
   void router.push("/system/smart-connect");
 };
 
-onMounted(fetchSettings);
+onMounted(() => {
+  syncDashboardDisplayFromConfig();
+  void fetchSettings();
+});
+
+watch(
+  () => configStore.config?.dashboard_display?.show_entry_status_module,
+  () => {
+    syncDashboardDisplayFromConfig();
+  },
+  { immediate: true },
+);
 
 watch(
   () => configStore.config?.run_type,
@@ -154,6 +213,25 @@ watch(
     </CardContent>
 
     <CardContent v-else-if="!isLoading" class="border-t p-0 divide-y">
+      <div class="flex items-center justify-between bg-muted/10 p-6">
+        <div class="space-y-1 pr-6">
+          <Label
+            class="cursor-pointer text-base font-medium"
+            @click="saveShowEntryStatusModule(!showEntryStatusModule)"
+          >
+            在首页显示入口状态模块
+          </Label>
+          <div class="text-sm text-muted-foreground">
+            关闭后，首页的“入口状态”卡片将隐藏
+          </div>
+        </div>
+        <Switch
+          :model-value="showEntryStatusModule"
+          :disabled="isDashboardDisplaySwitchDisabled"
+          @update:model-value="saveShowEntryStatusModule($event === true)"
+        />
+      </div>
+
       <div class="flex items-center justify-between bg-muted/10 p-6">
         <div class="space-y-1 pr-6">
           <Label

@@ -38,6 +38,7 @@ import type {
   GatewayLogDeletePayload,
   GatewayLogEntriesPayload,
   GatewayLoggingConfig,
+  DashboardDisplayConfig,
   IpLocationBatchPayload,
   IpLocationSnapshot,
   ProtocolMappingFeatureConfig,
@@ -173,8 +174,18 @@ export const ConfigAPI = {
     const res = await apiClient.get("/config/terminal_feature");
     return res.data.data;
   },
+  async getDashboardDisplayConfig(): Promise<DashboardDisplayConfig> {
+    const res = await apiClient.get("/config/dashboard_display");
+    return res.data.data;
+  },
   async getAuthCredentialSettings(): Promise<AuthCredentialSettings> {
     const res = await apiClient.get("/config/auth_credential_settings");
+    return res.data.data;
+  },
+  async updateDashboardDisplayConfig(
+    payload: Partial<DashboardDisplayConfig>,
+  ): Promise<DashboardDisplayConfig> {
+    const res = await apiClient.post("/config/dashboard_display", payload);
     return res.data.data;
   },
   async updateAuthCredentialSettings(

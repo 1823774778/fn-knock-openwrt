@@ -130,6 +130,10 @@ const showDdnsSkeleton = useDelayedLoading(() => isDdnsLoading.value);
 const showTunnelSkeleton = useDelayedLoading(() => isTunnelLoading.value);
 const ddnsError = ref("");
 const showTunnelSection = computed(() => configStore.config?.run_type === 1);
+const showEntryStatusModule = computed(
+  () =>
+    configStore.config?.dashboard_display?.show_entry_status_module !== false,
+);
 const showCloudflaredTunnel = computed(() =>
   isCloudflaredTunnelAvailable(configStore.config),
 );
@@ -746,7 +750,10 @@ const tunnelCards = computed(() => [
           </CardContent>
         </Card>
 
-        <Card class="border bg-card shadow-none rounded-xl">
+        <Card
+          v-if="showEntryStatusModule"
+          class="border bg-card shadow-none rounded-xl"
+        >
           <CardHeader class="pb-3">
             <div class="flex items-start justify-between">
               <div>
