@@ -12,6 +12,7 @@ import {
   type AppConfig,
   type FnosShareBypassConfig,
 } from "./redis";
+import { isFnosLocalePayload } from "./fnos-locale-signature";
 import { isAnySubdomainRoutingMode } from "./reverse-proxy-submode";
 
 type ShareValidationCacheRecord = {
@@ -326,17 +327,34 @@ class FnosShareBypassService {
 
     try {
       const response = await fetch(new URL(FNOS_DETECTION_PATH, origin), {
-        method: "HEAD",
+        method: "GET",
         redirect: "manual",
         signal: controller.signal,
         headers: {
           Accept: "application/json",
         },
       });
+      if (response.status !== 200) {
+        this.setCachedFnosTargetProbe(origin, false);
+        return false;
+      }
+
       const contentType =
         response.headers.get("content-type")?.toLowerCase() || "";
-      const isFnos =
-        response.status === 200 && contentType.includes("application/json");
+      if (!contentType.includes("application/json")) {
+        this.setCachedFnosTargetProbe(origin, false);
+        return false;
+      }
+
+      let payload: unknown;
+      try {
+        payload = await response.json();
+      } catch {
+        this.setCachedFnosTargetProbe(origin, false);
+        return false;
+      }
+
+      const isFnos = isFnosLocalePayload(payload);
       this.setCachedFnosTargetProbe(origin, isFnos);
       return isFnos;
     } catch {
