@@ -196,8 +196,8 @@ router.beforeEach(async (to, from) => {
   }
 
   if (configStore.config?.run_type === 0) {
-    if (to.path === "/streams") {
-      return "/whitelist";
+    if (to.path === "/terminal") {
+      return true;
     }
     return "/whitelist";
   }
