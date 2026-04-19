@@ -106,7 +106,9 @@ export interface SubdomainModeConfig {
   auth_host: string;
   auth_target: string;
   cookie_domain: string;
+  edge_client_ip_enabled: boolean;
   aliyun_esa_enabled: boolean;
+  tencent_edgeone_enabled: boolean;
   public_auth_base_url: string;
   public_http_port?: number;
   public_https_port?: number;
@@ -655,7 +657,9 @@ const DEFAULT_CONFIG: AppConfig = {
     auth_host: "",
     auth_target: `http://localhost:${process.env.AUTH_PORT || "7997"}`,
     cookie_domain: "",
+    edge_client_ip_enabled: false,
     aliyun_esa_enabled: false,
+    tencent_edgeone_enabled: false,
     public_auth_base_url: "",
     public_http_port: 0,
     public_https_port: 0,
@@ -1739,6 +1743,8 @@ const normalizeSubdomainModeConfig = (
   value?: Partial<SubdomainModeConfig> | null,
 ): SubdomainModeConfig => {
   const raw = value ?? {};
+  const hasOwn = (key: keyof SubdomainModeConfig) =>
+    Object.prototype.hasOwnProperty.call(raw, key);
   const normalizePublicPort = (input: unknown): number => {
     const port =
       typeof input === "number"
@@ -1756,6 +1762,26 @@ const normalizeSubdomainModeConfig = (
     return Math.floor(ttl);
   };
 
+  let edgeClientIPEnabled = raw.edge_client_ip_enabled === true;
+  let aliyunESAEnabled = raw.aliyun_esa_enabled === true;
+  let tencentEdgeOneEnabled = raw.tencent_edgeone_enabled === true;
+
+  if (
+    !hasOwn("edge_client_ip_enabled") &&
+    (aliyunESAEnabled || tencentEdgeOneEnabled)
+  ) {
+    edgeClientIPEnabled = true;
+  }
+
+  if (!edgeClientIPEnabled) {
+    aliyunESAEnabled = false;
+    tencentEdgeOneEnabled = false;
+  }
+
+  if (tencentEdgeOneEnabled && aliyunESAEnabled) {
+    aliyunESAEnabled = false;
+  }
+
   return {
     root_domain:
       typeof raw.root_domain === "string"
@@ -1768,7 +1794,9 @@ const normalizeSubdomainModeConfig = (
         : DEFAULT_CONFIG.subdomain_mode.auth_target,
     cookie_domain:
       typeof raw.cookie_domain === "string" ? raw.cookie_domain.trim() : "",
-    aliyun_esa_enabled: raw.aliyun_esa_enabled === true,
+    edge_client_ip_enabled: edgeClientIPEnabled,
+    aliyun_esa_enabled: aliyunESAEnabled,
+    tencent_edgeone_enabled: tencentEdgeOneEnabled,
     public_auth_base_url:
       typeof raw.public_auth_base_url === "string"
         ? raw.public_auth_base_url.trim().replace(/\/+$/, "")

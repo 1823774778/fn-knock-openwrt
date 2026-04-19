@@ -85,7 +85,9 @@ export interface SubdomainModeConfig {
   auth_host: string;
   auth_target: string;
   cookie_domain: string;
+  edge_client_ip_enabled: boolean;
   aliyun_esa_enabled: boolean;
+  tencent_edgeone_enabled: boolean;
   public_auth_base_url: string;
   auth_cache_ttl_seconds: number;
   auth_cache_unauthorized_ttl_seconds: number;
@@ -327,6 +329,7 @@ export interface GatewayLogEntry {
   tls: boolean;
   websocket: boolean;
   ali_real_client_ip?: string;
+  eo_connecting_ip?: string;
   x_forwarded_for?: string;
   x_real_ip?: string;
   ipLocation?: string;

@@ -16,6 +16,9 @@
             · 鉴权服务 {{ authServiceMapping.host }}
           </span>
           <span v-else> · 鉴权服务未配置 </span>
+          <span v-if="savedEdgeClientIpProviderLabel">
+            · {{ savedEdgeClientIpProviderLabel }}
+          </span>
         </template>
         <template v-else>还未完成根域名配置</template>
       </template>
@@ -105,34 +108,91 @@
                 </div>
               </div>
             </div>
-            <div
-              class="flex items-start justify-between gap-4 rounded-lg border px-4 py-3"
-            >
-              <div class="space-y-1">
-                <Label for="aliyun-esa-enabled"
-                  >阿里云ESA / 腾讯云Edge One支持</Label
+            <div class="rounded-lg border px-4 py-4">
+              <div class="flex flex-col gap-4">
+                <div class="flex items-start justify-between gap-4">
+                  <div class="space-y-1">
+                    <Label for="edge-client-ip-enabled"
+                      >边缘网络真实 IP 识别</Label
+                    >
+                    <p class="text-xs text-muted-foreground">
+                      仅对子域模式生效。开启后，公开鉴权地址不再自动补访问端口。
+                    </p>
+                    <p class="text-xs text-muted-foreground">
+                      你可以在下方选择真实 IP 头来源供应商，网关会按当前选择识别真实
+                      IP，并通过 X-Forwarded-For 传给鉴权服务。
+                    </p>
+                    <p
+                      v-if="!isEdgeClientIPModeEditable"
+                      class="text-xs text-amber-600"
+                    >
+                      当前运行模式不是子域模式，这组设置暂时不会生效。
+                    </p>
+                  </div>
+                  <Switch
+                    id="edge-client-ip-enabled"
+                    v-model="modeForm.edge_client_ip_enabled"
+                    :disabled="!isEdgeClientIPModeEditable"
+                  />
+                </div>
+
+                <div
+                  v-if="modeForm.edge_client_ip_enabled"
                 >
-                <p class="text-xs text-muted-foreground">仅对子域模式生效</p>
-                <p class="text-xs text-muted-foreground">
-                  启用后，公开鉴权地址不再自动补访问端口，并优先使用ESA/Edge
-                  One提供的客户端真实 IP 功能
-                </p>
-                <p class="text-xs text-muted-foreground">
-                  如果使用ESA，请确保 ESA 站点已开启托管转换中的“添加真实客户端
-                  IP 标头”。
-                </p>
-                <p
-                  v-if="!isAliyunESAModeEditable"
-                  class="text-xs text-amber-600"
-                >
-                  当前运行模式不是子域模式，这个开关暂时不会生效。
-                </p>
+                  <div
+                    class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4"
+                  >
+                  </div>
+
+                  <div class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <button
+                      v-for="option in edgeClientIpProviderOptions"
+                      :key="option.value"
+                      type="button"
+                      :disabled="!isEdgeClientIPModeEditable"
+                      :class="[
+                        'rounded-xl border p-4 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+                        activeEdgeClientIpProvider === option.value
+                          ? 'border-primary bg-primary/5 shadow-sm'
+                          : 'border-border bg-background hover:border-primary/40 hover:bg-muted/40',
+                      ]"
+                      @click="selectEdgeClientIpProvider(option.value)"
+                    >
+                      <div
+                        class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"
+                      >
+                        <div class="grid min-w-0 gap-1">
+                          <div class="text-sm font-medium">
+                            {{ option.label }}
+                          </div>
+                          <div class="text-xs text-muted-foreground">
+                            {{ option.description }}
+                          </div>
+                          <div class="text-[11px] text-muted-foreground">
+                            {{ option.headerHint }}
+                          </div>
+                        </div>
+                        <span
+                          :class="[
+                            'self-start shrink-0 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium',
+                            activeEdgeClientIpProvider === option.value
+                              ? 'border-primary/20 bg-primary/10 text-primary'
+                              : 'border-border text-muted-foreground',
+                          ]"
+                        >
+                          {{
+                            activeEdgeClientIpProvider === option.value
+                              ? "当前"
+                              : "切换"
+                          }}
+                        </span>
+                      </div>
+                    </button>
+                  </div>
+
+      
+                </div>
               </div>
-              <Switch
-                id="aliyun-esa-enabled"
-                v-model="modeForm.aliyun_esa_enabled"
-                :disabled="!isAliyunESAModeEditable"
-              />
             </div>
           </div>
         </div>
@@ -923,6 +983,8 @@ type DiscoveredHostResponse = Omit<ScanDiscoverResponse, "services"> & {
   services: DiscoveredHostService[];
 };
 
+type EdgeClientIpProvider = "aliyun_esa" | "tencent_edgeone";
+
 type DeleteDialogState =
   | {
       kind: "auth_service";
@@ -1027,6 +1089,47 @@ const buildSuggestedSubdomain = (service: DiscoveredServiceInfo): string => {
   return `app-${service.port}`;
 };
 
+const edgeClientIpProviderOptions: Array<{
+  value: EdgeClientIpProvider;
+  label: string;
+  description: string;
+  headerHint: string;
+}> = [
+  {
+    value: "tencent_edgeone",
+    label: "腾讯 EdgeOne",
+    description: "适合腾讯 EdgeOne 回源场景，由网关识别 EO 头并回填真实客户端 IP。",
+    headerHint: "网关读取 EO-Connecting-IP，并转发到 X-Forwarded-For",
+  },
+  {
+    value: "aliyun_esa",
+    label: "阿里云 ESA",
+    description: "适合阿里云 ESA 回源场景，由网关识别 ESA 真实 IP 头并回填客户端 IP。",
+    headerHint:
+      "网关读取 Ali-Real-Client-IP，并转发到 X-Forwarded-For；请开启 ESA 托管转换请求头选项",
+  },
+];
+
+const resolveEdgeClientIpProvider = (
+  value: Pick<
+    SubdomainModeConfig,
+    "edge_client_ip_enabled" | "aliyun_esa_enabled" | "tencent_edgeone_enabled"
+  >,
+): EdgeClientIpProvider | null => {
+  if (!value.edge_client_ip_enabled) return null;
+  if (value.tencent_edgeone_enabled) return "tencent_edgeone";
+  if (value.aliyun_esa_enabled) return "aliyun_esa";
+  return null;
+};
+
+const getEdgeClientIpProviderLabel = (
+  provider: EdgeClientIpProvider | null,
+): string => {
+  if (provider === "tencent_edgeone") return "腾讯 EdgeOne";
+  if (provider === "aliyun_esa") return "阿里云 ESA";
+  return "";
+};
+
 const resolveDiscoveredServiceHost = (
   service: Pick<DiscoveredServiceInfo, "host">,
 ) => service.host?.trim() || discoveredData.value?.host?.trim() || "127.0.0.1";
@@ -1060,7 +1163,9 @@ const createDefaultModeForm = (): SubdomainModeConfig => ({
   auth_host: "",
   auth_target: "http://localhost:7997",
   cookie_domain: "",
+  edge_client_ip_enabled: false,
   aliyun_esa_enabled: false,
+  tencent_edgeone_enabled: false,
   public_auth_base_url: "",
   auth_cache_ttl_seconds: 1,
   auth_cache_unauthorized_ttl_seconds: 1,
@@ -1112,6 +1217,14 @@ const isAuthServiceTarget = (target: string): boolean =>
   parseTargetPort(target) === authServicePort.value;
 const savedRootDomain = computed(() =>
   normalizeRootDomainValue(currentModeConfig.value.root_domain),
+);
+const savedEdgeClientIpProvider = computed(() =>
+  resolveEdgeClientIpProvider(currentModeConfig.value),
+);
+const savedEdgeClientIpProviderLabel = computed(() =>
+  savedEdgeClientIpProvider.value
+    ? `${getEdgeClientIpProviderLabel(savedEdgeClientIpProvider.value)} 真实 IP`
+    : "",
 );
 const currentDraftRootDomain = computed(() =>
   normalizeRootDomainValue(modeForm.root_domain),
@@ -1274,11 +1387,19 @@ const composedPreviewHost = computed(() => {
 const displayAccessEntryPort = computed(
   () => accessEntryPort.value.trim() || "7999",
 );
-const isAliyunESAModeEditable = computed(
+const isEdgeClientIPModeEditable = computed(
   () => configStore.config?.run_type === 3,
 );
+const activeEdgeClientIpProvider = computed(() =>
+  resolveEdgeClientIpProvider(modeForm),
+);
+const isEdgeClientIPActive = computed(
+  () =>
+    isEdgeClientIPModeEditable.value &&
+    activeEdgeClientIpProvider.value !== null,
+);
 const shouldOmitAccessEntryPort = computed(() => {
-  if (isAliyunESAModeEditable.value && modeForm.aliyun_esa_enabled) {
+  if (isEdgeClientIPActive.value) {
     return true;
   }
   const parsedPort = Number.parseInt(displayAccessEntryPort.value, 10);
@@ -1543,7 +1664,9 @@ const applyModeForm = (next: SubdomainModeConfig) => {
   modeForm.auth_host = next.auth_host;
   modeForm.auth_target = next.auth_target;
   modeForm.cookie_domain = next.cookie_domain;
+  modeForm.edge_client_ip_enabled = next.edge_client_ip_enabled;
   modeForm.aliyun_esa_enabled = next.aliyun_esa_enabled;
+  modeForm.tencent_edgeone_enabled = next.tencent_edgeone_enabled;
   modeForm.public_auth_base_url = next.public_auth_base_url;
   modeForm.auth_cache_ttl_seconds = next.auth_cache_ttl_seconds;
   modeForm.auth_cache_unauthorized_ttl_seconds =
@@ -1562,6 +1685,35 @@ watch(
     }
   },
   { immediate: true },
+);
+
+watch(
+  () =>
+    [
+      modeForm.edge_client_ip_enabled,
+      modeForm.aliyun_esa_enabled,
+      modeForm.tencent_edgeone_enabled,
+    ] as const,
+  ([enabled, aliyunEnabled, tencentEnabled]) => {
+    if (!enabled) {
+      if (modeForm.aliyun_esa_enabled) {
+        modeForm.aliyun_esa_enabled = false;
+      }
+      if (modeForm.tencent_edgeone_enabled) {
+        modeForm.tencent_edgeone_enabled = false;
+      }
+      return;
+    }
+
+    if (tencentEnabled && aliyunEnabled) {
+      modeForm.aliyun_esa_enabled = false;
+      return;
+    }
+
+    if (!aliyunEnabled && !tencentEnabled) {
+      modeForm.aliyun_esa_enabled = true;
+    }
+  },
 );
 
 watch(
@@ -1698,6 +1850,14 @@ function resetModeForm() {
   applyModeForm(currentModeConfig.value);
 }
 
+function selectEdgeClientIpProvider(provider: EdgeClientIpProvider) {
+  if (!isEdgeClientIPModeEditable.value) return;
+
+  modeForm.edge_client_ip_enabled = true;
+  modeForm.aliyun_esa_enabled = provider === "aliyun_esa";
+  modeForm.tencent_edgeone_enabled = provider === "tencent_edgeone";
+}
+
 function setMappingInputMode(nextMode: MappingInputMode) {
   if (nextMode === "subdomain" && !canUseRootDomainSuffix.value) {
     mappingInputMode.value = "full_host";
@@ -1741,7 +1901,9 @@ async function saveMode() {
       auth_host: modeForm.auth_host.trim().toLowerCase(),
       auth_target: modeForm.auth_target.trim(),
       cookie_domain: modeForm.cookie_domain.trim(),
+      edge_client_ip_enabled: modeForm.edge_client_ip_enabled,
       aliyun_esa_enabled: modeForm.aliyun_esa_enabled,
+      tencent_edgeone_enabled: modeForm.tencent_edgeone_enabled,
       public_auth_base_url: modeForm.public_auth_base_url.trim(),
       auth_cache_ttl_seconds: Math.max(
         0,

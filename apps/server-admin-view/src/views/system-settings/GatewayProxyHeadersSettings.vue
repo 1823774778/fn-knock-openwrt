@@ -118,13 +118,15 @@ const disabledHosts = computed(() =>
 const displayAccessEntryPort = computed(
   () => accessEntryPort.value.trim() || "7999",
 );
-const isAliyunESAEnabled = computed(
+const isEdgeClientIPEnabled = computed(
   () =>
     configStore.config?.run_type === 3 &&
-    configStore.config?.subdomain_mode?.aliyun_esa_enabled === true,
+    configStore.config?.subdomain_mode?.edge_client_ip_enabled === true &&
+    (configStore.config?.subdomain_mode?.aliyun_esa_enabled === true ||
+      configStore.config?.subdomain_mode?.tencent_edgeone_enabled === true),
 );
 const shouldOmitAccessEntryPort = computed(() => {
-  if (isAliyunESAEnabled.value) {
+  if (isEdgeClientIPEnabled.value) {
     return true;
   }
   const parsedPort = Number.parseInt(displayAccessEntryPort.value, 10);

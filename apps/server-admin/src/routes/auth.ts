@@ -469,9 +469,16 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
         error,
         clientIp,
         forwardedPath,
+        edgeClientIPEnabled:
+          config?.run_type === 3 &&
+          config.subdomain_mode?.edge_client_ip_enabled === true,
         aliyunESAEnabled:
           config?.run_type === 3 &&
           config.subdomain_mode?.aliyun_esa_enabled === true,
+        tencentEdgeOneEnabled:
+          config?.run_type === 3 &&
+          config.subdomain_mode?.tencent_edgeone_enabled === true,
+        eoConnectingIp: request.headers.get("eo-connecting-ip"),
         aliRealClientIp: request.headers.get("ali-real-client-ip"),
         xForwardedFor: request.headers.get("x-forwarded-for"),
         xRealIp: request.headers.get("x-real-ip"),

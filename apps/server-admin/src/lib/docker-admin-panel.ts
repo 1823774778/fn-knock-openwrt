@@ -39,6 +39,7 @@ const SCRYPT_PARAMS = {
 };
 
 const PROXY_PROTO_HEADERS = [
+  "eo-connecting-ip",
   "ali-real-client-ip",
   "x-forwarded-for",
   "x-real-ip",
@@ -73,9 +74,7 @@ const normalizeTrustedProxyEntry = (value: string): string => {
   return `${normalizedIp}/${prefix}`;
 };
 
-const parseTrustedProxyCidrs = (
-  value: string | null | undefined,
-): string[] => {
+const parseTrustedProxyCidrs = (value: string | null | undefined): string[] => {
   const tokens = String(value ?? "")
     .split(/[\s,]+/u)
     .map((item) => normalizeTrustedProxyEntry(item))
@@ -100,11 +99,7 @@ const trustedDockerAdminProxyBlockList = (() => {
       continue;
     }
 
-    blockList.addSubnet(
-      normalizedIp,
-      prefix,
-      family === 6 ? "ipv6" : "ipv4",
-    );
+    blockList.addSubnet(normalizedIp, prefix, family === 6 ? "ipv6" : "ipv4");
   }
 
   return blockList;
@@ -314,7 +309,11 @@ export const resolveDockerAdminDiscoverIpFromIncomingMessage = (
 
   const headerValue = request.headers[UPSTREAM_PRIVATE_IPV4_HEADER_NAME];
   const raw = Array.isArray(headerValue) ? headerValue[0] : headerValue;
-  const normalized = normalizeIp(String(raw ?? "").split(",")[0]?.trim());
+  const normalized = normalizeIp(
+    String(raw ?? "")
+      .split(",")[0]
+      ?.trim(),
+  );
   if (!normalized || isIP(normalized) !== 4) {
     return "";
   }

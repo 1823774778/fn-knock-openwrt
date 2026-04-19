@@ -97,7 +97,10 @@ const parseExplicitUrlPort = (
 const shouldOmitDerivedGatewayPort = (
   config?: Pick<AppConfig, "run_type" | "subdomain_mode"> | null,
 ): boolean =>
-  config?.run_type === 3 && config.subdomain_mode?.aliyun_esa_enabled === true;
+  config?.run_type === 3 &&
+  config.subdomain_mode?.edge_client_ip_enabled === true &&
+  (config.subdomain_mode?.aliyun_esa_enabled === true ||
+    config.subdomain_mode?.tencent_edgeone_enabled === true);
 
 const formatDerivedPublicAuthBaseUrl = (
   host: string,
@@ -927,15 +930,24 @@ export const buildGatewayAuthConfig = (
   const publicAuthBaseUrl = isSubdomainModeActive
     ? explicitPublicAuthBaseUrl || resolvePublicAuthBaseUrl(config)
     : "";
+  const edgeClientIPEnabled =
+    config.run_type === 3 &&
+    config.subdomain_mode?.edge_client_ip_enabled === true;
+  const tencentEdgeOneEnabled =
+    edgeClientIPEnabled &&
+    config.subdomain_mode?.tencent_edgeone_enabled === true;
   const aliyunESAEnabled =
-    config.run_type === 3 && config.subdomain_mode?.aliyun_esa_enabled === true;
+    edgeClientIPEnabled &&
+    !tencentEdgeOneEnabled &&
+    config.subdomain_mode?.aliyun_esa_enabled === true;
   const publicHttpPort = isSubdomainModeActive
     ? (configuredPublicHttpPort ?? 0)
     : 0;
   const publicHttpsPort = isSubdomainModeActive
     ? (configuredPublicHttpsPort ??
       parseExplicitUrlPort(publicAuthBaseUrl, "https") ??
-      (!explicitPublicAuthBaseUrl && !aliyunESAEnabled
+      (!explicitPublicAuthBaseUrl &&
+      !(edgeClientIPEnabled && (aliyunESAEnabled || tencentEdgeOneEnabled))
         ? (resolvePublicGatewayPort(config) ?? 0)
         : 0))
     : 0;
@@ -954,7 +966,10 @@ export const buildGatewayAuthConfig = (
     auth_cache_ttl_seconds: config.subdomain_mode?.auth_cache_ttl_seconds ?? 1,
     auth_cache_unauthorized_ttl_seconds:
       config.subdomain_mode?.auth_cache_unauthorized_ttl_seconds ?? 1,
+    edge_client_ip_enabled:
+      edgeClientIPEnabled && (aliyunESAEnabled || tencentEdgeOneEnabled),
     aliyun_esa_enabled: aliyunESAEnabled,
+    tencent_edgeone_enabled: tencentEdgeOneEnabled,
     public_auth_base_url: publicAuthBaseUrl,
     public_http_port: publicHttpPort,
     public_https_port: publicHttpsPort,

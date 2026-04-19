@@ -457,6 +457,9 @@ const getEntryIpLocationText = (entry: GatewayLogEntry) => {
 const getForwardedHeaderLines = (entry: GatewayLogEntry) => {
   const lines: string[] = [];
 
+  if (entry.eo_connecting_ip) {
+    lines.push(`EO-Connecting-IP: ${entry.eo_connecting_ip}`);
+  }
   if (entry.ali_real_client_ip) {
     lines.push(`Ali-Real-Client-IP: ${entry.ali_real_client_ip}`);
   }
@@ -514,6 +517,7 @@ const detailFields = [
   { key: "bytes_out", label: "响应字节" },
   { key: "tls", label: "TLS" },
   { key: "websocket", label: "WebSocket" },
+  { key: "eo_connecting_ip", label: "EO-Connecting-IP" },
   { key: "ali_real_client_ip", label: "Ali-Real-Client-IP" },
   { key: "x_forwarded_for", label: "X-Forwarded-For" },
   { key: "x_real_ip", label: "X-Real-IP" },
@@ -697,7 +701,6 @@ onBeforeUnmount(() => {
                 </SelectItem>
               </SelectContent>
             </Select>
-
           </div>
         </div>
 
@@ -936,9 +939,13 @@ onBeforeUnmount(() => {
         <div
           class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
         >
-          <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          <div
+            class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground"
+          >
             <span>{{ cursorPageLabel }}</span>
-            <span>{{ canLoadOlder ? "可继续翻到更早记录" : "已经是最后一页" }}</span>
+            <span>{{
+              canLoadOlder ? "可继续翻到更早记录" : "已经是最后一页"
+            }}</span>
           </div>
 
           <div class="flex flex-wrap items-center justify-end gap-2">
@@ -969,24 +976,26 @@ onBeforeUnmount(() => {
               <ChevronRight class="ml-1.5 h-4 w-4" />
             </Button>
 
-            <div class="ml-1 flex items-center gap-2 text-xs text-muted-foreground">
-            <span>每页显示</span>
-            <Select
-              :model-value="limit"
-              @update:model-value="handleLimitChange"
+            <div
+              class="ml-1 flex items-center gap-2 text-xs text-muted-foreground"
             >
-              <div class="w-[96px]">
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-              </div>
-              <SelectContent>
-                <SelectItem value="10">10 条</SelectItem>
-                <SelectItem value="20">20 条</SelectItem>
-                <SelectItem value="50">50 条</SelectItem>
-                <SelectItem value="100">100 条</SelectItem>
-              </SelectContent>
-            </Select>
+              <span>每页显示</span>
+              <Select
+                :model-value="limit"
+                @update:model-value="handleLimitChange"
+              >
+                <div class="w-[96px]">
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                </div>
+                <SelectContent>
+                  <SelectItem value="10">10 条</SelectItem>
+                  <SelectItem value="20">20 条</SelectItem>
+                  <SelectItem value="50">50 条</SelectItem>
+                  <SelectItem value="100">100 条</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
         </div>
