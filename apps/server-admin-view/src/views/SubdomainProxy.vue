@@ -330,7 +330,14 @@
             href="#/system/gateway-proxy-headers"
             class="underline underline-offset-2 hover:text-foreground"
           >
-            关闭协议头
+            关闭代理头
+          </a>，亦或尝试
+
+          <a
+            href="#/system/gateway-host-response"
+            class="underline underline-offset-2 hover:text-foreground"
+          >
+            关闭Host头
           </a>
         </p>
         <p
