@@ -5,10 +5,17 @@ import { configManager, redis } from "./redis";
 import { ipLocationRefs, ipLocationService } from "./ip-location";
 import { normalizeIp } from "./ip-normalize";
 import { shouldAutoManageFirewallForRunType } from "./firewall-automation";
+import {
+  doesClientIpMatchWhiteListTarget,
+  inferWhiteListTargetType,
+  normalizeWhiteListTarget,
+  type WhiteListTargetType,
+} from "./whitelist-target";
 
 export interface WhiteListRecord {
   id: string;
   ip: string;
+  targetType: WhiteListTargetType;
   expireAt: number | null;
   source: "manual" | "auto";
   createdAt: number;
@@ -23,7 +30,78 @@ const KEYS = {
   RECORD_ORDER: `${PREFIX}:record_order`,
   EXPIRY: `${PREFIX}:expiry`,
   IPS: `${PREFIX}:ips`,
+  CIDR_RECORDS: `${PREFIX}:cidr_records`,
   DELETED: `${PREFIX}:deleted`,
+};
+
+const getRecordTargetType = (
+  record: Partial<Pick<WhiteListRecord, "targetType">>,
+): WhiteListTargetType => (record.targetType === "cidr" ? "cidr" : "ip");
+
+const getRecordTarget = (
+  record: Partial<Pick<WhiteListRecord, "ip">>,
+): string => String(record.ip || "").trim();
+
+const isIPRecord = (
+  record: Partial<Pick<WhiteListRecord, "targetType">>,
+): boolean => getRecordTargetType(record) === "ip";
+
+const isCIDRRecord = (
+  record: Partial<Pick<WhiteListRecord, "targetType">>,
+): boolean => getRecordTargetType(record) === "cidr";
+
+const sortRecordsByCreatedAtDesc = (
+  records: WhiteListRecord[],
+): WhiteListRecord[] =>
+  records.sort((left, right) => right.createdAt - left.createdAt);
+
+const deserializeRecord = (raw: string): WhiteListRecord | null => {
+  try {
+    const parsed = JSON.parse(raw) as Partial<WhiteListRecord>;
+    const id = String(parsed.id || "").trim();
+    if (!id) return null;
+
+    const rawTarget = getRecordTarget(parsed);
+    const targetType =
+      parsed.targetType === "cidr"
+        ? "cidr"
+        : (inferWhiteListTargetType(rawTarget) ?? "ip");
+    const normalizedTarget = normalizeWhiteListTarget(rawTarget, targetType);
+    if (!normalizedTarget) return null;
+
+    const source = parsed.source === "auto" ? "auto" : "manual";
+    const status =
+      parsed.status === "expired" || parsed.status === "deleted"
+        ? parsed.status
+        : "active";
+    const createdAt = Number.parseInt(String(parsed.createdAt ?? 0), 10);
+    const expireAtRaw = parsed.expireAt;
+    const expireAt =
+      expireAtRaw === null || expireAtRaw === undefined
+        ? null
+        : Number.parseInt(String(expireAtRaw), 10);
+    const comment =
+      typeof parsed.comment === "string" ? parsed.comment : undefined;
+    const ipLocation =
+      targetType === "ip" && typeof parsed.ipLocation === "string"
+        ? parsed.ipLocation
+        : undefined;
+
+    return {
+      id,
+      ip: normalizedTarget,
+      targetType,
+      expireAt:
+        expireAt !== null && Number.isFinite(expireAt) ? expireAt : null,
+      source,
+      createdAt: Number.isFinite(createdAt) ? createdAt : 0,
+      ...(comment !== undefined ? { comment } : {}),
+      status,
+      ...(ipLocation ? { ipLocation } : {}),
+    };
+  } catch {
+    return null;
+  }
 };
 
 export class IPTablesWhiteListManager {
@@ -43,27 +121,49 @@ export class IPTablesWhiteListManager {
     return shouldAutoManageFirewallForRunType(config.run_type, config);
   }
 
-  private async syncAllowedIP(ip: string) {
+  private async syncAllowedTarget(target: string) {
     if (!(await this.shouldSyncDirectModeFirewall())) return;
-    await goBackend.allowIP(ip);
+    await goBackend.allowIP(target);
   }
 
-  private async removeAllowedIP(ip: string) {
+  private async removeAllowedTarget(target: string) {
     if (!(await this.shouldSyncDirectModeFirewall())) return;
-    await goBackend.removeIP(ip);
+    await goBackend.removeIP(target);
+  }
+
+  private normalizeTargetInput(
+    value: string,
+    source: WhiteListRecord["source"],
+    targetType?: WhiteListTargetType,
+  ): { target: string; targetType: WhiteListTargetType } {
+    const inferredType = targetType ?? inferWhiteListTargetType(value);
+    if (!inferredType) {
+      throw new Error("IP 或 CIDR 格式不正确");
+    }
+    if (source === "auto" && inferredType !== "ip") {
+      throw new Error("登录自动授权仅支持单个 IP");
+    }
+
+    const target = normalizeWhiteListTarget(value, inferredType);
+    if (!target) {
+      throw new Error(
+        inferredType === "cidr" ? "CIDR 格式不正确" : "IP 格式不正确",
+      );
+    }
+
+    return {
+      target,
+      targetType: inferredType,
+    };
   }
 
   async getRecordById(id: string): Promise<WhiteListRecord | null> {
     const raw = await this.redis.hget(KEYS.RECORDS, id);
     if (!raw) return null;
-    try {
-      return JSON.parse(raw) as WhiteListRecord;
-    } catch {
-      return null;
-    }
+    return deserializeRecord(raw);
   }
 
-  private async findRecordsByIPWithScan(
+  private async findExactIPRecordsWithScan(
     ip: string,
     rebuildIndex: boolean,
   ): Promise<WhiteListRecord[]> {
@@ -73,21 +173,19 @@ export class IPTablesWhiteListManager {
     const ids: string[] = [];
 
     for (const [id, raw] of Object.entries(allRecords)) {
-      try {
-        const record = JSON.parse(raw) as WhiteListRecord;
-        if (
-          normalizeIp(record.ip || "") === normalizedIp &&
-          record.status === "active"
-        ) {
-          records.push(record);
-          ids.push(id);
-        }
-      } catch {
-        // ignore invalid payload
+      const record = deserializeRecord(raw);
+      if (!record) continue;
+      if (
+        isIPRecord(record) &&
+        normalizeIp(record.ip || "") === normalizedIp &&
+        record.status === "active"
+      ) {
+        records.push(record);
+        ids.push(id);
       }
     }
 
-    records.sort((a, b) => b.createdAt - a.createdAt);
+    sortRecordsByCreatedAtDesc(records);
     if (!rebuildIndex) return records;
 
     const ipKey = this.getIPRecordsKey(normalizedIp);
@@ -100,216 +198,38 @@ export class IPTablesWhiteListManager {
     return records;
   }
 
-  async addWhiteList(
-    record: Omit<WhiteListRecord, "id" | "createdAt" | "status">,
-    options?: { replaceSource?: "manual" | "auto" | "all" },
-  ): Promise<string> {
-    const normalizedIp =
-      normalizeIp(record.ip) || String(record.ip || "").trim();
-    const replaceSource = options?.replaceSource ?? record.source;
-    if (replaceSource === "all") {
-      await this.removeRecordsByIP(normalizedIp);
-    } else {
-      await this.removeRecordsByIP(normalizedIp, replaceSource);
-    }
-    const id = `whitelist:${uuidv4()}`;
-    const now = Math.floor(Date.now() / 1000);
-    const ipLocationStr =
-      await ipLocationService.getCachedLocation(normalizedIp);
-    const fullRecord: WhiteListRecord = {
-      ...record,
-      ip: normalizedIp,
-      id,
-      createdAt: now,
-      status: "active",
-      ...(ipLocationStr ? { ipLocation: ipLocationStr } : {}),
-    };
-
-    const ipKey = this.getIPRecordsKey(normalizedIp);
-    const pipeline = this.redis.pipeline();
-    pipeline.hset(KEYS.RECORDS, id, JSON.stringify(fullRecord));
-    pipeline.zadd(KEYS.RECORD_ORDER, now, id);
-    pipeline.sadd(KEYS.IPS, normalizedIp);
-    pipeline.sadd(ipKey, id);
-
-    if (record.expireAt) {
-      pipeline.zadd(KEYS.EXPIRY, record.expireAt, id);
-    }
-
-    await pipeline.exec();
-    await ipLocationService.registerUsage(normalizedIp, [
-      ipLocationRefs.whitelist(id),
-    ]);
-    await this.syncAllowedIP(normalizedIp);
-    return id;
-  }
-
-  /**
-   * Remove a whitelist record by ID
-   */
-  async removeWhiteList(id: string): Promise<boolean> {
-    const recordStr = await this.redis.hget(KEYS.RECORDS, id);
-    if (!recordStr) return false;
-
-    const record: WhiteListRecord = JSON.parse(recordStr);
-    const ipKey = this.getIPRecordsKey(record.ip);
-    const pipeline = this.redis.pipeline();
-    pipeline.hdel(KEYS.RECORDS, id);
-    pipeline.hdel(KEYS.DELETED, id);
-    pipeline.zrem(KEYS.RECORD_ORDER, id);
-    pipeline.zrem(KEYS.EXPIRY, id);
-    pipeline.srem(ipKey, id);
-    await pipeline.exec();
-
-    const remaining = await this.findRecordsByIP(record.ip);
-    if (remaining.length === 0) {
-      await this.redis.srem(KEYS.IPS, record.ip);
-      await this.redis.del(ipKey);
-      await this.removeAllowedIP(record.ip);
-    }
-
-    return true;
-  }
-
-  /**
-   * Update the comment of a record
-   */
-  async updateComment(id: string, comment: string): Promise<boolean> {
-    const recordStr = await this.redis.hget(KEYS.RECORDS, id);
-    if (!recordStr) return false;
-
-    const record: WhiteListRecord = JSON.parse(recordStr);
-    record.comment = comment;
-    await this.redis.hset(KEYS.RECORDS, id, JSON.stringify(record));
-    return true;
-  }
-
-  /**
-   * Get all active whitelist records
-   */
-  async getAllActiveRecords(
-    source?: "manual" | "auto",
+  private async findAllActiveCIDRRecordsWithScan(
+    rebuildIndex: boolean,
   ): Promise<WhiteListRecord[]> {
-    const ids = await this.redis.zrevrange(KEYS.RECORD_ORDER, 0, -1);
-    if (ids.length === 0) {
-      const rebuilt = await this.rebuildRecordOrderIndex();
-      return source
-        ? rebuilt.filter((record) => record.source === source)
-        : rebuilt;
-    }
-
-    const raws = await this.redis.hmget(KEYS.RECORDS, ...ids);
-    const activeRecords: WhiteListRecord[] = [];
-    const staleIds: string[] = [];
-    const maybeExpiredIds: string[] = [];
-    const maybeDeletedIps = new Set<string>();
-
-    raws.forEach((raw, index) => {
-      const id = ids[index];
-      if (!id) return;
-      if (!raw) {
-        staleIds.push(id);
-        maybeExpiredIds.push(id);
-        return;
-      }
-      try {
-        const record = JSON.parse(raw) as WhiteListRecord;
-        if (record.status === "active") {
-          activeRecords.push(record);
-          return;
-        }
-        staleIds.push(id);
-        maybeExpiredIds.push(id);
-        maybeDeletedIps.add(record.ip);
-      } catch {
-        staleIds.push(id);
-        maybeExpiredIds.push(id);
-      }
-    });
-
-    if (staleIds.length > 0) {
-      const pipeline = this.redis.pipeline();
-      pipeline.zrem(KEYS.RECORD_ORDER, ...staleIds);
-      if (maybeExpiredIds.length > 0) {
-        pipeline.zrem(KEYS.EXPIRY, ...maybeExpiredIds);
-      }
-      for (const ip of maybeDeletedIps) {
-        const ipKey = this.getIPRecordsKey(ip);
-        pipeline.srem(ipKey, ...staleIds);
-      }
-      await pipeline.exec();
-    }
-
-    await ipLocationService.hydrateIpLocationRecords(activeRecords, (record) =>
-      ipLocationRefs.whitelist(record.id),
-    );
-    return source
-      ? activeRecords.filter((record) => record.source === source)
-      : activeRecords;
-  }
-
-  private async rebuildRecordOrderIndex(): Promise<WhiteListRecord[]> {
     const allRecords = await this.redis.hgetall(KEYS.RECORDS);
-    const activeRecords: WhiteListRecord[] = [];
+    const records: WhiteListRecord[] = [];
+    const ids: string[] = [];
 
-    for (const raw of Object.values(allRecords)) {
-      try {
-        const record = JSON.parse(raw) as WhiteListRecord;
-        if (record.status === "active") {
-          activeRecords.push(record);
-        }
-      } catch {
-        // ignore invalid payload
+    for (const [id, raw] of Object.entries(allRecords)) {
+      const record = deserializeRecord(raw);
+      if (!record) continue;
+      if (isCIDRRecord(record) && record.status === "active") {
+        records.push(record);
+        ids.push(id);
       }
     }
 
-    activeRecords.sort((a, b) => b.createdAt - a.createdAt);
-    if (activeRecords.length > 0) {
-      const pipeline = this.redis.pipeline();
-      pipeline.del(KEYS.RECORD_ORDER);
-      for (const record of activeRecords) {
-        pipeline.zadd(KEYS.RECORD_ORDER, record.createdAt, record.id);
-      }
-      await pipeline.exec();
+    sortRecordsByCreatedAtDesc(records);
+    if (!rebuildIndex) return records;
+
+    const pipeline = this.redis.pipeline();
+    pipeline.del(KEYS.CIDR_RECORDS);
+    if (ids.length > 0) {
+      pipeline.sadd(KEYS.CIDR_RECORDS, ...ids);
     }
-    await ipLocationService.hydrateIpLocationRecords(activeRecords, (record) =>
-      ipLocationRefs.whitelist(record.id),
-    );
-    return activeRecords;
+    await pipeline.exec();
+    return records;
   }
 
-  /**
-   * Check if an IP is whitelisted
-   */
-  async isIPWhitelisted(ip: string): Promise<boolean> {
-    const normalizedIp = normalizeIp(ip) || String(ip || "").trim();
-    if (!normalizedIp) return false;
-    return (await this.redis.sismember(KEYS.IPS, normalizedIp)) === 1;
-  }
-
-  /**
-   * Check if an IP has at least one valid, active record
-   */
-  async hasValidIP(ip: string): Promise<boolean> {
-    const normalizedIp = normalizeIp(ip) || String(ip || "").trim();
-    if (!normalizedIp) return false;
-
-    const isMember = (await this.redis.sismember(KEYS.IPS, normalizedIp)) === 1;
-    const records = await this.findRecordsByIP(normalizedIp);
-    if (!isMember && records.length === 0) return false;
-
-    const now = Math.floor(Date.now() / 1000);
-    return records.some((r) => !r.expireAt || r.expireAt > now);
-  }
-
-  private async findRecordsByIP(ip: string): Promise<WhiteListRecord[]> {
-    const normalizedIp = normalizeIp(ip) || String(ip || "").trim();
-    if (!normalizedIp) return [];
-
-    const ipKey = this.getIPRecordsKey(normalizedIp);
-    const ids = await this.redis.smembers(ipKey);
+  private async getAllActiveCIDRRecords(): Promise<WhiteListRecord[]> {
+    const ids = await this.redis.smembers(KEYS.CIDR_RECORDS);
     if (ids.length === 0) {
-      return this.findRecordsByIPWithScan(normalizedIp, true);
+      return this.findAllActiveCIDRRecordsWithScan(true);
     }
 
     const raws = await this.redis.hmget(KEYS.RECORDS, ...ids);
@@ -324,20 +244,321 @@ export class IPTablesWhiteListManager {
         removeFromAllIndexes.push(id);
         return;
       }
-      try {
-        const record = JSON.parse(raw) as WhiteListRecord;
-        if (normalizeIp(record.ip || "") !== normalizedIp) {
-          removeFromSetOnly.push(id);
-          return;
-        }
-        if (record.status !== "active") {
-          removeFromAllIndexes.push(id);
-          return;
-        }
-        records.push(record);
-      } catch {
+
+      const record = deserializeRecord(raw);
+      if (!record) {
         removeFromAllIndexes.push(id);
+        return;
       }
+      if (!isCIDRRecord(record)) {
+        if (record.status === "active") {
+          removeFromSetOnly.push(id);
+        } else {
+          removeFromAllIndexes.push(id);
+        }
+        return;
+      }
+      if (record.status !== "active") {
+        removeFromAllIndexes.push(id);
+        return;
+      }
+
+      records.push(record);
+    });
+
+    if (removeFromSetOnly.length > 0 || removeFromAllIndexes.length > 0) {
+      const pipeline = this.redis.pipeline();
+      if (removeFromSetOnly.length > 0) {
+        pipeline.srem(KEYS.CIDR_RECORDS, ...removeFromSetOnly);
+      }
+      if (removeFromAllIndexes.length > 0) {
+        pipeline.srem(KEYS.CIDR_RECORDS, ...removeFromAllIndexes);
+        pipeline.zrem(KEYS.RECORD_ORDER, ...removeFromAllIndexes);
+        pipeline.zrem(KEYS.EXPIRY, ...removeFromAllIndexes);
+      }
+      await pipeline.exec();
+    }
+
+    if (records.length === 0) {
+      return this.findAllActiveCIDRRecordsWithScan(true);
+    }
+
+    return sortRecordsByCreatedAtDesc(records);
+  }
+
+  private async rebuildRecordOrderIndex(): Promise<WhiteListRecord[]> {
+    const allRecords = await this.redis.hgetall(KEYS.RECORDS);
+    const activeRecords: WhiteListRecord[] = [];
+    const ipRecordIds = new Map<string, string[]>();
+    const cidrRecordIds: string[] = [];
+
+    for (const raw of Object.values(allRecords)) {
+      const record = deserializeRecord(raw);
+      if (!record || record.status !== "active") {
+        continue;
+      }
+
+      activeRecords.push(record);
+      if (isIPRecord(record)) {
+        const normalizedIp = normalizeIp(record.ip) || record.ip;
+        const ids = ipRecordIds.get(normalizedIp) ?? [];
+        ids.push(record.id);
+        ipRecordIds.set(normalizedIp, ids);
+        continue;
+      }
+
+      cidrRecordIds.push(record.id);
+    }
+
+    sortRecordsByCreatedAtDesc(activeRecords);
+    const pipeline = this.redis.pipeline();
+    pipeline.del(KEYS.RECORD_ORDER);
+    pipeline.del(KEYS.EXPIRY);
+    pipeline.del(KEYS.IPS);
+    pipeline.del(KEYS.CIDR_RECORDS);
+
+    for (const ip of ipRecordIds.keys()) {
+      pipeline.del(this.getIPRecordsKey(ip));
+    }
+
+    for (const record of activeRecords) {
+      pipeline.zadd(KEYS.RECORD_ORDER, record.createdAt, record.id);
+      if (record.expireAt) {
+        pipeline.zadd(KEYS.EXPIRY, record.expireAt, record.id);
+      }
+    }
+
+    for (const [ip, ids] of ipRecordIds.entries()) {
+      pipeline.sadd(KEYS.IPS, ip);
+      pipeline.sadd(this.getIPRecordsKey(ip), ...ids);
+    }
+    if (cidrRecordIds.length > 0) {
+      pipeline.sadd(KEYS.CIDR_RECORDS, ...cidrRecordIds);
+    }
+
+    await pipeline.exec();
+    await ipLocationService.hydrateIpLocationRecords(activeRecords, (record) =>
+      ipLocationRefs.whitelist(record.id),
+    );
+    return activeRecords;
+  }
+
+  async addWhiteList(
+    record: Omit<
+      WhiteListRecord,
+      "id" | "createdAt" | "status" | "targetType"
+    > & {
+      targetType?: WhiteListTargetType;
+    },
+    options?: { replaceSource?: "manual" | "auto" | "all" },
+  ): Promise<string> {
+    const { target, targetType } = this.normalizeTargetInput(
+      record.ip,
+      record.source,
+      record.targetType,
+    );
+    const replaceSource = options?.replaceSource ?? record.source;
+    if (replaceSource === "all") {
+      await this.removeRecordsByTarget(target, targetType);
+    } else {
+      await this.removeRecordsByTarget(target, targetType, replaceSource);
+    }
+
+    const id = `whitelist:${uuidv4()}`;
+    const now = Math.floor(Date.now() / 1000);
+    const ipLocationStr =
+      targetType === "ip"
+        ? await ipLocationService.getCachedLocation(target)
+        : "";
+    const fullRecord: WhiteListRecord = {
+      ...record,
+      ip: target,
+      targetType,
+      id,
+      createdAt: now,
+      status: "active",
+      ...(ipLocationStr ? { ipLocation: ipLocationStr } : {}),
+    };
+
+    const pipeline = this.redis.pipeline();
+    pipeline.hset(KEYS.RECORDS, id, JSON.stringify(fullRecord));
+    pipeline.zadd(KEYS.RECORD_ORDER, now, id);
+
+    if (targetType === "ip") {
+      const ipKey = this.getIPRecordsKey(target);
+      pipeline.sadd(KEYS.IPS, target);
+      pipeline.sadd(ipKey, id);
+    } else {
+      pipeline.sadd(KEYS.CIDR_RECORDS, id);
+    }
+
+    if (record.expireAt) {
+      pipeline.zadd(KEYS.EXPIRY, record.expireAt, id);
+    }
+
+    await pipeline.exec();
+    if (targetType === "ip") {
+      await ipLocationService.registerUsage(target, [
+        ipLocationRefs.whitelist(id),
+      ]);
+    }
+    await this.syncAllowedTarget(target);
+    return id;
+  }
+
+  async removeWhiteList(id: string): Promise<boolean> {
+    const record = await this.getRecordById(id);
+    if (!record) return false;
+
+    const target = getRecordTarget(record);
+    const targetType = getRecordTargetType(record);
+    const pipeline = this.redis.pipeline();
+    pipeline.hdel(KEYS.RECORDS, id);
+    pipeline.hdel(KEYS.DELETED, id);
+    pipeline.zrem(KEYS.RECORD_ORDER, id);
+    pipeline.zrem(KEYS.EXPIRY, id);
+    if (targetType === "ip") {
+      pipeline.srem(this.getIPRecordsKey(target), id);
+    } else {
+      pipeline.srem(KEYS.CIDR_RECORDS, id);
+    }
+    await pipeline.exec();
+
+    const remaining = await this.findRecordsByTarget(target, targetType);
+    if (remaining.length === 0) {
+      if (targetType === "ip") {
+        await this.redis.srem(KEYS.IPS, target);
+        await this.redis.del(this.getIPRecordsKey(target));
+      }
+      await this.removeAllowedTarget(target);
+    }
+
+    return true;
+  }
+
+  async updateComment(id: string, comment: string): Promise<boolean> {
+    const record = await this.getRecordById(id);
+    if (!record) return false;
+
+    record.comment = comment;
+    await this.redis.hset(KEYS.RECORDS, id, JSON.stringify(record));
+    return true;
+  }
+
+  async getAllActiveRecords(
+    source?: "manual" | "auto",
+  ): Promise<WhiteListRecord[]> {
+    const ids = await this.redis.zrevrange(KEYS.RECORD_ORDER, 0, -1);
+    if (ids.length === 0) {
+      const rebuilt = await this.rebuildRecordOrderIndex();
+      return source
+        ? rebuilt.filter((record) => record.source === source)
+        : rebuilt;
+    }
+
+    const raws = await this.redis.hmget(KEYS.RECORDS, ...ids);
+    const activeRecords: WhiteListRecord[] = [];
+    const staleIds: string[] = [];
+    const staleIPTargets = new Set<string>();
+
+    raws.forEach((raw, index) => {
+      const id = ids[index];
+      if (!id) return;
+      if (!raw) {
+        staleIds.push(id);
+        return;
+      }
+
+      const record = deserializeRecord(raw);
+      if (!record) {
+        staleIds.push(id);
+        return;
+      }
+      if (record.status !== "active") {
+        staleIds.push(id);
+        if (isIPRecord(record)) {
+          staleIPTargets.add(record.ip);
+        }
+        return;
+      }
+
+      activeRecords.push(record);
+    });
+
+    if (staleIds.length > 0) {
+      const pipeline = this.redis.pipeline();
+      pipeline.zrem(KEYS.RECORD_ORDER, ...staleIds);
+      pipeline.zrem(KEYS.EXPIRY, ...staleIds);
+      pipeline.srem(KEYS.CIDR_RECORDS, ...staleIds);
+      for (const ip of staleIPTargets) {
+        pipeline.srem(this.getIPRecordsKey(ip), ...staleIds);
+      }
+      await pipeline.exec();
+    }
+
+    await ipLocationService.hydrateIpLocationRecords(activeRecords, (record) =>
+      ipLocationRefs.whitelist(record.id),
+    );
+    const sorted = sortRecordsByCreatedAtDesc(activeRecords);
+    return source
+      ? sorted.filter((record) => record.source === source)
+      : sorted;
+  }
+
+  async isIPWhitelisted(ip: string): Promise<boolean> {
+    return this.hasValidIP(ip);
+  }
+
+  async hasValidIP(ip: string): Promise<boolean> {
+    const records = await this.getActiveRecordsByIP(ip);
+    return records.length > 0;
+  }
+
+  private async findExactIPRecords(ip: string): Promise<WhiteListRecord[]> {
+    const normalizedIp = normalizeIp(ip) || String(ip || "").trim();
+    if (!normalizedIp) return [];
+
+    const ipKey = this.getIPRecordsKey(normalizedIp);
+    const ids = await this.redis.smembers(ipKey);
+    if (ids.length === 0) {
+      return this.findExactIPRecordsWithScan(normalizedIp, true);
+    }
+
+    const raws = await this.redis.hmget(KEYS.RECORDS, ...ids);
+    const records: WhiteListRecord[] = [];
+    const removeFromSetOnly: string[] = [];
+    const removeFromAllIndexes: string[] = [];
+
+    raws.forEach((raw, index) => {
+      const id = ids[index];
+      if (!id) return;
+      if (!raw) {
+        removeFromAllIndexes.push(id);
+        return;
+      }
+
+      const record = deserializeRecord(raw);
+      if (!record) {
+        removeFromAllIndexes.push(id);
+        return;
+      }
+      if (
+        !isIPRecord(record) ||
+        normalizeIp(record.ip || "") !== normalizedIp
+      ) {
+        if (record.status === "active") {
+          removeFromSetOnly.push(id);
+        } else {
+          removeFromAllIndexes.push(id);
+        }
+        return;
+      }
+      if (record.status !== "active") {
+        removeFromAllIndexes.push(id);
+        return;
+      }
+
+      records.push(record);
     });
 
     if (removeFromSetOnly.length > 0 || removeFromAllIndexes.length > 0) {
@@ -354,25 +575,64 @@ export class IPTablesWhiteListManager {
     }
 
     if (records.length === 0) {
-      return this.findRecordsByIPWithScan(normalizedIp, true);
+      return this.findExactIPRecordsWithScan(normalizedIp, true);
     }
 
-    records.sort((a, b) => b.createdAt - a.createdAt);
-    return records;
+    return sortRecordsByCreatedAtDesc(records);
+  }
+
+  private async findMatchingCIDRRecords(
+    ip: string,
+  ): Promise<WhiteListRecord[]> {
+    const normalizedIp = normalizeIp(ip) || String(ip || "").trim();
+    if (!normalizedIp) return [];
+
+    const records = await this.getAllActiveCIDRRecords();
+    const now = Math.floor(Date.now() / 1000);
+    return sortRecordsByCreatedAtDesc(
+      records.filter((record) => {
+        if (record.expireAt && record.expireAt <= now) return false;
+        return doesClientIpMatchWhiteListTarget(
+          normalizedIp,
+          record.ip,
+          record.targetType,
+        );
+      }),
+    );
+  }
+
+  private async findRecordsByTarget(
+    target: string,
+    targetType: WhiteListTargetType,
+  ): Promise<WhiteListRecord[]> {
+    if (targetType === "cidr") {
+      const records = await this.getAllActiveCIDRRecords();
+      return sortRecordsByCreatedAtDesc(
+        records.filter((record) => record.ip === target),
+      );
+    }
+
+    return this.findExactIPRecords(target);
   }
 
   async getActiveRecordsByIP(
     ip: string,
     source?: "manual" | "auto",
   ): Promise<WhiteListRecord[]> {
-    const records = await this.findRecordsByIP(ip);
+    const [exactRecords, cidrRecords] = await Promise.all([
+      this.findExactIPRecords(ip),
+      this.findMatchingCIDRRecords(ip),
+    ]);
     const now = Math.floor(Date.now() / 1000);
-    return records.filter((record) => {
-      if (record.status !== "active") return false;
-      if (record.expireAt && record.expireAt <= now) return false;
-      if (source && record.source !== source) return false;
-      return true;
-    });
+
+    return sortRecordsByCreatedAtDesc(
+      [...exactRecords, ...cidrRecords].filter((record) => {
+        if (record.status !== "active") return false;
+        if (record.expireAt && record.expireAt <= now) return false;
+        if (source && record.source !== source) return false;
+        return true;
+      }),
+    );
   }
 
   async getLatestActiveRecordByIP(
@@ -388,7 +648,9 @@ export class IPTablesWhiteListManager {
     newIp: string,
   ): Promise<WhiteListRecord | null> {
     const record = await this.getRecordById(id);
-    if (!record || record.status !== "active") return null;
+    if (!record || record.status !== "active" || !isIPRecord(record)) {
+      return null;
+    }
 
     const now = Math.floor(Date.now() / 1000);
     if (record.expireAt && record.expireAt <= now) return null;
@@ -396,17 +658,16 @@ export class IPTablesWhiteListManager {
     const oldIp = normalizeIp(record.ip) || record.ip;
     const normalizedNewIp = normalizeIp(newIp) || String(newIp || "").trim();
     if (!normalizedNewIp) return null;
-
     if (oldIp === normalizedNewIp) {
       return record;
     }
 
     const ipLocationStr =
       await ipLocationService.getCachedLocation(normalizedNewIp);
-
     const nextRecord: WhiteListRecord = {
       ...record,
       ip: normalizedNewIp,
+      targetType: "ip",
       ...(ipLocationStr ? { ipLocation: ipLocationStr } : {}),
     };
 
@@ -422,35 +683,41 @@ export class IPTablesWhiteListManager {
       ipLocationRefs.whitelist(id),
     ]);
 
-    await this.syncAllowedIP(normalizedNewIp);
+    await this.syncAllowedTarget(normalizedNewIp);
 
-    const remainingOldRecords = await this.findRecordsByIP(oldIp);
+    const remainingOldRecords = await this.findExactIPRecords(oldIp);
     if (remainingOldRecords.length === 0) {
       await this.redis.srem(KEYS.IPS, oldIp);
       await this.redis.del(oldIpKey);
-      await this.removeAllowedIP(oldIp);
+      await this.removeAllowedTarget(oldIp);
     }
 
     return nextRecord;
   }
 
-  /**
-   * Remove whitelist records by IP (optionally filtered by source)
-   */
+  private async removeRecordsByTarget(
+    target: string,
+    targetType: WhiteListTargetType,
+    source?: "manual" | "auto",
+  ): Promise<boolean> {
+    const records = await this.findRecordsByTarget(target, targetType);
+    let removed = false;
+    for (const record of records) {
+      if (!source || record.source === source) {
+        const result = await this.removeWhiteList(record.id);
+        if (result) removed = true;
+      }
+    }
+    return removed;
+  }
+
   async removeRecordsByIP(
     ip: string,
     source?: "manual" | "auto",
   ): Promise<boolean> {
     const normalizedIp = normalizeIp(ip) || String(ip || "").trim();
-    const records = await this.findRecordsByIP(normalizedIp);
-    let removed = false;
-    for (const record of records) {
-      if (!source || record.source === source) {
-        const res = await this.removeWhiteList(record.id);
-        if (res) removed = true;
-      }
-    }
-    return removed;
+    if (!normalizedIp) return false;
+    return this.removeRecordsByTarget(normalizedIp, "ip", source);
   }
 
   async removeRecordsBySource(source: "manual" | "auto"): Promise<number> {
@@ -482,16 +749,18 @@ export class IPTablesWhiteListManager {
         staleIds.push(id);
         return;
       }
-      try {
-        const record = JSON.parse(raw) as WhiteListRecord;
-        if (record.status !== "active") {
-          staleIds.push(id);
-          return;
-        }
-        records.push(record);
-      } catch {
+
+      const record = deserializeRecord(raw);
+      if (!record) {
         staleIds.push(id);
+        return;
       }
+      if (record.status !== "active") {
+        staleIds.push(id);
+        return;
+      }
+
+      records.push(record);
     });
 
     if (staleIds.length > 0) {
@@ -506,27 +775,39 @@ export class IPTablesWhiteListManager {
       if (expiredRecords.length === 0) return false;
 
       const touchedIps = new Set<string>();
+      const touchedCidrs = new Set<string>();
       const pipeline = this.redis.pipeline();
 
       for (const record of expiredRecords) {
         record.status = "expired";
-        touchedIps.add(record.ip);
-        const ipKey = this.getIPRecordsKey(record.ip);
+        if (isIPRecord(record)) {
+          touchedIps.add(record.ip);
+          pipeline.srem(this.getIPRecordsKey(record.ip), record.id);
+        } else {
+          touchedCidrs.add(record.ip);
+          pipeline.srem(KEYS.CIDR_RECORDS, record.id);
+        }
         pipeline.hset(KEYS.RECORDS, record.id, JSON.stringify(record));
         pipeline.zrem(KEYS.EXPIRY, record.id);
         pipeline.zrem(KEYS.RECORD_ORDER, record.id);
-        pipeline.srem(ipKey, record.id);
       }
 
       await pipeline.exec();
+
       for (const ip of touchedIps) {
-        const active = await this.findRecordsByIP(ip);
+        const active = await this.findExactIPRecords(ip);
         if (active.length > 0) continue;
-        const ipKey = this.getIPRecordsKey(ip);
         await this.redis.srem(KEYS.IPS, ip);
-        await this.redis.del(ipKey);
-        await this.removeAllowedIP(ip);
+        await this.redis.del(this.getIPRecordsKey(ip));
+        await this.removeAllowedTarget(ip);
       }
+
+      for (const cidr of touchedCidrs) {
+        const active = await this.findRecordsByTarget(cidr, "cidr");
+        if (active.length > 0) continue;
+        await this.removeAllowedTarget(cidr);
+      }
+
       return true;
     } catch (error) {
       console.error("Error processing expired records:", error);

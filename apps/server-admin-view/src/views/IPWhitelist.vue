@@ -37,8 +37,8 @@
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>IP / 归属地</TableHead>
-              <TableHead>状态/过期时间</TableHead>
+              <TableHead>目标</TableHead>
+              <TableHead>状态</TableHead>
               <TableHead>来源</TableHead>
               <TableHead>创建时间</TableHead>
               <TableHead>备注</TableHead>
@@ -64,7 +64,12 @@
             </TableRow>
             <TableRow v-for="record in paginatedRecords" :key="record.id">
               <TableCell class="font-medium">
-                <div>{{ record.ip }}</div>
+                <div class="flex items-center gap-2">
+                  <span>{{ record.ip }}</span>
+                  <Badge variant="outline">
+                    {{ record.targetType === "cidr" ? "CIDR" : "IP" }}
+                  </Badge>
+                </div>
                 <div
                   v-if="record.ipLocation"
                   class="text-xs text-muted-foreground mt-0.5"
@@ -136,7 +141,7 @@
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>IP / 归属地</TableHead>
+              <TableHead>目标</TableHead>
               <TableHead>状态/过期时间</TableHead>
               <TableHead>来源</TableHead>
               <TableHead>创建时间</TableHead>
@@ -175,18 +180,31 @@
   <Dialog v-model:open="showAddDialog">
     <DialogContent>
       <DialogHeader>
-        <DialogTitle>添加IP到白名单</DialogTitle>
+        <DialogTitle>添加白名单目标</DialogTitle>
         <DialogDescription>
-          请输入您希望允许访问的IP地址及可选配置。
+          请输入您希望允许访问的 IP 或 CIDR 及可选配置。
         </DialogDescription>
       </DialogHeader>
       <div class="grid gap-4 py-4">
         <div class="grid grid-cols-4 items-center gap-4">
-          <Label for="ip" class="text-right">IP地址</Label>
+          <Label for="targetType" class="text-right">类型</Label>
+          <Select v-model="newRecord.targetType">
+            <SelectTrigger class="col-span-3">
+              <SelectValue placeholder="选择类型" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ip">单个 IP</SelectItem>
+              <SelectItem value="cidr">CIDR 网段</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div class="grid grid-cols-4 items-center gap-4">
+          <Label for="ip" class="text-right">目标</Label>
           <Input
             id="ip"
             v-model="newRecord.ip"
-            placeholder="例如：192.168.1.100"
+            :placeholder="newRecordPlaceholder"
             class="col-span-3"
           />
         </div>
@@ -295,6 +313,7 @@ import {
 } from "@admin-shared/composables/useAsyncAction";
 import { useLocalPagedList } from "@admin-shared/composables/useLocalPagedList";
 import { useDelayedLoading } from "@admin-shared/composables/useDelayedLoading";
+import { isValidCIDR } from "@admin-shared/utils/cidr";
 import { docsUrls } from "../lib/docs";
 
 // 引入统一封装的 API 和类型
@@ -304,7 +323,8 @@ const records = ref<WhiteListRecord[]>([]);
 const isInitializing = ref(true);
 const showInitializingSkeleton = useDelayedLoading(isInitializing);
 const pageDescription = computed(
-  () => "查看手动白名单与登录后自动授权记录。直连模式下，这些 IP 也会同步到系统防火墙。",
+  () =>
+    "查看手动白名单与登录后自动授权记录。直连模式下，这些 IP / CIDR 也会同步到系统防火墙。",
 );
 
 const removingId = ref<string | null>(null);
@@ -339,8 +359,14 @@ const durationSetting = ref("permanent");
 const customHours = ref(24);
 const newRecord = ref({
   ip: "",
+  targetType: "ip" as "ip" | "cidr",
   comment: "",
 });
+const newRecordPlaceholder = computed(() =>
+  newRecord.value.targetType === "cidr"
+    ? "例如：203.0.113.0/24"
+    : "例如：203.0.113.10",
+);
 
 const fetchRecords = async () => {
   await runFetchRecords(
@@ -414,6 +440,12 @@ const formatRemaining = (expireAt: number) => {
 const addRecord = async () => {
   const ip = newRecord.value.ip.trim();
   if (!ip) return;
+  if (newRecord.value.targetType === "cidr" && !isValidCIDR(ip)) {
+    toast.error("CIDR 格式不正确", {
+      description: "请输入类似 203.0.113.0/24 或 2001:db8::/32 的网段。",
+    });
+    return;
+  }
 
   let expireAt: number | null = null;
   const now = Math.floor(Date.now() / 1000);
@@ -440,6 +472,7 @@ const addRecord = async () => {
   await runAddRecord(async () => {
     const res = await WhitelistAPI.addRecord({
       ip,
+      targetType: newRecord.value.targetType,
       expireAt,
       source: "manual",
       comment: newRecord.value.comment.trim() || undefined,
@@ -448,7 +481,7 @@ const addRecord = async () => {
     if (res.success) {
       toast.success("已成功添加白名单");
       showAddDialog.value = false;
-      newRecord.value = { ip: "", comment: "" };
+      newRecord.value = { ip: "", targetType: "ip", comment: "" };
       durationSetting.value = "permanent";
       currentPage.value = 1;
       searchQuery.value = "";

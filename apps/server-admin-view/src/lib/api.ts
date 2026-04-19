@@ -457,6 +457,7 @@ export const ConfigAPI = {
 export interface WhiteListRecord {
   id: string;
   ip: string;
+  targetType: "ip" | "cidr";
   expireAt: number | null;
   source: "manual" | "auto";
   createdAt: number;
@@ -472,6 +473,7 @@ export const WhitelistAPI = {
   },
   async addRecord(payload: {
     ip: string;
+    targetType?: "ip" | "cidr";
     expireAt: number | null;
     source: string;
     comment?: string;

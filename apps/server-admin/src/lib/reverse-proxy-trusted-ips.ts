@@ -2,6 +2,7 @@ import {
   goBackend,
   type ReverseProxyThrottleExemptIPsRuntime,
 } from "./go-backend";
+import { normalizeCidrLines } from "../../../../packages/admin-shared/src/utils/cidr";
 import { isWhitelistExemptIp, normalizeIp } from "./ip-normalize";
 import {
   configManager,
@@ -38,6 +39,7 @@ const toGatewayPayload = (
 ): ReverseProxyThrottleExemptIPsRuntime => ({
   enabled: runtime.enabled,
   ips: runtime.enabled ? runtime.items.map((item) => item.ip) : [],
+  cidrs: runtime.enabled ? runtime.cidrs : [],
   updated_at: runtime.updated_at,
 });
 
@@ -53,6 +55,7 @@ export const compileReverseProxyTrustedIPsRuntimeState = async (
   ]);
   const sourceMap = new Map<string, Set<string>>();
   const sessionLinkedAutoWhitelistFinalIpByRecordId = new Map<string, string>();
+  const cidrs: string[] = [];
 
   for (const session of sessions) {
     const finalIp = normalizeIp(session.data.ip);
@@ -68,6 +71,11 @@ export const compileReverseProxyTrustedIPsRuntimeState = async (
   }
 
   for (const record of whitelistRecords) {
+    if (record.targetType === "cidr") {
+      cidrs.push(record.ip);
+      continue;
+    }
+
     const compiledIp =
       record.source === "auto"
         ? (sessionLinkedAutoWhitelistFinalIpByRecordId.get(record.id) ??
@@ -88,6 +96,7 @@ export const compileReverseProxyTrustedIPsRuntimeState = async (
         ip,
         sources: [...sources].sort((left, right) => left.localeCompare(right)),
       })),
+    cidrs: normalizeCidrLines(cidrs),
     updated_at: new Date().toISOString(),
   };
 };

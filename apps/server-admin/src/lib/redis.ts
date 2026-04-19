@@ -271,6 +271,7 @@ export interface ReverseProxyTrustedIPRuntimeItem {
 export interface ReverseProxyTrustedIPRuntimeState {
   enabled: boolean;
   items: ReverseProxyTrustedIPRuntimeItem[];
+  cidrs: string[];
   updated_at: string | null;
 }
 
@@ -514,6 +515,7 @@ const DEFAULT_REVERSE_PROXY_TRUSTED_IP_RUNTIME_STATE: ReverseProxyTrustedIPRunti
   {
     enabled: false,
     items: [],
+    cidrs: [],
     updated_at: null,
   };
 
@@ -1087,6 +1089,11 @@ const normalizeReverseProxyTrustedIPRuntimeState = (
   return {
     enabled: raw.enabled === true,
     items,
+    cidrs: normalizeCidrLines(
+      Array.isArray(raw.cidrs)
+        ? raw.cidrs.map((item) => String(item ?? ""))
+        : [],
+    ),
     updated_at: updatedAt || null,
   };
 };
@@ -4169,6 +4176,7 @@ return actual
     return {
       ...DEFAULT_REVERSE_PROXY_TRUSTED_IP_RUNTIME_STATE,
       items: [],
+      cidrs: [],
     };
   }
 

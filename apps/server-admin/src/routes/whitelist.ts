@@ -17,19 +17,29 @@ export const whitelistRoutes = new Elysia({
   )
   .post(
     "/",
-    async ({ body }) => {
-      const id = await whitelistManager.addWhiteList({
-        ip: body.ip,
-        expireAt: body.expireAt,
-        source: body.source,
-        comment: body.comment,
-      });
-      scheduleSyncReverseProxyTrustedIPs({ reason: "whitelist-add" });
-      return { success: true, data: { id } };
+    async ({ body, set }) => {
+      try {
+        const id = await whitelistManager.addWhiteList({
+          ip: body.ip,
+          targetType: body.targetType,
+          expireAt: body.expireAt,
+          source: body.source,
+          comment: body.comment,
+        });
+        scheduleSyncReverseProxyTrustedIPs({ reason: "whitelist-add" });
+        return { success: true, data: { id } };
+      } catch (error: any) {
+        set.status = 400;
+        return {
+          success: false,
+          message: error?.message || "新增白名单记录失败",
+        };
+      }
     },
     withRouteDoc("新增白名单记录", {
       body: t.Object({
         ip: t.String(),
+        targetType: t.Optional(t.Union([t.Literal("ip"), t.Literal("cidr")])),
         expireAt: t.Union([t.Number(), t.Null()]),
         source: t.Union([t.Literal("manual"), t.Literal("auto")]),
         comment: t.Optional(t.String()),

@@ -138,6 +138,7 @@ export interface PreserveHostConfig {
 export interface ReverseProxyThrottleExemptIPsRuntime {
   enabled: boolean;
   ips: string[];
+  cidrs?: string[];
   updated_at?: string | null;
 }
 

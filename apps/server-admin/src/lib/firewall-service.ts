@@ -176,7 +176,7 @@ export class FirewallService {
     const records = await whitelistManager.getAllActiveRecords(source);
 
     for (const record of records) {
-      const fallbackMessage = `同步白名单 IP ${record.ip} 失败`;
+      const fallbackMessage = `同步白名单目标 ${record.ip} 失败`;
       if (strict) {
         await this.runGoBackendOrThrow(
           goBackend.allowIP(record.ip),
