@@ -34,6 +34,7 @@ import {
 import { buildDetailFields } from "@admin-shared/utils/buildDetailFields";
 import { formatDateTimeSafe } from "@admin-shared/utils/formatDateTimeSafe";
 import FnosAttachmentIndicator from "./FnosAttachmentIndicator.vue";
+import trimMediaLogoUrl from "@/assets/trim-media-logo.png";
 
 const router = useRouter();
 const sessions = ref<SessionRecord[]>([]);
@@ -214,6 +215,16 @@ watch(
                   <FnosAttachmentIndicator
                     v-if="session.fnosAttachments?.length"
                     :attachments="session.fnosAttachments"
+                  />
+                  <FnosAttachmentIndicator
+                    v-if="session.trimMediaAttachments?.length"
+                    :attachments="session.trimMediaAttachments"
+                    :icon-url="trimMediaLogoUrl"
+                    icon-alt="飞牛影视App"
+                    title="附着的飞牛影视App令牌"
+                    trigger-label="飞牛影视App令牌"
+                    item-label="令牌"
+                    footer-text="包括飞牛影视App绑定到当前网页登录会话的令牌都会在此显示"
                   />
                 </div>
               </TableCell>

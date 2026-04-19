@@ -6,9 +6,13 @@ import { configManager, redis, type LoginSession } from "./redis";
 import { emitSessionIpDriftEvent } from "./system-events/helpers";
 import { whitelistManager } from "./whitelist-manager";
 
-type MobilitySubjectType = "proxy-session" | "fnos-token";
+type MobilitySubjectType =
+  | "proxy-session"
+  | "fnos-token"
+  | "trim-media-token";
 type MobilityDriftSource =
-  | MobilitySubjectType
+  | "proxy-session"
+  | "fnos-token"
   | "session-refresh"
   | "browser-session";
 
@@ -56,7 +60,7 @@ export type SessionMobilityDetails = {
   events: MobilityTimelineEvent[];
 };
 
-export type SessionFnosAttachment = {
+export type SessionAppAttachment = {
   subjectHash: string;
   currentIp: string;
   createdAt: string;
@@ -64,11 +68,15 @@ export type SessionFnosAttachment = {
   expiresAt: string | null;
 };
 
+export type SessionFnosAttachment = SessionAppAttachment;
+export type SessionTrimMediaAttachment = SessionAppAttachment;
+
 type MobilityAppBinding = "fnos-app" | "trim-media-app";
 
 type RequestIdentity = {
   sessionId: string | null;
   fnosToken: string | null;
+  trimMediaToken: string | null;
   appBinding: MobilityAppBinding | null;
 };
 
@@ -107,6 +115,19 @@ const parseCookieValue = (
   }
 
   return lastValue;
+};
+
+const parseHeaderTokenValue = (value: string | null): string | null => {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+
+  const schemeMatch = trimmed.match(/^(?:bearer|token)\s+(.+)$/i);
+  if (schemeMatch?.[1]) {
+    const token = schemeMatch[1].trim();
+    return token || null;
+  }
+
+  return trimmed;
 };
 
 const toUnixSeconds = (iso?: string): number | null => {
@@ -196,10 +217,17 @@ export class AuthMobilitySessionManager {
       cookieHeader,
       fnosToken,
     });
+    const trimMediaToken =
+      appBinding === "trim-media-app"
+        ? parseHeaderTokenValue(request.headers.get("authorization")) ||
+          parseHeaderTokenValue(request.headers.get("accesstoken")) ||
+          parseHeaderTokenValue(request.headers.get("access-token"))
+        : null;
 
     return {
       sessionId,
       fnosToken,
+      trimMediaToken,
       appBinding,
     };
   }
@@ -274,6 +302,14 @@ export class AuthMobilitySessionManager {
         identity.sessionId,
       );
     }
+
+    if (identity.trimMediaToken) {
+      await this.refreshTrimMediaBinding(
+        identity.trimMediaToken,
+        clientIp,
+        identity.sessionId,
+      );
+    }
   }
 
   async tryRestoreAccess(
@@ -291,6 +327,20 @@ export class AuthMobilitySessionManager {
         return {
           success: true,
           message: "Authorized by fnos fingerprint session",
+          grantType: "fnos_fingerprint_session",
+        };
+      }
+    }
+
+    if (identity.trimMediaToken) {
+      const restored = await this.restoreTrimMediaToken(
+        identity.trimMediaToken,
+        clientIp,
+      );
+      if (restored) {
+        return {
+          success: true,
+          message: "Authorized by trim media token binding",
           grantType: "fnos_fingerprint_session",
         };
       }
@@ -340,10 +390,24 @@ export class AuthMobilitySessionManager {
     clientIp: string,
   ): Promise<boolean> {
     const identity = this.inspectRequest(request);
-    if (!identity.fnosToken && !identity.appBinding) return false;
+    if (!identity.fnosToken && !identity.trimMediaToken && !identity.appBinding)
+      return false;
 
     if (identity.fnosToken) {
       const binding = await this.getBinding("fnos-token", identity.fnosToken);
+      if (binding?.ownerSessionId) {
+        const owner = await this.resolveSessionOwner(binding.ownerSessionId);
+        if (owner) {
+          return !!this.resolveFnosSessionTTL(owner.ownerSession.expiresAt);
+        }
+      }
+    }
+
+    if (identity.trimMediaToken) {
+      const binding = await this.getBinding(
+        "trim-media-token",
+        identity.trimMediaToken,
+      );
       if (binding?.ownerSessionId) {
         const owner = await this.resolveSessionOwner(binding.ownerSessionId);
         if (owner) {
@@ -545,17 +609,30 @@ export class AuthMobilitySessionManager {
   async listSessionFnosAttachments(
     sessionId: string,
   ): Promise<SessionFnosAttachment[]> {
+    return this.listSessionAttachments(sessionId, "fnos-token");
+  }
+
+  async listSessionTrimMediaAttachments(
+    sessionId: string,
+  ): Promise<SessionTrimMediaAttachment[]> {
+    return this.listSessionAttachments(sessionId, "trim-media-token");
+  }
+
+  private async listSessionAttachments(
+    sessionId: string,
+    subjectType: "fnos-token" | "trim-media-token",
+  ): Promise<SessionAppAttachment[]> {
     const sessionKey = this.sessionIndexKey(sessionId);
     const subjectKeys = await this.r.smembers(sessionKey);
-    const fnosKeys = subjectKeys.filter((key) =>
-      key.startsWith(`${PREFIX}:binding:fnos-token:`),
+    const attachmentKeys = subjectKeys.filter((key) =>
+      key.startsWith(`${PREFIX}:binding:${subjectType}:`),
     );
-    if (fnosKeys.length === 0) {
+    if (attachmentKeys.length === 0) {
       return [];
     }
 
     const resolved = await Promise.all(
-      fnosKeys.map(async (storageKey) => {
+      attachmentKeys.map(async (storageKey) => {
         const binding = await this.getBindingByStorageKey(storageKey);
         return { storageKey, binding };
       }),
@@ -565,7 +642,7 @@ export class AuthMobilitySessionManager {
       .filter(
         ({ binding }) =>
           !binding ||
-          binding.subjectType !== "fnos-token" ||
+          binding.subjectType !== subjectType ||
           binding.ownerSessionId !== sessionId,
       )
       .map(({ storageKey }) => storageKey);
@@ -578,7 +655,7 @@ export class AuthMobilitySessionManager {
       .flatMap(({ binding }) => {
         if (
           !binding ||
-          binding.subjectType !== "fnos-token" ||
+          binding.subjectType !== subjectType ||
           binding.ownerSessionId !== sessionId
         ) {
           return [];
@@ -593,7 +670,7 @@ export class AuthMobilitySessionManager {
             expiresAt: binding.expireAt
               ? new Date(binding.expireAt * 1000).toISOString()
               : null,
-          } satisfies SessionFnosAttachment,
+          } satisfies SessionAppAttachment,
         ];
       })
       .sort((a, b) => {
@@ -725,6 +802,135 @@ export class AuthMobilitySessionManager {
       : this.buildBinding({
           subjectType: "fnos-token",
           subjectKey: fnosToken,
+          currentIp: clientIp,
+          expireAt: toUnixSeconds(session.expiresAt),
+          ownerSessionId: sessionId,
+        });
+
+    await this.r.set(storageKey, JSON.stringify(binding), "EX", ttlSeconds);
+    await this.r.sadd(this.sessionIndexKey(sessionId), storageKey);
+    const sessionTtl = this.resolveProxySessionTTL(
+      toUnixSeconds(session.expiresAt),
+    );
+    if (sessionTtl) {
+      await this.ensureSessionIndexTTL(sessionId, sessionTtl);
+    }
+  }
+
+  private async refreshTrimMediaBinding(
+    trimMediaToken: string,
+    clientIp: string,
+    sessionId: string | null,
+  ): Promise<void> {
+    const storageKey = this.bindingKey("trim-media-token", trimMediaToken);
+    let existing = await this.getBinding("trim-media-token", trimMediaToken);
+    if (!sessionId) {
+      if (existing?.ownerSessionId) {
+        const owner = await this.resolveSessionOwner(existing.ownerSessionId);
+        if (!owner) {
+          const orphanedBinding: MobilityBinding = {
+            ...existing,
+            ownerSessionId: undefined,
+            lastSeenAt: new Date().toISOString(),
+          };
+          const pipeline = this.r.pipeline();
+          pipeline.set(storageKey, JSON.stringify(orphanedBinding), "KEEPTTL");
+          pipeline.srem(
+            this.sessionIndexKey(existing.ownerSessionId),
+            storageKey,
+          );
+          await pipeline.exec();
+          existing = orphanedBinding;
+        } else {
+          const ttlSeconds = this.resolveFnosSessionTTL(
+            owner.ownerSession.expiresAt,
+          );
+          if (!ttlSeconds) return;
+
+          existing.currentIp = clientIp;
+          existing.expireAt = toUnixSeconds(owner.ownerSession.expiresAt);
+          existing.lastSeenAt = new Date().toISOString();
+          await this.r.set(
+            storageKey,
+            JSON.stringify(existing),
+            "EX",
+            ttlSeconds,
+          );
+          await this.r.sadd(
+            this.sessionIndexKey(owner.ownerSessionId),
+            storageKey,
+          );
+          await this.ensureSessionIndexTTL(
+            owner.ownerSessionId,
+            this.resolveProxySessionTTL(
+              toUnixSeconds(owner.ownerSession.expiresAt),
+            ) || ttlSeconds,
+          );
+          return;
+        }
+      }
+
+      const bootstrap = await this.resolveBootstrapOwner(clientIp);
+      if (!bootstrap) return;
+
+      const { ownerSessionId, ownerSession } = bootstrap;
+
+      const sessionTtl = this.resolveProxySessionTTL(
+        toUnixSeconds(ownerSession.expiresAt),
+      );
+      const trimMediaTtl = this.resolveFnosSessionTTL(ownerSession.expiresAt);
+      if (!sessionTtl || !trimMediaTtl) return;
+
+      const binding: MobilityBinding = existing
+        ? {
+            ...existing,
+            currentIp: clientIp,
+            expireAt: toUnixSeconds(ownerSession.expiresAt),
+            ownerSessionId,
+            lastSeenAt: new Date().toISOString(),
+          }
+        : this.buildBinding({
+            subjectType: "trim-media-token",
+            subjectKey: trimMediaToken,
+            currentIp: clientIp,
+            expireAt: toUnixSeconds(ownerSession.expiresAt),
+            ownerSessionId,
+          });
+
+      await this.r.set(storageKey, JSON.stringify(binding), "EX", trimMediaTtl);
+      await this.r.sadd(this.sessionIndexKey(ownerSessionId), storageKey);
+      await this.ensureSessionIndexTTL(ownerSessionId, sessionTtl);
+      return;
+    }
+
+    const session = await configManager.getSession(sessionId);
+    if (!session) return;
+
+    if (existing?.ownerSessionId && existing.ownerSessionId !== sessionId) {
+      const existingOwner = await configManager.getSession(
+        existing.ownerSessionId,
+      );
+      if (existingOwner) return;
+      await this.r.srem(
+        this.sessionIndexKey(existing.ownerSessionId),
+        storageKey,
+      );
+    }
+
+    const ttlSeconds = this.resolveFnosSessionTTL(session.expiresAt);
+    if (!ttlSeconds) return;
+
+    const binding: MobilityBinding = existing
+      ? {
+          ...existing,
+          currentIp: clientIp,
+          expireAt: toUnixSeconds(session.expiresAt),
+          ownerSessionId: sessionId,
+          lastSeenAt: new Date().toISOString(),
+        }
+      : this.buildBinding({
+          subjectType: "trim-media-token",
+          subjectKey: trimMediaToken,
           currentIp: clientIp,
           expireAt: toUnixSeconds(session.expiresAt),
           ownerSessionId: sessionId,
@@ -919,6 +1125,120 @@ export class AuthMobilitySessionManager {
     ];
 
     await ipLocationService.registerUsage(clientIp, usageRefs);
+
+    return true;
+  }
+
+  private async restoreTrimMediaToken(
+    trimMediaToken: string,
+    clientIp: string,
+  ): Promise<boolean> {
+    let binding = await this.getBinding("trim-media-token", trimMediaToken);
+    if (binding?.ownerSessionId) {
+      const owner = await this.resolveSessionOwner(binding.ownerSessionId);
+      if (!owner) {
+        const orphanedBinding: MobilityBinding = {
+          ...binding,
+          ownerSessionId: undefined,
+          lastSeenAt: new Date().toISOString(),
+        };
+        await this.r.srem(
+          this.sessionIndexKey(binding.ownerSessionId),
+          this.bindingKey("trim-media-token", trimMediaToken),
+        );
+        await this.r.set(
+          this.bindingKey("trim-media-token", trimMediaToken),
+          JSON.stringify(orphanedBinding),
+          "KEEPTTL",
+        );
+        binding = orphanedBinding;
+      }
+    }
+
+    if (!binding?.ownerSessionId) {
+      const bootstrap = await this.resolveBootstrapOwner(clientIp);
+      if (!bootstrap) return false;
+
+      const ttlSeconds = this.resolveFnosSessionTTL(
+        bootstrap.ownerSession.expiresAt,
+      );
+      if (!ttlSeconds) return false;
+
+      binding = binding
+        ? {
+            ...binding,
+            currentIp: clientIp,
+            expireAt: toUnixSeconds(bootstrap.ownerSession.expiresAt),
+            ownerSessionId: bootstrap.ownerSessionId,
+            lastSeenAt: new Date().toISOString(),
+          }
+        : this.buildBinding({
+            subjectType: "trim-media-token",
+            subjectKey: trimMediaToken,
+            currentIp: clientIp,
+            expireAt: toUnixSeconds(bootstrap.ownerSession.expiresAt),
+            ownerSessionId: bootstrap.ownerSessionId,
+          });
+
+      await this.r.set(
+        this.bindingKey("trim-media-token", trimMediaToken),
+        JSON.stringify(binding),
+        "EX",
+        ttlSeconds,
+      );
+      await this.r.sadd(
+        this.sessionIndexKey(bootstrap.ownerSessionId),
+        this.bindingKey("trim-media-token", trimMediaToken),
+      );
+      const sessionTtl = this.resolveProxySessionTTL(
+        toUnixSeconds(bootstrap.ownerSession.expiresAt),
+      );
+      if (sessionTtl) {
+        await this.ensureSessionIndexTTL(bootstrap.ownerSessionId, sessionTtl);
+      }
+    }
+
+    const ownerSessionId = binding.ownerSessionId;
+    if (!ownerSessionId) return false;
+
+    const owner = await this.resolveSessionOwner(ownerSessionId);
+    if (!owner) return false;
+    const ownerSession = owner.ownerSession;
+
+    const ttlSeconds = this.resolveFnosSessionTTL(ownerSession.expiresAt);
+    if (!ttlSeconds) return false;
+
+    const nextIpLocation = clientIp
+      ? await ipLocationService.getCachedLocation(clientIp)
+      : "";
+    binding.currentIp = clientIp;
+    binding.expireAt = toUnixSeconds(ownerSession.expiresAt);
+    binding.lastSeenAt = new Date().toISOString();
+    await this.r.set(
+      this.bindingKey("trim-media-token", trimMediaToken),
+      JSON.stringify(binding),
+      "EX",
+      ttlSeconds,
+    );
+
+    const updatedSession = await this.syncSessionIp({
+      sessionId: ownerSessionId,
+      clientIp,
+      // Reuse the existing FNOS fingerprint drift bucket for UI and events.
+      source: "fnos-token",
+      ...(nextIpLocation ? { ipLocation: nextIpLocation } : {}),
+      syncReason: "trim-media-token-restore",
+    });
+    const sessionTtl = this.resolveProxySessionTTL(
+      toUnixSeconds(updatedSession?.expiresAt),
+    );
+    if (updatedSession && sessionTtl) {
+      await this.ensureSessionIndexTTL(ownerSessionId, sessionTtl);
+      await this.r.sadd(
+        this.sessionIndexKey(ownerSessionId),
+        this.bindingKey("trim-media-token", trimMediaToken),
+      );
+    }
 
     return true;
   }

@@ -6,12 +6,27 @@ import {
   PopoverContent,
 } from "@/components/ui/popover";
 import fnosIconUrl from "@/assets/fnos.png";
-import type { SessionFnosAttachmentRecord } from "../../types";
+import type { SessionAppAttachmentRecord } from "../../types";
 import { formatHumanFriendlyTime } from "@admin-shared/utils/formatHumanFriendlyTime";
 
-const props = defineProps<{
-  attachments: SessionFnosAttachmentRecord[];
-}>();
+const props = withDefaults(
+  defineProps<{
+    attachments: SessionAppAttachmentRecord[];
+    iconUrl?: string;
+    iconAlt?: string;
+    title?: string;
+    triggerLabel?: string;
+    itemLabel?: string;
+    footerText?: string;
+  }>(),
+  {
+    iconAlt: "飞牛",
+    title: "附着的飞牛token",
+    triggerLabel: "飞牛token",
+    itemLabel: "token",
+    footerText: "包括网页与飞牛App的会话附着都会在此显示",
+  },
+);
 
 const open = ref(false);
 const isTouchInteraction = ref(false);
@@ -28,6 +43,8 @@ const orderedAttachments = computed(() => {
 });
 
 const attachmentCount = computed(() => orderedAttachments.value.length);
+
+const resolvedIconUrl = computed(() => props.iconUrl || fnosIconUrl);
 
 const updateInteractionMode = () => {
   if (typeof window === "undefined") {
@@ -177,15 +194,15 @@ onUnmounted(() => {
       <button
         type="button"
         class="relative inline-flex h-7 w-7 shrink-0 items-center justify-center transition hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70 touch-manipulation"
-        :aria-label="`查看已 attach 的飞牛 token（${attachmentCount} 个）`"
+        :aria-label="`查看已 attach 的${props.triggerLabel}（${attachmentCount} 个）`"
         :aria-expanded="open"
         @mouseenter="handleTriggerEnter"
         @mouseleave="handleTriggerLeave"
         @click="handleTriggerClick"
       >
         <img
-          :src="fnosIconUrl"
-          alt="飞牛"
+          :src="resolvedIconUrl"
+          :alt="props.iconAlt"
           class="h-4 w-4 rounded-[4px] object-contain"
         />
         <span
@@ -206,11 +223,11 @@ onUnmounted(() => {
     >
       <div class="flex items-center gap-2">
         <img
-          :src="fnosIconUrl"
-          alt="飞牛"
+          :src="resolvedIconUrl"
+          :alt="props.iconAlt"
           class="h-4 w-4 rounded-[4px] object-contain"
         />
-        <div class="text-sm font-medium">附着的飞牛token</div>
+        <div class="text-sm font-medium">{{ props.title }}</div>
         <div class="ml-auto text-xs text-muted-foreground">
           {{ attachmentCount }} 个
         </div>
@@ -223,7 +240,9 @@ onUnmounted(() => {
           class="border-t border-border/60 pt-2 first:border-t-0 first:pt-0"
         >
           <div class="flex items-center justify-between gap-2">
-            <div class="text-xs font-medium">token {{ index + 1 }}</div>
+            <div class="text-xs font-medium">
+              {{ props.itemLabel }} {{ index + 1 }}
+            </div>
             <div class="text-[11px] text-muted-foreground">
               活跃 {{ formatRelativeTime(attachment.lastSeenAt) }}
             </div>
@@ -247,9 +266,10 @@ onUnmounted(() => {
       </div>
 
       <div
+        v-if="props.footerText"
         class="mt-2 border-t border-border/60 pt-2 text-[11px] text-muted-foreground"
       >
-        包括网页与飞牛App的会话附着都会在此显示
+        {{ props.footerText }}
       </div>
     </PopoverContent>
   </Popover>

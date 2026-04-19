@@ -579,7 +579,7 @@ export type SessionMobilityDetails = {
   events: SessionMobilityEvent[];
 };
 
-export type SessionFnosAttachmentRecord = {
+export type SessionAppAttachmentRecord = {
   subjectHash: string;
   currentIp: string;
   createdAt: string;
@@ -587,10 +587,14 @@ export type SessionFnosAttachmentRecord = {
   expiresAt: string | null;
 };
 
+export type SessionFnosAttachmentRecord = SessionAppAttachmentRecord;
+export type SessionTrimMediaAttachmentRecord = SessionAppAttachmentRecord;
+
 export type SessionRecord = LoginSession & {
   id: string;
   mobility?: SessionMobilitySummary;
   fnosAttachments?: SessionFnosAttachmentRecord[];
+  trimMediaAttachments?: SessionTrimMediaAttachmentRecord[];
 };
 
 export type ProxyProtocolForce = {

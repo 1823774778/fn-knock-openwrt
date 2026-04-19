@@ -2486,15 +2486,18 @@ export const adminRoutes = new Elysia({
       const mapped = await Promise.all(
         list.map(async ({ id, data }) => {
           const session = await ensureSessionComment(id, data);
-          const [mobility, fnosAttachments] = await Promise.all([
+          const [mobility, fnosAttachments, trimMediaAttachments] =
+            await Promise.all([
             authMobilitySessionManager.getSessionMobilitySummary(id),
             authMobilitySessionManager.listSessionFnosAttachments(id),
+            authMobilitySessionManager.listSessionTrimMediaAttachments(id),
           ]);
           return {
             id,
             ...session,
             mobility,
             fnosAttachments,
+            trimMediaAttachments,
           };
         }),
       );
@@ -2514,15 +2517,18 @@ export const adminRoutes = new Elysia({
         return { success: false, message: "Session not found" };
       }
       const session = await ensureSessionComment(params.id, sess);
-      const [mobility, fnosAttachments] = await Promise.all([
+      const [mobility, fnosAttachments, trimMediaAttachments] =
+        await Promise.all([
         authMobilitySessionManager.getSessionMobilitySummary(params.id),
         authMobilitySessionManager.listSessionFnosAttachments(params.id),
+        authMobilitySessionManager.listSessionTrimMediaAttachments(params.id),
       ]);
       const record = {
         id: params.id,
         ...session,
         mobility,
         fnosAttachments,
+        trimMediaAttachments,
       };
       await ipLocationService.hydrateIpLocationRecords([record], (session) =>
         ipLocationRefs.session(session.id),
