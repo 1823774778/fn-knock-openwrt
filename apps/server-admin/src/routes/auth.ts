@@ -1,7 +1,11 @@
 import { Elysia, t } from "elysia";
 import { configManager } from "../lib/redis";
 import { verifySync } from "otplib";
-import { getRpInfo, handleLoginSuccess } from "../lib/auth-utils";
+import {
+  buildPasskeyBindInfo,
+  getRpInfo,
+  handleLoginSuccess,
+} from "../lib/auth-utils";
 import {
   applyNoStoreHeaders,
   applyAuthResponseHeaders,
@@ -315,6 +319,10 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
         request,
         redirectUri: body.redirect_uri,
       });
+      const passkeyInfo =
+        config.auth_credential_settings?.passkey_bind_prompt_enabled === false
+          ? undefined
+          : await buildPasskeyBindInfo(matchedTotpId);
       return await handleLoginSuccess({
         config,
         request,
@@ -326,6 +334,7 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
         rememberMe: body.rememberMe,
         set,
         totpId: matchedTotpId,
+        passkeyInfo,
         redirectTo,
       });
     },

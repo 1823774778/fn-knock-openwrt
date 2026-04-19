@@ -455,6 +455,7 @@ export interface AuthCredentialSettings {
   remember_me_ttl_seconds: number;
   post_login_ip_grant_mode: PostLoginIpGrantMode;
   post_login_ip_grant_ttl_seconds: number | null;
+  passkey_bind_prompt_enabled: boolean;
 }
 
 export const DEFAULT_AUTH_CREDENTIAL_SETTINGS: AuthCredentialSettings = {
@@ -462,6 +463,7 @@ export const DEFAULT_AUTH_CREDENTIAL_SETTINGS: AuthCredentialSettings = {
   remember_me_ttl_seconds: 365 * 24 * 3600,
   post_login_ip_grant_mode: "follow_session",
   post_login_ip_grant_ttl_seconds: 3600,
+  passkey_bind_prompt_enabled: true,
 };
 
 const DEFAULT_GATEWAY_LOGGING_SETTINGS: GatewayLoggingSettings = {
@@ -1257,6 +1259,10 @@ const normalizeAuthCredentialSettings = (
     post_login_ip_grant_mode: postLoginIpGrantMode,
     post_login_ip_grant_ttl_seconds:
       postLoginIpGrantMode === "custom" ? postLoginIpGrantTtlSeconds : null,
+    passkey_bind_prompt_enabled:
+      typeof raw.passkey_bind_prompt_enabled === "boolean"
+        ? raw.passkey_bind_prompt_enabled
+        : DEFAULT_AUTH_CREDENTIAL_SETTINGS.passkey_bind_prompt_enabled,
   };
 };
 

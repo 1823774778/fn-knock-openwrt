@@ -15,6 +15,7 @@ import { ChevronRight } from "lucide-vue-next";
 import { toast } from "@admin-shared/utils/toast";
 import { ConfigAPI, SystemAPI } from "../../lib/api";
 import type {
+  AuthCredentialSettings,
   DashboardDisplayConfig,
   ProtocolMappingFeatureConfig,
 } from "../../types";
@@ -28,6 +29,7 @@ import { useConfigStore } from "../../store/config";
 const router = useRouter();
 const configStore = useConfigStore();
 const protocolMappingEnabled = ref(false);
+const passkeyBindPromptEnabled = ref(true);
 const showEntryStatusModule = ref(true);
 const runTypeLabelMap = {
   0: "直连模式",
@@ -85,6 +87,10 @@ const applyProtocolMappingSettings = (data: ProtocolMappingFeatureConfig) => {
   protocolMappingEnabled.value = data.enabled;
 };
 
+const applyAuthCredentialSettings = (data: AuthCredentialSettings) => {
+  passkeyBindPromptEnabled.value = data.passkey_bind_prompt_enabled !== false;
+};
+
 const applyDashboardDisplaySettings = (data: DashboardDisplayConfig) => {
   showEntryStatusModule.value = data.show_entry_status_module;
 };
@@ -102,9 +108,13 @@ const syncDashboardDisplayFromConfig = () => {
 
 const fetchSettings = async () => {
   await runLoadSettings(async () => {
-    const protocolMappingSettings =
-      await SystemAPI.getProtocolMappingFeatureConfig();
+    const [protocolMappingSettings, authCredentialSettings] =
+      await Promise.all([
+        SystemAPI.getProtocolMappingFeatureConfig(),
+        ConfigAPI.getAuthCredentialSettings(),
+      ]);
     applyProtocolMappingSettings(protocolMappingSettings);
+    applyAuthCredentialSettings(authCredentialSettings);
   });
 };
 
@@ -159,6 +169,33 @@ const saveShowEntryStatusModule = async (nextValue: boolean) => {
 
   if (!result) {
     showEntryStatusModule.value = previousValue;
+  }
+};
+
+const savePasskeyBindPromptEnabled = async (nextValue: boolean) => {
+  if (isSaving.value) {
+    return;
+  }
+
+  const previousValue = passkeyBindPromptEnabled.value;
+  passkeyBindPromptEnabled.value = nextValue;
+
+  const result = await runSaveSettings(
+    () =>
+      ConfigAPI.updateAuthCredentialSettings({
+        passkey_bind_prompt_enabled: nextValue,
+      }),
+    {
+      onSuccess: async (data) => {
+        applyAuthCredentialSettings(data);
+        toast.success("功能设置已更新");
+        await configStore.loadConfig();
+      },
+    },
+  );
+
+  if (!result) {
+    passkeyBindPromptEnabled.value = previousValue;
   }
 };
 
@@ -229,6 +266,25 @@ watch(
           :model-value="showEntryStatusModule"
           :disabled="isDashboardDisplaySwitchDisabled"
           @update:model-value="saveShowEntryStatusModule($event === true)"
+        />
+      </div>
+
+      <div class="flex items-center justify-between bg-muted/10 p-6">
+        <div class="space-y-1 pr-6">
+          <Label
+            class="cursor-pointer text-base font-medium"
+            @click="savePasskeyBindPromptEnabled(!passkeyBindPromptEnabled)"
+          >
+            登录后提示绑定 Passkey
+          </Label>
+          <div class="text-sm text-muted-foreground">
+            关闭后，AUTH 登录成功后将不再弹出 Passkey 绑定提示
+          </div>
+        </div>
+        <Switch
+          :model-value="passkeyBindPromptEnabled"
+          :disabled="isSaving"
+          @update:model-value="savePasskeyBindPromptEnabled($event === true)"
         />
       </div>
 

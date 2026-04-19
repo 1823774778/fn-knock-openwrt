@@ -682,15 +682,6 @@ async function hasKnownPasskeyCredential(credentialIds: unknown) {
   return false;
 }
 
-async function fetchPasskeyBindInfo() {
-  try {
-    const res = await apiClient.post("/passkey/bind-token");
-    return res.data.success ? res.data.data : null;
-  } catch {
-    return null;
-  }
-}
-
 function persistPasskeyBindPromptPreference() {
   if (typeof window === "undefined") {
     return;
@@ -761,9 +752,7 @@ async function handleLogin() {
         typeof res.data.data?.redirect_to === "string"
           ? res.data.data.redirect_to
           : null;
-      const passkey = isPasskeySupported.value
-        ? await fetchPasskeyBindInfo()
-        : null;
+      const passkey = isPasskeySupported.value ? res.data.data?.passkey : null;
       if (
         isPasskeySupported.value &&
         passkey?.can_bind &&

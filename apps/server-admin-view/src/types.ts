@@ -298,6 +298,7 @@ export interface AuthCredentialSettings {
   remember_me_ttl_seconds: number;
   post_login_ip_grant_mode: PostLoginIpGrantMode;
   post_login_ip_grant_ttl_seconds: number | null;
+  passkey_bind_prompt_enabled: boolean;
 }
 
 export interface GatewayLogEntry {

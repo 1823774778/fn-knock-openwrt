@@ -1665,6 +1665,7 @@ export const adminRoutes = new Elysia({
         post_login_ip_grant_ttl_seconds: t.Optional(
           t.Union([t.Number(), t.Null()]),
         ),
+        passkey_bind_prompt_enabled: t.Optional(t.Boolean()),
       }),
     }),
   )
