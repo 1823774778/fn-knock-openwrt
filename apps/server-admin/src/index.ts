@@ -616,18 +616,20 @@ app.use(
     name: "whitelist-expiry-check",
     pattern: "* * * * *",
     run() {
-      void whitelistManager
-        .processExpiredRecords()
-        .then((changed) => {
-          if (!changed) return;
+      void Promise.all([
+        whitelistManager.processExpiredRecords(),
+        whitelistManager.processDueCnameRecords(),
+      ])
+        .then(([expiredChanged, cnameChanged]) => {
+          if (!expiredChanged && !cnameChanged) return;
           scheduleSyncReverseProxyTrustedIPs({
-            reason: "whitelist-expiry",
+            reason: expiredChanged ? "whitelist-expiry" : "whitelist-cname-refresh",
             delayMs: 50,
           });
         })
         .catch((error) => {
           console.error(
-            "[reverse-proxy-trusted-ips] failed to process whitelist expiry:",
+            "[reverse-proxy-trusted-ips] failed to process whitelist maintenance:",
             error,
           );
         });

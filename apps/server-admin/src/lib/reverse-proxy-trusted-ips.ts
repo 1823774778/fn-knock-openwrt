@@ -46,12 +46,12 @@ const toGatewayPayload = (
 export const compileReverseProxyTrustedIPsRuntimeState = async (
   config?: Pick<AppConfig, "reverse_proxy_throttle">,
 ): Promise<ReverseProxyTrustedIPRuntimeState> => {
-  const [reverseProxyThrottle, sessions, whitelistRecords] = await Promise.all([
+  const [reverseProxyThrottle, sessions, whitelistTargets] = await Promise.all([
     config?.reverse_proxy_throttle
       ? Promise.resolve(config.reverse_proxy_throttle)
       : configManager.getReverseProxyThrottleConfig(),
     configManager.listSessions(),
-    whitelistManager.getAllActiveRecords(),
+    whitelistManager.getAllActiveConcreteTargets(),
   ]);
   const sourceMap = new Map<string, Set<string>>();
   const sessionLinkedAutoWhitelistFinalIpByRecordId = new Map<string, string>();
@@ -70,21 +70,21 @@ export const compileReverseProxyTrustedIPsRuntimeState = async (
     }
   }
 
-  for (const record of whitelistRecords) {
-    if (record.targetType === "cidr") {
-      cidrs.push(record.ip);
+  for (const entry of whitelistTargets) {
+    if (entry.targetType === "cidr") {
+      cidrs.push(entry.target);
       continue;
     }
 
     const compiledIp =
-      record.source === "auto"
-        ? (sessionLinkedAutoWhitelistFinalIpByRecordId.get(record.id) ??
-          record.ip)
-        : record.ip;
+      entry.source === "auto" && entry.recordTargetType === "ip"
+        ? (sessionLinkedAutoWhitelistFinalIpByRecordId.get(entry.recordId) ??
+          entry.target)
+        : entry.target;
     addSourceForIp(
       sourceMap,
       compiledIp,
-      `whitelist:${record.source}:${record.id}`,
+      `whitelist:${entry.source}:${entry.recordId}`,
     );
   }
 

@@ -2,10 +2,10 @@
   <Card class="mb-6">
     <CardHeader>
       <CardTitle class="flex justify-between items-center">
-        <span>IP白名单管理</span>
+        <span>白名单管理</span>
         <div class="flex items-center gap-2">
           <DocsLinkButton :href="docsUrls.guides.whitelist" />
-          <Button @click="showAddDialog = true">添加 IP</Button>
+          <Button @click="showAddDialog = true">添加目标</Button>
         </div>
       </CardTitle>
       <CardDescription>{{ pageDescription }}</CardDescription>
@@ -14,7 +14,7 @@
       <div class="flex items-center mb-4 space-x-2" v-if="!isInitializing">
         <SearchInput
           v-model="searchQuery"
-          placeholder="搜索IP地址或备注..."
+          placeholder="搜索目标、解析IP或备注..."
           class="max-w-xs"
         />
         <RefreshButton
@@ -42,7 +42,7 @@
               <TableHead>来源</TableHead>
               <TableHead>创建时间</TableHead>
               <TableHead>备注</TableHead>
-              <TableHead class="w-[100px] text-right">操作</TableHead>
+              <TableHead class="w-[180px] text-right">操作</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -67,8 +67,39 @@
                 <div class="flex items-center gap-2">
                   <span>{{ record.ip }}</span>
                   <Badge variant="outline">
-                    {{ record.targetType === "cidr" ? "CIDR" : "IP" }}
+                    {{
+                      record.targetType === "cidr"
+                        ? "CIDR"
+                        : record.targetType === "cname"
+                          ? "CNAME"
+                          : "IP"
+                    }}
                   </Badge>
+                </div>
+                <div
+                  v-if="record.targetType === 'cname'"
+                  class="mt-2 space-y-1"
+                >
+                  <div
+                    v-for="resolvedTarget in record.resolvedTargets || []"
+                    :key="resolvedTarget"
+                  >
+                    <Badge variant="secondary" class="font-normal">
+                      {{ resolvedTarget }}
+                    </Badge>
+                  </div>
+                  <span
+                    v-if="!(record.resolvedTargets || []).length"
+                    class="block text-xs text-muted-foreground"
+                  >
+                    当前未解析到 A / AAAA 记录
+                  </span>
+                </div>
+                <div
+                  v-if="record.targetType === 'cname' && record.resolveMessage"
+                  class="text-xs text-muted-foreground mt-1"
+                >
+                  {{ record.resolveMessage }}
                 </div>
                 <div
                   v-if="record.ipLocation"
@@ -78,19 +109,52 @@
                 </div>
               </TableCell>
               <TableCell>
-                <div
-                  v-if="!record.expireAt"
-                  class="flex items-center text-green-600"
-                >
-                  <ShieldCheck class="w-4 h-4 mr-1" />
-                  永久
-                </div>
-                <div v-else class="flex flex-col">
-                  <span>{{ formatRemaining(record.expireAt) }}</span>
-                  <span class="text-xs text-muted-foreground"
-                    >过期于: <HumanFriendlyTime :value="record.expireAt * 1000"
-                  /></span>
-                </div>
+                <template v-if="record.targetType === 'cname'">
+                  <div class="flex flex-col items-start gap-1.5">
+                    <Badge :variant="getResolveStatusVariant(record)">
+                      {{ getResolveStatusLabel(record) }}
+                    </Badge>
+                    <span class="text-xs text-muted-foreground">
+                      检查周期：{{ record.checkIntervalMinutes || 5 }} 分钟
+                    </span>
+                    <span
+                      v-if="record.lastCheckedAt"
+                      class="text-xs text-muted-foreground"
+                    >
+                      上次检查:
+                      <HumanFriendlyTime :value="record.lastCheckedAt * 1000" />
+                    </span>
+                    <span
+                      v-if="record.expireAt"
+                      class="text-xs text-muted-foreground"
+                    >
+                      过期于:
+                      <HumanFriendlyTime :value="record.expireAt * 1000" />
+                    </span>
+                    <div
+                      v-else
+                      class="flex items-center text-green-600 text-sm"
+                    >
+                      <ShieldCheck class="w-4 h-4 mr-1" />
+                      永久
+                    </div>
+                  </div>
+                </template>
+                <template v-else>
+                  <div
+                    v-if="!record.expireAt"
+                    class="flex items-center text-green-600"
+                  >
+                    <ShieldCheck class="w-4 h-4 mr-1" />
+                    永久
+                  </div>
+                  <div v-else class="flex flex-col">
+                    <span>{{ formatRemaining(record.expireAt) }}</span>
+                    <span class="text-xs text-muted-foreground"
+                      >过期于: <HumanFriendlyTime :value="record.expireAt * 1000"
+                    /></span>
+                  </div>
+                </template>
               </TableCell>
               <TableCell>
                 <Badge
@@ -113,25 +177,42 @@
                 />
               </TableCell>
               <TableCell class="text-right">
-                <ConfirmDangerPopover
-                  title="确认删除?"
-                  :description="`您即将从白名单中删除 ${record.ip}，此操作不可逆转。`"
-                  :loading="removingId === record.id"
-                  :disabled="removingId === record.id"
-                  :on-confirm="() => removeRecord(record.id)"
-                  content-class="w-60 text-left"
-                >
-                  <template #trigger>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      class="h-8 w-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                      :disabled="removingId === record.id"
-                    >
-                      <Trash2 class="h-4 w-4" />
-                    </Button>
-                  </template>
-                </ConfirmDangerPopover>
+                <div class="flex justify-end gap-2">
+                  <Button
+                    v-if="record.targetType === 'cname'"
+                    variant="outline"
+                    size="sm"
+                    :disabled="refreshingId === record.id"
+                    @click="refreshRecord(record.id)"
+                  >
+                    <RefreshCw
+                      :class="[
+                        'h-4 w-4 mr-1',
+                        refreshingId === record.id ? 'animate-spin' : '',
+                      ]"
+                    />
+                    立即更新
+                  </Button>
+                  <ConfirmDangerPopover
+                    title="确认删除?"
+                    :description="`您即将从白名单中删除 ${record.ip}，此操作不可逆转。`"
+                    :loading="removingId === record.id"
+                    :disabled="removingId === record.id"
+                    :on-confirm="() => removeRecord(record.id)"
+                    content-class="w-60 text-left"
+                  >
+                    <template #trigger>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        class="h-8 w-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                        :disabled="removingId === record.id"
+                      >
+                        <Trash2 class="h-4 w-4" />
+                      </Button>
+                    </template>
+                  </ConfirmDangerPopover>
+                </div>
               </TableCell>
             </TableRow>
           </TableBody>
@@ -146,7 +227,7 @@
               <TableHead>来源</TableHead>
               <TableHead>创建时间</TableHead>
               <TableHead>备注</TableHead>
-              <TableHead class="w-[100px] text-right">操作</TableHead>
+              <TableHead class="w-[180px] text-right">操作</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -182,7 +263,7 @@
       <DialogHeader>
         <DialogTitle>添加白名单目标</DialogTitle>
         <DialogDescription>
-          请输入您希望允许访问的 IP 或 CIDR 及可选配置。
+          请输入您希望允许访问的 IP、CIDR 或域名及可选配置。
         </DialogDescription>
       </DialogHeader>
       <div class="grid gap-4 py-4">
@@ -195,6 +276,7 @@
             <SelectContent>
               <SelectItem value="ip">单个 IP</SelectItem>
               <SelectItem value="cidr">CIDR 网段</SelectItem>
+              <SelectItem value="cname">域名 / CNAME</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -207,6 +289,27 @@
             :placeholder="newRecordPlaceholder"
             class="col-span-3"
           />
+        </div>
+
+        <div
+          v-if="newRecord.targetType === 'cname'"
+          class="grid grid-cols-4 items-center gap-4"
+        >
+          <Label for="checkIntervalMinutes" class="text-right"
+            >检查周期</Label
+          >
+          <div class="col-span-3 flex items-center gap-2">
+            <Input
+              id="checkIntervalMinutes"
+              type="number"
+              min="1"
+              v-model.number="newRecord.checkIntervalMinutes"
+              placeholder="默认 5"
+            />
+            <span class="text-sm text-muted-foreground whitespace-nowrap"
+              >分钟</span
+            >
+          </div>
         </div>
 
         <div class="grid grid-cols-4 items-center gap-4">
@@ -300,7 +403,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ShieldCheck, Trash2 } from "lucide-vue-next";
+import { RefreshCw, ShieldCheck, Trash2 } from "lucide-vue-next";
 import RefreshButton from "@/components/RefreshButton.vue";
 import DocsLinkButton from "@/components/DocsLinkButton.vue";
 import { toast } from "@admin-shared/utils/toast";
@@ -324,10 +427,11 @@ const isInitializing = ref(true);
 const showInitializingSkeleton = useDelayedLoading(isInitializing);
 const pageDescription = computed(
   () =>
-    "查看手动白名单与登录后自动授权记录。直连模式下，这些 IP / CIDR 也会同步到系统防火墙。",
+    "查看手动白名单与登录后自动授权记录。直连模式下，这些 IP / CIDR / 域名解析结果也会同步到系统防火墙。",
 );
 
 const removingId = ref<string | null>(null);
+const refreshingId = ref<string | null>(null);
 const { run: runRemoveRecord } = useAsyncAction({
   onError: (error) => {
     toast.error("删除发生网络错误", {
@@ -337,6 +441,13 @@ const { run: runRemoveRecord } = useAsyncAction({
 });
 const { run: runSaveComment } = useAsyncAction({
   rethrow: true,
+});
+const { run: runRefreshRecord } = useAsyncAction({
+  onError: (error) => {
+    toast.error("立即更新发生网络错误", {
+      description: extractErrorMessage(error, "立即更新失败"),
+    });
+  },
 });
 const { isPending: loading, run: runFetchRecords } = useAsyncAction({
   onError: (error) => {
@@ -359,13 +470,16 @@ const durationSetting = ref("permanent");
 const customHours = ref(24);
 const newRecord = ref({
   ip: "",
-  targetType: "ip" as "ip" | "cidr",
+  targetType: "ip" as "ip" | "cidr" | "cname",
+  checkIntervalMinutes: 5,
   comment: "",
 });
 const newRecordPlaceholder = computed(() =>
   newRecord.value.targetType === "cidr"
     ? "例如：203.0.113.0/24"
-    : "例如：203.0.113.10",
+    : newRecord.value.targetType === "cname"
+      ? "例如：access.example.com"
+      : "例如：203.0.113.10",
 );
 
 const fetchRecords = async () => {
@@ -414,9 +528,44 @@ const {
   items: records,
   normalizeQuery: (q) => q.toLowerCase(),
   filter: (record, query) =>
-    record.ip.includes(query) ||
-    Boolean(record.comment?.toLowerCase().includes(query)),
+    record.ip.toLowerCase().includes(query) ||
+    Boolean(record.comment?.toLowerCase().includes(query)) ||
+    Boolean(
+      record.resolvedTargets?.some((target) => target.toLowerCase().includes(query)),
+    ),
 });
+
+const replaceRecord = (nextRecord: WhiteListRecord) => {
+  const index = records.value.findIndex((record) => record.id === nextRecord.id);
+  if (index < 0) return;
+  records.value.splice(index, 1, nextRecord);
+};
+
+const getResolveStatusLabel = (record: WhiteListRecord) => {
+  switch (record.resolveStatus) {
+    case "resolved":
+      return "解析成功";
+    case "empty":
+      return "无解析结果";
+    case "error":
+      return "解析异常";
+    default:
+      return "待首次检查";
+  }
+};
+
+const getResolveStatusVariant = (record: WhiteListRecord) => {
+  switch (record.resolveStatus) {
+    case "resolved":
+      return "default";
+    case "empty":
+      return "secondary";
+    case "error":
+      return "destructive";
+    default:
+      return "outline";
+  }
+};
 
 const formatRemaining = (expireAt: number) => {
   const now = Math.floor(Date.now() / 1000);
@@ -443,6 +592,16 @@ const addRecord = async () => {
   if (newRecord.value.targetType === "cidr" && !isValidCIDR(ip)) {
     toast.error("CIDR 格式不正确", {
       description: "请输入类似 203.0.113.0/24 或 2001:db8::/32 的网段。",
+    });
+    return;
+  }
+  if (
+    newRecord.value.targetType === "cname" &&
+    (!Number.isFinite(newRecord.value.checkIntervalMinutes) ||
+      newRecord.value.checkIntervalMinutes < 1)
+  ) {
+    toast.error("检查周期不正确", {
+      description: "请输入大于等于 1 的分钟数。",
     });
     return;
   }
@@ -476,12 +635,21 @@ const addRecord = async () => {
       expireAt,
       source: "manual",
       comment: newRecord.value.comment.trim() || undefined,
+      checkIntervalMinutes:
+        newRecord.value.targetType === "cname"
+          ? Math.floor(newRecord.value.checkIntervalMinutes || 5)
+          : undefined,
     });
 
     if (res.success) {
       toast.success("已成功添加白名单");
       showAddDialog.value = false;
-      newRecord.value = { ip: "", targetType: "ip", comment: "" };
+      newRecord.value = {
+        ip: "",
+        targetType: "ip",
+        checkIntervalMinutes: 5,
+        comment: "",
+      };
       durationSetting.value = "permanent";
       currentPage.value = 1;
       searchQuery.value = "";
@@ -510,6 +678,41 @@ const removeRecord = async (id: string) => {
     {
       onFinally: () => {
         removingId.value = null;
+      },
+    },
+  );
+};
+
+const refreshRecord = async (id: string) => {
+  refreshingId.value = id;
+  await runRefreshRecord(
+    async () => {
+      const res = await WhitelistAPI.refreshRecord(id);
+      const result = res.data;
+      const nextRecord = result?.record;
+      if (nextRecord) {
+        replaceRecord(nextRecord);
+      }
+
+      if (!res.success || !result || !nextRecord || nextRecord.resolveStatus === "error") {
+        toast.error("立即更新失败", {
+          description:
+            res.message ||
+            nextRecord?.resolveMessage ||
+            "域名白名单记录更新失败",
+        });
+        return;
+      }
+
+      toast.success("已立即更新域名解析", {
+        description: result.changed
+          ? "白名单中的实际 IP 已同步刷新。"
+          : "域名状态已刷新，当前解析 IP 未变化。",
+      });
+    },
+    {
+      onFinally: () => {
+        refreshingId.value = null;
       },
     },
   );

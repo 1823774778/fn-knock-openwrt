@@ -25,6 +25,7 @@ export const whitelistRoutes = new Elysia({
           expireAt: body.expireAt,
           source: body.source,
           comment: body.comment,
+          checkIntervalMinutes: body.checkIntervalMinutes,
         });
         scheduleSyncReverseProxyTrustedIPs({ reason: "whitelist-add" });
         return { success: true, data: { id } };
@@ -39,10 +40,13 @@ export const whitelistRoutes = new Elysia({
     withRouteDoc("新增白名单记录", {
       body: t.Object({
         ip: t.String(),
-        targetType: t.Optional(t.Union([t.Literal("ip"), t.Literal("cidr")])),
+        targetType: t.Optional(
+          t.Union([t.Literal("ip"), t.Literal("cidr"), t.Literal("cname")]),
+        ),
         expireAt: t.Union([t.Number(), t.Null()]),
         source: t.Union([t.Literal("manual"), t.Literal("auto")]),
         comment: t.Optional(t.String()),
+        checkIntervalMinutes: t.Optional(t.Number()),
       }),
     }),
   )
@@ -82,6 +86,53 @@ export const whitelistRoutes = new Elysia({
       }),
       body: t.Object({
         comment: t.String(),
+      }),
+    }),
+  )
+  .post(
+    "/:id/refresh",
+    async ({ params, set }) => {
+      try {
+        const result = await whitelistManager.refreshCnameRecord(params.id, {
+          force: true,
+        });
+        if (!result) {
+          set.status = 404;
+          return { success: false, message: "Record not found" };
+        }
+
+        if (result.changed) {
+          scheduleSyncReverseProxyTrustedIPs({ reason: "whitelist-refresh" });
+        }
+        if (result.record.resolveStatus === "error") {
+          return {
+            success: false,
+            message: result.record.resolveMessage || "域名解析失败",
+            data: result,
+          };
+        }
+        if (result.syncError) {
+          return {
+            success: false,
+            message: result.syncError,
+            data: result,
+          };
+        }
+        return {
+          success: true,
+          data: result,
+        };
+      } catch (error: any) {
+        set.status = 400;
+        return {
+          success: false,
+          message: error?.message || "立即更新白名单记录失败",
+        };
+      }
+    },
+    withRouteDoc("立即更新域名白名单记录", {
+      params: t.Object({
+        id: t.String(),
       }),
     }),
   );

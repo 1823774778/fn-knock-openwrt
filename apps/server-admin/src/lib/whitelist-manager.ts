@@ -1,4 +1,5 @@
 import type Redis from "ioredis";
+import { resolve4, resolve6 } from "node:dns/promises";
 import { v4 as uuidv4 } from "uuid";
 import { goBackend } from "./go-backend";
 import { configManager, redis } from "./redis";
@@ -22,9 +23,42 @@ export interface WhiteListRecord {
   comment?: string;
   status: "active" | "expired" | "deleted";
   ipLocation?: string;
+  resolvedTargets?: string[];
+  checkIntervalMinutes?: number | null;
+  lastCheckedAt?: number | null;
+  lastResolvedAt?: number | null;
+  resolveStatus?: "pending" | "resolved" | "empty" | "error";
+  resolveMessage?: string;
 }
 
+export interface WhiteListConcreteTargetRecord {
+  recordId: string;
+  recordTarget: string;
+  recordTargetType: WhiteListTargetType;
+  source: WhiteListRecord["source"];
+  target: string;
+  targetType: "ip" | "cidr";
+}
+
+type WhiteListAddInput = Pick<
+  WhiteListRecord,
+  "ip" | "expireAt" | "source"
+> &
+  Partial<
+    Pick<WhiteListRecord, "comment" | "targetType" | "checkIntervalMinutes">
+  >;
+
+type CnameRefreshResult = {
+  record: WhiteListRecord;
+  changed: boolean;
+  skipped: boolean;
+  syncError?: string;
+};
+
 const PREFIX = "fn_knock:whitelist";
+const DEFAULT_CNAME_CHECK_INTERVAL_MINUTES = 5;
+const MIN_CNAME_CHECK_INTERVAL_MINUTES = 1;
+const MAX_CNAME_CHECK_INTERVAL_MINUTES = 24 * 60;
 const KEYS = {
   RECORDS: `${PREFIX}:records`,
   RECORD_ORDER: `${PREFIX}:record_order`,
@@ -36,7 +70,12 @@ const KEYS = {
 
 const getRecordTargetType = (
   record: Partial<Pick<WhiteListRecord, "targetType">>,
-): WhiteListTargetType => (record.targetType === "cidr" ? "cidr" : "ip");
+): WhiteListTargetType =>
+  record.targetType === "cidr"
+    ? "cidr"
+    : record.targetType === "cname"
+      ? "cname"
+      : "ip";
 
 const getRecordTarget = (
   record: Partial<Pick<WhiteListRecord, "ip">>,
@@ -49,6 +88,81 @@ const isIPRecord = (
 const isCIDRRecord = (
   record: Partial<Pick<WhiteListRecord, "targetType">>,
 ): boolean => getRecordTargetType(record) === "cidr";
+
+const isCNAMERecord = (
+  record: Partial<Pick<WhiteListRecord, "targetType">>,
+): boolean => getRecordTargetType(record) === "cname";
+
+const normalizeCnameCheckIntervalMinutes = (value: unknown): number => {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_CNAME_CHECK_INTERVAL_MINUTES;
+  }
+
+  return Math.min(
+    MAX_CNAME_CHECK_INTERVAL_MINUTES,
+    Math.max(MIN_CNAME_CHECK_INTERVAL_MINUTES, Math.floor(parsed)),
+  );
+};
+
+const normalizeResolvedTargets = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+
+  const targets = new Set<string>();
+  for (const item of value) {
+    const normalized = normalizeIp(String(item ?? "").trim());
+    if (!normalized) continue;
+    targets.add(normalized);
+  }
+
+  return [...targets].sort((left, right) => left.localeCompare(right));
+};
+
+const toOptionalTimestamp = (value: unknown): number | null => {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  const parsed = Number.parseInt(String(value), 10);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const getCnameResolvedTargets = (
+  record: Partial<Pick<WhiteListRecord, "resolvedTargets" | "targetType">>,
+): string[] => (isCNAMERecord(record) ? normalizeResolvedTargets(record.resolvedTargets) : []);
+
+const getConcreteIPTargets = (
+  record: Partial<
+    Pick<WhiteListRecord, "ip" | "resolvedTargets" | "targetType">
+  >,
+): string[] => {
+  if (isIPRecord(record)) {
+    const normalized = normalizeIp(getRecordTarget(record));
+    return normalized ? [normalized] : [];
+  }
+
+  if (isCNAMERecord(record)) {
+    return getCnameResolvedTargets(record);
+  }
+
+  return [];
+};
+
+const getConcreteTargets = (
+  record: Partial<
+    Pick<WhiteListRecord, "ip" | "resolvedTargets" | "targetType">
+  >,
+): Array<{ target: string; targetType: "ip" | "cidr" }> => {
+  if (isCIDRRecord(record)) {
+    const target = getRecordTarget(record);
+    return target ? [{ target, targetType: "cidr" }] : [];
+  }
+
+  return getConcreteIPTargets(record).map((target) => ({
+    target,
+    targetType: "ip" as const,
+  }));
+};
 
 const sortRecordsByCreatedAtDesc = (
   records: WhiteListRecord[],
@@ -65,7 +179,9 @@ const deserializeRecord = (raw: string): WhiteListRecord | null => {
     const targetType =
       parsed.targetType === "cidr"
         ? "cidr"
-        : (inferWhiteListTargetType(rawTarget) ?? "ip");
+        : parsed.targetType === "cname"
+          ? "cname"
+          : (inferWhiteListTargetType(rawTarget) ?? "ip");
     const normalizedTarget = normalizeWhiteListTarget(rawTarget, targetType);
     if (!normalizedTarget) return null;
 
@@ -75,16 +191,35 @@ const deserializeRecord = (raw: string): WhiteListRecord | null => {
         ? parsed.status
         : "active";
     const createdAt = Number.parseInt(String(parsed.createdAt ?? 0), 10);
-    const expireAtRaw = parsed.expireAt;
-    const expireAt =
-      expireAtRaw === null || expireAtRaw === undefined
-        ? null
-        : Number.parseInt(String(expireAtRaw), 10);
+    const expireAt = toOptionalTimestamp(parsed.expireAt);
     const comment =
       typeof parsed.comment === "string" ? parsed.comment : undefined;
     const ipLocation =
       targetType === "ip" && typeof parsed.ipLocation === "string"
         ? parsed.ipLocation
+        : undefined;
+    const resolvedTargets =
+      targetType === "cname"
+        ? normalizeResolvedTargets(parsed.resolvedTargets)
+        : undefined;
+    const checkIntervalMinutes =
+      targetType === "cname"
+        ? normalizeCnameCheckIntervalMinutes(parsed.checkIntervalMinutes)
+        : null;
+    const lastCheckedAt = toOptionalTimestamp(parsed.lastCheckedAt);
+    const lastResolvedAt = toOptionalTimestamp(parsed.lastResolvedAt);
+    const resolveStatus =
+      parsed.resolveStatus === "resolved" ||
+      parsed.resolveStatus === "empty" ||
+      parsed.resolveStatus === "error" ||
+      parsed.resolveStatus === "pending"
+        ? parsed.resolveStatus
+        : targetType === "cname"
+          ? "pending"
+          : undefined;
+    const resolveMessage =
+      typeof parsed.resolveMessage === "string"
+        ? parsed.resolveMessage.trim() || undefined
         : undefined;
 
     return {
@@ -98,6 +233,12 @@ const deserializeRecord = (raw: string): WhiteListRecord | null => {
       ...(comment !== undefined ? { comment } : {}),
       status,
       ...(ipLocation ? { ipLocation } : {}),
+      ...(resolvedTargets !== undefined ? { resolvedTargets } : {}),
+      ...(checkIntervalMinutes !== null ? { checkIntervalMinutes } : {}),
+      ...(lastCheckedAt !== null ? { lastCheckedAt } : {}),
+      ...(lastResolvedAt !== null ? { lastResolvedAt } : {}),
+      ...(resolveStatus ? { resolveStatus } : {}),
+      ...(resolveMessage ? { resolveMessage } : {}),
     };
   } catch {
     return null;
@@ -106,6 +247,7 @@ const deserializeRecord = (raw: string): WhiteListRecord | null => {
 
 export class IPTablesWhiteListManager {
   private redis: Redis;
+  private cnameRefreshTasks = new Map<string, Promise<CnameRefreshResult>>();
 
   constructor() {
     this.redis = redis;
@@ -114,6 +256,118 @@ export class IPTablesWhiteListManager {
   private getIPRecordsKey(ip: string) {
     const normalizedIp = normalizeIp(ip) || String(ip || "").trim();
     return `${PREFIX}:ip_records:${normalizedIp}`;
+  }
+
+  private getNow(): number {
+    return Math.floor(Date.now() / 1000);
+  }
+
+  private buildConcreteTargetRecords(
+    record: WhiteListRecord,
+  ): WhiteListConcreteTargetRecord[] {
+    return getConcreteTargets(record).map((entry) => ({
+      recordId: record.id,
+      recordTarget: record.ip,
+      recordTargetType: record.targetType,
+      source: record.source,
+      target: entry.target,
+      targetType: entry.targetType,
+    }));
+  }
+
+  private isNoDataResolveError(error: unknown): boolean {
+    const code = String((error as any)?.code || "").toUpperCase();
+    return (
+      code === "ENODATA" ||
+      code === "ENOTFOUND" ||
+      code === "EAI_NODATA" ||
+      code === "EAI_NONAME"
+    );
+  }
+
+  private formatResolveError(label: "A" | "AAAA", error: unknown): string {
+    const code = String((error as any)?.code || "").trim();
+    const message = (error as any)?.message || String(error);
+    return code ? `${label} 记录查询失败 (${code}): ${message}` : `${label} 记录查询失败: ${message}`;
+  }
+
+  private async resolveCnameTargets(domain: string): Promise<string[]> {
+    const [ipv4Result, ipv6Result] = await Promise.allSettled([
+      resolve4(domain),
+      resolve6(domain),
+    ]);
+    const hardErrors: string[] = [];
+    const resolvedTargets = new Set<string>();
+
+    if (ipv4Result.status === "fulfilled") {
+      for (const ip of ipv4Result.value) {
+        const normalized = normalizeIp(ip);
+        if (normalized) resolvedTargets.add(normalized);
+      }
+    } else if (!this.isNoDataResolveError(ipv4Result.reason)) {
+      hardErrors.push(this.formatResolveError("A", ipv4Result.reason));
+    }
+
+    if (ipv6Result.status === "fulfilled") {
+      for (const ip of ipv6Result.value) {
+        const normalized = normalizeIp(ip);
+        if (normalized) resolvedTargets.add(normalized);
+      }
+    } else if (!this.isNoDataResolveError(ipv6Result.reason)) {
+      hardErrors.push(this.formatResolveError("AAAA", ipv6Result.reason));
+    }
+
+    if (hardErrors.length > 0) {
+      throw new Error(hardErrors.join("；"));
+    }
+
+    return [...resolvedTargets].sort((left, right) => left.localeCompare(right));
+  }
+
+  private isCnameRefreshDue(record: WhiteListRecord, now = this.getNow()): boolean {
+    if (!isCNAMERecord(record) || record.status !== "active") {
+      return false;
+    }
+
+    if (record.expireAt && record.expireAt <= now) {
+      return false;
+    }
+
+    const intervalMinutes = normalizeCnameCheckIntervalMinutes(
+      record.checkIntervalMinutes,
+    );
+    const lastCheckedAt = toOptionalTimestamp(record.lastCheckedAt);
+    if (lastCheckedAt === null) {
+      return true;
+    }
+
+    return lastCheckedAt + intervalMinutes * 60 <= now;
+  }
+
+  private async cleanupUnusedConcreteTargets(
+    targets: Array<{ target: string; targetType: "ip" | "cidr" }>,
+  ): Promise<void> {
+    const uniqueTargets = new Map<string, "ip" | "cidr">();
+    for (const entry of targets) {
+      if (!entry.target) continue;
+      uniqueTargets.set(`${entry.targetType}:${entry.target}`, entry.targetType);
+    }
+
+    for (const [key, targetType] of uniqueTargets.entries()) {
+      const target = key.slice(targetType.length + 1);
+      if (targetType === "cidr") {
+        const active = await this.findRecordsByTarget(target, "cidr");
+        if (active.length > 0) continue;
+        await this.removeAllowedTarget(target);
+        continue;
+      }
+
+      const active = await this.findExactIPRecords(target);
+      if (active.length > 0) continue;
+      await this.redis.srem(KEYS.IPS, target);
+      await this.redis.del(this.getIPRecordsKey(target));
+      await this.removeAllowedTarget(target);
+    }
   }
 
   private async shouldSyncDirectModeFirewall(): Promise<boolean> {
@@ -138,7 +392,7 @@ export class IPTablesWhiteListManager {
   ): { target: string; targetType: WhiteListTargetType } {
     const inferredType = targetType ?? inferWhiteListTargetType(value);
     if (!inferredType) {
-      throw new Error("IP 或 CIDR 格式不正确");
+      throw new Error("IP、CIDR 或域名格式不正确");
     }
     if (source === "auto" && inferredType !== "ip") {
       throw new Error("登录自动授权仅支持单个 IP");
@@ -147,7 +401,11 @@ export class IPTablesWhiteListManager {
     const target = normalizeWhiteListTarget(value, inferredType);
     if (!target) {
       throw new Error(
-        inferredType === "cidr" ? "CIDR 格式不正确" : "IP 格式不正确",
+        inferredType === "cidr"
+          ? "CIDR 格式不正确"
+          : inferredType === "cname"
+            ? "域名格式不正确"
+            : "IP 格式不正确",
       );
     }
 
@@ -176,8 +434,9 @@ export class IPTablesWhiteListManager {
       const record = deserializeRecord(raw);
       if (!record) continue;
       if (
-        isIPRecord(record) &&
-        normalizeIp(record.ip || "") === normalizedIp &&
+        (isIPRecord(record) ||
+          (isCNAMERecord(record) &&
+            getCnameResolvedTargets(record).includes(normalizedIp))) &&
         record.status === "active"
       ) {
         records.push(record);
@@ -288,6 +547,7 @@ export class IPTablesWhiteListManager {
 
   private async rebuildRecordOrderIndex(): Promise<WhiteListRecord[]> {
     const allRecords = await this.redis.hgetall(KEYS.RECORDS);
+    const existingIndexedIps = await this.redis.smembers(KEYS.IPS);
     const activeRecords: WhiteListRecord[] = [];
     const ipRecordIds = new Map<string, string[]>();
     const cidrRecordIds: string[] = [];
@@ -299,15 +559,16 @@ export class IPTablesWhiteListManager {
       }
 
       activeRecords.push(record);
-      if (isIPRecord(record)) {
-        const normalizedIp = normalizeIp(record.ip) || record.ip;
-        const ids = ipRecordIds.get(normalizedIp) ?? [];
-        ids.push(record.id);
-        ipRecordIds.set(normalizedIp, ids);
+      if (isCIDRRecord(record)) {
+        cidrRecordIds.push(record.id);
         continue;
       }
 
-      cidrRecordIds.push(record.id);
+      for (const target of getConcreteIPTargets(record)) {
+        const ids = ipRecordIds.get(target) ?? [];
+        ids.push(record.id);
+        ipRecordIds.set(target, ids);
+      }
     }
 
     sortRecordsByCreatedAtDesc(activeRecords);
@@ -317,7 +578,7 @@ export class IPTablesWhiteListManager {
     pipeline.del(KEYS.IPS);
     pipeline.del(KEYS.CIDR_RECORDS);
 
-    for (const ip of ipRecordIds.keys()) {
+    for (const ip of new Set([...existingIndexedIps, ...ipRecordIds.keys()])) {
       pipeline.del(this.getIPRecordsKey(ip));
     }
 
@@ -344,12 +605,7 @@ export class IPTablesWhiteListManager {
   }
 
   async addWhiteList(
-    record: Omit<
-      WhiteListRecord,
-      "id" | "createdAt" | "status" | "targetType"
-    > & {
-      targetType?: WhiteListTargetType;
-    },
+    record: WhiteListAddInput,
     options?: { replaceSource?: "manual" | "auto" | "all" },
   ): Promise<string> {
     const { target, targetType } = this.normalizeTargetInput(
@@ -365,19 +621,30 @@ export class IPTablesWhiteListManager {
     }
 
     const id = `whitelist:${uuidv4()}`;
-    const now = Math.floor(Date.now() / 1000);
+    const now = this.getNow();
     const ipLocationStr =
       targetType === "ip"
         ? await ipLocationService.getCachedLocation(target)
         : "";
     const fullRecord: WhiteListRecord = {
-      ...record,
       ip: target,
+      expireAt: record.expireAt,
+      source: record.source,
       targetType,
       id,
       createdAt: now,
       status: "active",
+      ...(record.comment !== undefined ? { comment: record.comment } : {}),
       ...(ipLocationStr ? { ipLocation: ipLocationStr } : {}),
+      ...(targetType === "cname"
+        ? {
+            resolvedTargets: [] as string[],
+            checkIntervalMinutes: normalizeCnameCheckIntervalMinutes(
+              record.checkIntervalMinutes,
+            ),
+            resolveStatus: "pending" as const,
+          }
+        : {}),
     };
 
     const pipeline = this.redis.pipeline();
@@ -388,7 +655,7 @@ export class IPTablesWhiteListManager {
       const ipKey = this.getIPRecordsKey(target);
       pipeline.sadd(KEYS.IPS, target);
       pipeline.sadd(ipKey, id);
-    } else {
+    } else if (targetType === "cidr") {
       pipeline.sadd(KEYS.CIDR_RECORDS, id);
     }
 
@@ -402,6 +669,11 @@ export class IPTablesWhiteListManager {
         ipLocationRefs.whitelist(id),
       ]);
     }
+    if (targetType === "cname") {
+      await this.refreshCnameRecord(id, { force: true });
+      return id;
+    }
+
     await this.syncAllowedTarget(target);
     return id;
   }
@@ -410,28 +682,22 @@ export class IPTablesWhiteListManager {
     const record = await this.getRecordById(id);
     if (!record) return false;
 
-    const target = getRecordTarget(record);
     const targetType = getRecordTargetType(record);
+    const concreteTargets = getConcreteTargets(record);
     const pipeline = this.redis.pipeline();
     pipeline.hdel(KEYS.RECORDS, id);
     pipeline.hdel(KEYS.DELETED, id);
     pipeline.zrem(KEYS.RECORD_ORDER, id);
     pipeline.zrem(KEYS.EXPIRY, id);
-    if (targetType === "ip") {
-      pipeline.srem(this.getIPRecordsKey(target), id);
-    } else {
+    if (targetType === "cidr") {
       pipeline.srem(KEYS.CIDR_RECORDS, id);
+    } else {
+      for (const target of getConcreteIPTargets(record)) {
+        pipeline.srem(this.getIPRecordsKey(target), id);
+      }
     }
     await pipeline.exec();
-
-    const remaining = await this.findRecordsByTarget(target, targetType);
-    if (remaining.length === 0) {
-      if (targetType === "ip") {
-        await this.redis.srem(KEYS.IPS, target);
-        await this.redis.del(this.getIPRecordsKey(target));
-      }
-      await this.removeAllowedTarget(target);
-    }
+    await this.cleanupUnusedConcreteTargets(concreteTargets);
 
     return true;
   }
@@ -476,8 +742,8 @@ export class IPTablesWhiteListManager {
       }
       if (record.status !== "active") {
         staleIds.push(id);
-        if (isIPRecord(record)) {
-          staleIPTargets.add(record.ip);
+        for (const target of getConcreteIPTargets(record)) {
+          staleIPTargets.add(target);
         }
         return;
       }
@@ -503,6 +769,24 @@ export class IPTablesWhiteListManager {
     return source
       ? sorted.filter((record) => record.source === source)
       : sorted;
+  }
+
+  async getAllActiveConcreteTargets(
+    source?: "manual" | "auto",
+  ): Promise<WhiteListConcreteTargetRecord[]> {
+    const now = this.getNow();
+    const records = await this.getAllActiveRecords(source);
+    const targets: WhiteListConcreteTargetRecord[] = [];
+
+    for (const record of records) {
+      if (record.expireAt && record.expireAt <= now) {
+        continue;
+      }
+
+      targets.push(...this.buildConcreteTargetRecords(record));
+    }
+
+    return targets;
   }
 
   async isIPWhitelisted(ip: string): Promise<boolean> {
@@ -543,8 +827,12 @@ export class IPTablesWhiteListManager {
         return;
       }
       if (
-        !isIPRecord(record) ||
-        normalizeIp(record.ip || "") !== normalizedIp
+        !(
+          (isIPRecord(record) &&
+            normalizeIp(record.ip || "") === normalizedIp) ||
+          (isCNAMERecord(record) &&
+            getCnameResolvedTargets(record).includes(normalizedIp))
+        )
       ) {
         if (record.status === "active") {
           removeFromSetOnly.push(id);
@@ -612,7 +900,27 @@ export class IPTablesWhiteListManager {
       );
     }
 
-    return this.findExactIPRecords(target);
+    if (targetType === "cname") {
+      const records = await this.getAllActiveRecords();
+      return sortRecordsByCreatedAtDesc(
+        records.filter(
+          (record) => isCNAMERecord(record) && record.ip === target,
+        ),
+      );
+    }
+
+    const normalizedIp = normalizeIp(target) || String(target || "").trim();
+    if (!normalizedIp) return [];
+
+    const records = await this.findExactIPRecords(normalizedIp);
+    return sortRecordsByCreatedAtDesc(
+      records.filter(
+        (record) =>
+          isIPRecord(record) &&
+          (normalizeIp(record.ip || "") === normalizedIp ||
+            record.ip === normalizedIp),
+      ),
+    );
   }
 
   async getActiveRecordsByIP(
@@ -695,6 +1003,158 @@ export class IPTablesWhiteListManager {
     return nextRecord;
   }
 
+  async refreshCnameRecord(
+    id: string,
+    options: { force?: boolean } = {},
+  ): Promise<CnameRefreshResult | null> {
+    const existingTask = this.cnameRefreshTasks.get(id);
+    if (existingTask) {
+      return existingTask;
+    }
+
+    const task = (async () => {
+      const record = await this.getRecordById(id);
+      if (!record || !isCNAMERecord(record) || record.status !== "active") {
+        return null;
+      }
+
+      const now = this.getNow();
+      if (!options.force && !this.isCnameRefreshDue(record, now)) {
+        return {
+          record,
+          changed: false,
+          skipped: true,
+        };
+      }
+
+      const previousTargets = getConcreteIPTargets(record);
+      let resolvedTargets: string[];
+
+      try {
+        resolvedTargets = await this.resolveCnameTargets(record.ip);
+      } catch (error: any) {
+        const nextRecord: WhiteListRecord = {
+          ...record,
+          resolvedTargets: [],
+          checkIntervalMinutes: normalizeCnameCheckIntervalMinutes(
+            record.checkIntervalMinutes,
+          ),
+          lastCheckedAt: now,
+          resolveStatus: "error",
+          resolveMessage: error?.message || "域名解析失败",
+        };
+        const pipeline = this.redis.pipeline();
+        pipeline.hset(KEYS.RECORDS, id, JSON.stringify(nextRecord));
+        for (const target of previousTargets) {
+          pipeline.srem(this.getIPRecordsKey(target), id);
+        }
+        await pipeline.exec();
+        await this.cleanupUnusedConcreteTargets(
+          previousTargets.map((target) => ({
+            target,
+            targetType: "ip" as const,
+          })),
+        );
+
+        return {
+          record: nextRecord,
+          changed: previousTargets.length > 0,
+          skipped: false,
+        };
+      }
+
+      const changed =
+        resolvedTargets.length !== previousTargets.length ||
+        resolvedTargets.some((target, index) => target !== previousTargets[index]);
+      const nextRecord: WhiteListRecord = {
+        ...record,
+        resolvedTargets,
+        checkIntervalMinutes: normalizeCnameCheckIntervalMinutes(
+          record.checkIntervalMinutes,
+        ),
+        lastCheckedAt: now,
+        lastResolvedAt: now,
+        resolveStatus: resolvedTargets.length > 0 ? "resolved" : "empty",
+        resolveMessage:
+          resolvedTargets.length > 0
+            ? `已解析 ${resolvedTargets.length} 个 IP`
+            : "当前未解析到 A / AAAA 记录",
+      };
+      const nextTargets = getConcreteIPTargets(nextRecord);
+      const previousTargetSet = new Set(previousTargets);
+      const nextTargetSet = new Set(nextTargets);
+      const addedTargets = nextTargets.filter((target) => !previousTargetSet.has(target));
+      const removedTargets = previousTargets.filter(
+        (target) => !nextTargetSet.has(target),
+      );
+
+      const pipeline = this.redis.pipeline();
+      pipeline.hset(KEYS.RECORDS, id, JSON.stringify(nextRecord));
+      if (addedTargets.length > 0) {
+        pipeline.sadd(KEYS.IPS, ...addedTargets);
+        for (const target of addedTargets) {
+          pipeline.sadd(this.getIPRecordsKey(target), id);
+        }
+      }
+      for (const target of removedTargets) {
+        pipeline.srem(this.getIPRecordsKey(target), id);
+      }
+      await pipeline.exec();
+
+      let syncError: string | undefined;
+      try {
+        for (const target of addedTargets) {
+          await this.syncAllowedTarget(target);
+        }
+        await this.cleanupUnusedConcreteTargets(
+          removedTargets.map((target) => ({
+            target,
+            targetType: "ip" as const,
+          })),
+        );
+      } catch (error: any) {
+        syncError = error?.message || "域名解析结果已更新，但同步系统放行状态失败";
+        console.error(
+          `[whitelist] failed to sync concrete targets for ${record.ip}:`,
+          error,
+        );
+      }
+
+      return {
+        record: nextRecord,
+        changed,
+        skipped: false,
+        ...(syncError ? { syncError } : {}),
+      };
+    })();
+
+    this.cnameRefreshTasks.set(id, task);
+    try {
+      return await task;
+    } finally {
+      this.cnameRefreshTasks.delete(id);
+    }
+  }
+
+  async processDueCnameRecords(): Promise<boolean> {
+    const now = this.getNow();
+    const records = await this.getAllActiveRecords("manual");
+    let changed = false;
+
+    for (const record of records) {
+      if (!isCNAMERecord(record) || !this.isCnameRefreshDue(record, now)) {
+        continue;
+      }
+
+      const result = await this.refreshCnameRecord(record.id);
+      if (result?.changed) {
+        changed = true;
+      }
+    }
+
+    return changed;
+  }
+
   private async removeRecordsByTarget(
     target: string,
     targetType: WhiteListTargetType,
@@ -774,39 +1234,27 @@ export class IPTablesWhiteListManager {
       const expiredRecords = await this.findExpiredRecords();
       if (expiredRecords.length === 0) return false;
 
-      const touchedIps = new Set<string>();
-      const touchedCidrs = new Set<string>();
+      const touchedTargets: Array<{ target: string; targetType: "ip" | "cidr" }> =
+        [];
       const pipeline = this.redis.pipeline();
 
       for (const record of expiredRecords) {
         record.status = "expired";
-        if (isIPRecord(record)) {
-          touchedIps.add(record.ip);
-          pipeline.srem(this.getIPRecordsKey(record.ip), record.id);
-        } else {
-          touchedCidrs.add(record.ip);
+        if (isCIDRRecord(record)) {
           pipeline.srem(KEYS.CIDR_RECORDS, record.id);
+        } else {
+          for (const target of getConcreteIPTargets(record)) {
+            pipeline.srem(this.getIPRecordsKey(target), record.id);
+          }
         }
+        touchedTargets.push(...getConcreteTargets(record));
         pipeline.hset(KEYS.RECORDS, record.id, JSON.stringify(record));
         pipeline.zrem(KEYS.EXPIRY, record.id);
         pipeline.zrem(KEYS.RECORD_ORDER, record.id);
       }
 
       await pipeline.exec();
-
-      for (const ip of touchedIps) {
-        const active = await this.findExactIPRecords(ip);
-        if (active.length > 0) continue;
-        await this.redis.srem(KEYS.IPS, ip);
-        await this.redis.del(this.getIPRecordsKey(ip));
-        await this.removeAllowedTarget(ip);
-      }
-
-      for (const cidr of touchedCidrs) {
-        const active = await this.findRecordsByTarget(cidr, "cidr");
-        if (active.length > 0) continue;
-        await this.removeAllowedTarget(cidr);
-      }
+      await this.cleanupUnusedConcreteTargets(touchedTargets);
 
       return true;
     } catch (error) {

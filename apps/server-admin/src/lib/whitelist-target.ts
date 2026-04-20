@@ -1,8 +1,11 @@
 import { isIP } from "node:net";
+import { domainToASCII } from "node:url";
 import { isValidCIDR } from "../../../../packages/admin-shared/src/utils/cidr";
 import { normalizeIp } from "./ip-normalize";
 
-export type WhiteListTargetType = "ip" | "cidr";
+export type WhiteListTargetType = "ip" | "cidr" | "cname";
+
+const DOMAIN_PATTERN = /^([a-z0-9-]+\.)+[a-z0-9-]+$/i;
 
 const parseIPv4Bytes = (value: string): Uint8Array | null => {
   const normalized = normalizeIp(value);
@@ -227,7 +230,36 @@ export const inferWhiteListTargetType = (
   if (!trimmed) return null;
   if (isValidCIDR(trimmed)) return "cidr";
   if (normalizeIp(trimmed)) return "ip";
+  if (normalizeDomainTarget(trimmed)) return "cname";
   return null;
+};
+
+export const normalizeDomainTarget = (value: string): string => {
+  const trimmed = String(value || "")
+    .trim()
+    .replace(/\.+$/, "")
+    .toLowerCase();
+  if (!trimmed) return "";
+  if (trimmed.includes("/") || trimmed.includes("..")) return "";
+
+  const ascii = domainToASCII(trimmed);
+  if (!ascii || ascii.length > 253) return "";
+  if (!DOMAIN_PATTERN.test(ascii)) return "";
+
+  const labels = ascii.split(".");
+  if (
+    labels.some(
+      (label) =>
+        !label ||
+        label.length > 63 ||
+        label.startsWith("-") ||
+        label.endsWith("-"),
+    )
+  ) {
+    return "";
+  }
+
+  return ascii;
 };
 
 export const normalizeWhiteListTarget = (
@@ -244,6 +276,10 @@ export const normalizeWhiteListTarget = (
     const networkBytes = maskBytes(parsed.addressBytes, parsed.prefixLength);
     const networkAddress = formatAddressBytes(networkBytes);
     return networkAddress ? `${networkAddress}/${parsed.prefixLength}` : "";
+  }
+
+  if (targetType === "cname") {
+    return normalizeDomainTarget(trimmed);
   }
 
   return normalizeIp(trimmed);
@@ -270,6 +306,10 @@ export const doesClientIpMatchWhiteListTarget = (
   target: string,
   targetType: WhiteListTargetType,
 ): boolean => {
+  if (targetType === "cname") {
+    return false;
+  }
+
   if (targetType === "cidr") {
     return isIpMatchedByCIDR(clientIp, target);
   }

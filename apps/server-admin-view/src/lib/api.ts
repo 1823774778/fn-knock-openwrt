@@ -457,13 +457,19 @@ export const ConfigAPI = {
 export interface WhiteListRecord {
   id: string;
   ip: string;
-  targetType: "ip" | "cidr";
+  targetType: "ip" | "cidr" | "cname";
   expireAt: number | null;
   source: "manual" | "auto";
   createdAt: number;
   comment?: string;
   status: "active" | "expired" | "deleted";
   ipLocation?: string;
+  resolvedTargets?: string[];
+  checkIntervalMinutes?: number | null;
+  lastCheckedAt?: number | null;
+  lastResolvedAt?: number | null;
+  resolveStatus?: "pending" | "resolved" | "empty" | "error";
+  resolveMessage?: string;
 }
 
 export const WhitelistAPI = {
@@ -473,10 +479,11 @@ export const WhitelistAPI = {
   },
   async addRecord(payload: {
     ip: string;
-    targetType?: "ip" | "cidr";
+    targetType?: "ip" | "cidr" | "cname";
     expireAt: number | null;
     source: string;
     comment?: string;
+    checkIntervalMinutes?: number;
   }) {
     const res = await apiClient.post("/whitelist", payload);
     return res.data;
@@ -489,6 +496,20 @@ export const WhitelistAPI = {
     const res = await apiClient.patch(
       `/whitelist/${encodeURIComponent(id)}/comment`,
       { comment },
+    );
+    return res.data;
+  },
+  async refreshRecord(id: string): Promise<{
+    success: boolean;
+    message?: string;
+    data?: {
+      changed: boolean;
+      skipped: boolean;
+      record: WhiteListRecord;
+    };
+  }> {
+    const res = await apiClient.post(
+      `/whitelist/${encodeURIComponent(id)}/refresh`,
     );
     return res.data;
   },
