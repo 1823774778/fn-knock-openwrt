@@ -424,6 +424,10 @@ const buildNotificationDetails = (args: {
       break;
     }
     case "FN_EVENT_DDNS_UPDATE_COMPLETED": {
+      const targetName =
+        readPayloadValue(event, "target_name") ||
+        readPayloadValue(event, "domain_summary") ||
+        "DDNS 条目";
       const provider = readPayloadValue(event, "provider") || "未知提供商";
       const success = readPayloadValue(event, "success") === "true";
       const resultMessage = readPayloadValue(event, "message");
@@ -454,13 +458,19 @@ const buildNotificationDetails = (args: {
         readPayloadValue(event, "next_ipv6"),
       );
 
-      summary = `${provider} DDNS ${success ? "更新成功" : "更新失败"}`;
+      summary = `${targetName} DDNS ${success ? "更新成功" : "更新失败"}`;
       overview = `${trigger || "本次任务"}已执行 DDNS 更新，范围为 ${updateScope || "未知"}，IP 来源为 ${ipSource || "未知"}。${resultMessage ? `结果说明：${resultMessage}` : ""}`;
       advice = success
         ? "如解析尚未生效，可继续等待 DNS 缓存刷新后再验证外部访问。"
         : "建议检查提供商凭证、解析记录配置，以及公网 IP 获取状态是否正常。";
 
+      pushFact(facts, "条目", targetName);
       pushFact(facts, "提供商", provider);
+      pushFact(
+        facts,
+        "条目类型",
+        readPayloadValue(event, "is_primary") === "true" ? "主域" : "附加域",
+      );
       pushFact(facts, "执行方式", trigger);
       pushFact(facts, "更新范围", updateScope);
       pushFact(facts, "IP 来源", ipSource);
@@ -675,7 +685,9 @@ const formatEventSummary = (event: SystemEventEnvelope) => {
       );
     case "FN_EVENT_DDNS_UPDATE_COMPLETED":
       return joinCompactParts(
-        readPayloadValue(event, "provider"),
+        readPayloadValue(event, "target_name") ||
+          readPayloadValue(event, "domain_summary") ||
+          readPayloadValue(event, "provider"),
         readPayloadValue(event, "success") === "true" ? "成功" : "失败",
       );
     case "FN_EVENT_GATEWAY_THROTTLE_BLOCKED":
@@ -725,8 +737,8 @@ const buildNotificationTitle = (
   const baseTitle =
     event.type === "FN_EVENT_DDNS_UPDATE_COMPLETED"
       ? readPayloadValue(event, "success") === "true"
-        ? "DDNS 更新成功"
-        : "DDNS 更新失败"
+        ? `${readPayloadValue(event, "target_name") || readPayloadValue(event, "domain_summary") || "DDNS"} 更新成功`
+        : `${readPayloadValue(event, "target_name") || readPayloadValue(event, "domain_summary") || "DDNS"} 更新失败`
       : event.type === "FN_EVENT_AUTH_SESSION_IP_DRIFT"
         ? driftCredentialName
           ? `凭证「${driftCredentialName}」IP 漂移`

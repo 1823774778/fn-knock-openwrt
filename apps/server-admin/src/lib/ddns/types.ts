@@ -45,6 +45,10 @@ export type DDNSLogEntry = {
   time: string;
   level: "info" | "error" | "warn";
   message: string;
+  targetId?: string;
+  targetName?: string;
+  provider?: string | null;
+  isPrimary?: boolean;
 };
 
 export type DDNSLastIP = {
@@ -67,6 +71,46 @@ export type DDNSStatus = {
   networkInterface: string;
   lastIP: DDNSLastIP;
   lastCheck: DDNSLastCheck;
+  primaryTargetId: string | null;
+  extraTargetCount: number;
+  enabledExtraTargetCount: number;
+  targets: DDNSTargetSummary[];
+};
+
+export type DDNSTargetMeta = {
+  id: string;
+  name: string;
+  isPrimary: boolean;
+  enabled: boolean;
+  provider: string | null;
+  createdAt: string;
+  updatedAt: string;
+  sortOrder: number;
+};
+
+export type DDNSTargetRuntimeStatus = {
+  lastIP: DDNSLastIP;
+  lastCheck: DDNSLastCheck;
+};
+
+export type DDNSTargetRecord = DDNSTargetMeta &
+  DDNSTargetRuntimeStatus & {
+    config: Record<string, string>;
+  };
+
+export type DDNSTargetSummary = DDNSTargetMeta &
+  DDNSTargetRuntimeStatus & {
+    updateScope: DDNSUpdateScope;
+    providerLabel: string;
+    domainSummary: string;
+  };
+
+export type DDNSTargetList = {
+  primaryTargetId: string | null;
+  total: number;
+  extraCount: number;
+  enabledExtraCount: number;
+  items: DDNSTargetSummary[];
 };
 
 export type DDNSHttpClient = {

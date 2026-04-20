@@ -235,6 +235,10 @@ export const emitScannerBlockedEvent = async (payload: {
 
 export const emitDDNSUpdateCompletedEvent = async (payload: {
   trigger: "cron" | "enable" | "manual_test";
+  targetId: string;
+  targetName: string;
+  domainSummary?: string;
+  isPrimary: boolean;
   provider: string;
   success: boolean;
   message: string;
@@ -251,10 +255,16 @@ export const emitDDNSUpdateCompletedEvent = async (payload: {
     level: payload.success ? FN_EVENT_LEVEL_INFO : FN_EVENT_LEVEL_ERROR,
     subject: {
       kind: SYSTEM_EVENT_SUBJECT_KIND_DDNS,
-      id: payload.provider,
+      id: payload.targetId,
     },
     payload: {
       trigger: payload.trigger,
+      target_id: payload.targetId,
+      target_name: payload.targetName,
+      ...(payload.domainSummary
+        ? { domain_summary: payload.domainSummary }
+        : {}),
+      is_primary: payload.isPrimary,
       provider: payload.provider,
       success: payload.success,
       message: payload.message,

@@ -109,6 +109,15 @@ const ddnsStatus = ref<{
   enabled: boolean;
   provider: string | null;
   updateScope: "dual_stack" | "ipv6_only" | "ipv4_only";
+  extraTargetCount: number;
+  enabledExtraTargetCount: number;
+  targets: Array<{
+    id: string;
+    isPrimary: boolean;
+    lastCheck: {
+      outcome: "updated" | "noop" | "skipped" | "error" | null;
+    };
+  }>;
   lastIP: {
     ipv4: string | null;
     ipv6: string | null;
@@ -569,7 +578,10 @@ const ddnsCards = computed(() => [
   {
     label: "提供商",
     value: ddnsStatus.value?.provider || "未配置",
-    hint: "动态解析服务",
+    hint:
+      (ddnsStatus.value?.extraTargetCount || 0) > 0
+        ? `主域动态解析服务 · +${ddnsStatus.value?.extraTargetCount || 0} 个额外域`
+        : "主域动态解析服务",
     icon: Network,
   },
   {
@@ -602,6 +614,17 @@ const ddnsCards = computed(() => [
       updatedAt: ddnsStatus.value?.lastIP?.updated_at,
       checkedAt: ddnsStatus.value?.lastCheck?.checked_at,
     }),
+  },
+  {
+    label: "更多域",
+    value: String(ddnsStatus.value?.extraTargetCount || 0),
+    hint:
+      (ddnsStatus.value?.targets || []).filter(
+        (target) => !target.isPrimary && target.lastCheck.outcome === "error",
+      ).length > 0
+        ? `${(ddnsStatus.value?.targets || []).filter((target) => !target.isPrimary && target.lastCheck.outcome === "error").length} 个额外域异常`
+        : "额外 DDNS 条目数量",
+    icon: Globe,
   },
 ]);
 

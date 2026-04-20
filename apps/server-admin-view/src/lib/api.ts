@@ -1745,6 +1745,47 @@ export type DDNSStatusPayload = {
     outcome: "updated" | "noop" | "skipped" | "error" | null;
     message: string | null;
   };
+  primaryTargetId: string | null;
+  extraTargetCount: number;
+  enabledExtraTargetCount: number;
+  targets: DDNSTargetSummaryPayload[];
+};
+
+export type DDNSTargetSummaryPayload = {
+  id: string;
+  name: string;
+  isPrimary: boolean;
+  enabled: boolean;
+  provider: string | null;
+  updateScope: "dual_stack" | "ipv6_only" | "ipv4_only";
+  providerLabel: string;
+  domainSummary: string;
+  createdAt: string;
+  updatedAt: string;
+  sortOrder: number;
+  lastIP: {
+    ipv4: string | null;
+    ipv6: string | null;
+    updated_at: string | null;
+  };
+  lastCheck: {
+    checked_at: string | null;
+    outcome: "updated" | "noop" | "skipped" | "error" | null;
+    message: string | null;
+  };
+};
+
+export type DDNSTargetDetailPayload = DDNSTargetSummaryPayload & {
+  rawName?: string;
+  config: Record<string, string>;
+};
+
+export type DDNSTargetListPayload = {
+  primaryTargetId: string | null;
+  total: number;
+  extraCount: number;
+  enabledExtraCount: number;
+  items: DDNSTargetSummaryPayload[];
 };
 
 export type DDNSNetworkInterfacePayload = {
@@ -1862,6 +1903,56 @@ export const DDNSAPI = {
     data?: { ipv4: string | null; ipv6: string | null };
   }> {
     const res = await apiClient.post("/ddns/test");
+    return res.data;
+  },
+  async getTargets(): Promise<DDNSTargetListPayload> {
+    const res = await apiClient.get("/ddns/targets");
+    return res.data.data;
+  },
+  async getTarget(id: string): Promise<DDNSTargetDetailPayload> {
+    const res = await apiClient.get(`/ddns/targets/${encodeURIComponent(id)}`);
+    return res.data.data;
+  },
+  async createTarget(payload: {
+    name?: string;
+    provider: string;
+    enabled?: boolean;
+    config: Record<string, string>;
+  }): Promise<DDNSTargetDetailPayload> {
+    const res = await apiClient.post("/ddns/targets", payload);
+    return res.data.data;
+  },
+  async updateTarget(
+    id: string,
+    payload: {
+      name?: string;
+      provider: string;
+      enabled?: boolean;
+      config: Record<string, string>;
+    },
+  ): Promise<DDNSTargetDetailPayload> {
+    const res = await apiClient.put(
+      `/ddns/targets/${encodeURIComponent(id)}`,
+      payload,
+    );
+    return res.data.data;
+  },
+  async deleteTarget(id: string): Promise<void> {
+    await apiClient.delete(`/ddns/targets/${encodeURIComponent(id)}`);
+  },
+  async setTargetEnabled(id: string, enabled: boolean): Promise<void> {
+    await apiClient.post(`/ddns/targets/${encodeURIComponent(id)}/enabled`, {
+      enabled,
+    });
+  },
+  async testTarget(id: string): Promise<{
+    success: boolean;
+    message: string;
+    data?: { ipv4: string | null; ipv6: string | null };
+  }> {
+    const res = await apiClient.post(
+      `/ddns/targets/${encodeURIComponent(id)}/test`,
+    );
     return res.data;
   },
   async getLogs(limit = 200): Promise<DDNSLogEntry[]> {

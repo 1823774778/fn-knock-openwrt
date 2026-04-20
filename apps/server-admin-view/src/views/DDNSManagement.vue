@@ -7,6 +7,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -24,6 +32,7 @@ import {
   Route as RouteIcon,
   Eye,
   EyeOff,
+  Plus,
 } from "lucide-vue-next";
 import CredentialTransferHint from "@/components/CredentialTransferHint.vue";
 import LiveStatusBadge from "@/components/LiveStatusBadge.vue";
@@ -31,6 +40,7 @@ import DocsLinkButton from "@/components/DocsLinkButton.vue";
 import { toast } from "@admin-shared/utils/toast";
 import LogViewer from "@admin-shared/components/LogViewer.vue";
 import ConfigCollapsibleCard from "@admin-shared/components/ConfigCollapsibleCard.vue";
+import ConfirmDangerPopover from "@admin-shared/components/common/ConfirmDangerPopover.vue";
 import HumanFriendlyTime from "@admin-shared/components/common/HumanFriendlyTime.vue";
 import OverflowTooltipText from "@admin-shared/components/common/OverflowTooltipText.vue";
 import {
@@ -44,7 +54,11 @@ import {
 } from "@admin-shared/utils/log-window";
 import { useDnsCredentialTransfer } from "@/composables/useDnsCredentialTransfer";
 import { useTargetPolling } from "../composables/useTargetPolling";
-import type { DDNSNetworkInterfacePayload } from "../lib/api";
+import type {
+  DDNSNetworkInterfacePayload,
+  DDNSTargetDetailPayload,
+  DDNSTargetSummaryPayload,
+} from "../lib/api";
 import { useConfigStore } from "../store/config";
 import { isAnySubdomainRoutingMode } from "../lib/reverse-proxy-submode";
 import { docsUrls } from "../lib/docs";
@@ -82,6 +96,14 @@ interface LastCheck {
   checked_at: string | null;
   outcome: "updated" | "noop" | "skipped" | "error" | null;
   message: string | null;
+}
+
+interface TargetDialogState {
+  id: string | null;
+  name: string;
+  enabled: boolean;
+  provider: string;
+  config: Record<string, string>;
 }
 
 type DDNSUpdateScope = "dual_stack" | "ipv6_only" | "ipv4_only";
@@ -152,6 +174,58 @@ const getUpdateScopeLabel = (value: string | null | undefined) => {
   );
 };
 
+const normalizeTargetConfigValues = (
+  config: Record<string, string> | null | undefined,
+): Record<string, string> => ({
+  ...(config || {}),
+  [UPDATE_SCOPE_KEY]: normalizeUpdateScope(config?.[UPDATE_SCOPE_KEY]),
+  [IP_SOURCE_KEY]: normalizeIpSource(config?.[IP_SOURCE_KEY]),
+  [NETWORK_INTERFACE_KEY]: normalizeNetworkInterface(
+    config?.[NETWORK_INTERFACE_KEY],
+  ),
+  [INTERFACE_IPV4_INDEX_KEY]: normalizeInterfaceAddressIndex(
+    config?.[INTERFACE_IPV4_INDEX_KEY],
+  ),
+  [INTERFACE_IPV6_INDEX_KEY]: normalizeInterfaceAddressIndex(
+    config?.[INTERFACE_IPV6_INDEX_KEY],
+  ),
+});
+
+const extractCommonTargetConfig = (
+  config: Record<string, string>,
+): Record<string, string> => ({
+  [UPDATE_SCOPE_KEY]: normalizeUpdateScope(config[UPDATE_SCOPE_KEY]),
+  [IP_SOURCE_KEY]: normalizeIpSource(config[IP_SOURCE_KEY]),
+  [NETWORK_INTERFACE_KEY]: normalizeNetworkInterface(
+    config[NETWORK_INTERFACE_KEY],
+  ),
+  [INTERFACE_IPV4_INDEX_KEY]: normalizeInterfaceAddressIndex(
+    config[INTERFACE_IPV4_INDEX_KEY],
+  ),
+  [INTERFACE_IPV6_INDEX_KEY]: normalizeInterfaceAddressIndex(
+    config[INTERFACE_IPV6_INDEX_KEY],
+  ),
+});
+
+const resolveNetworkInterfaceOptions = (
+  items: DDNSNetworkInterfacePayload[],
+  selected: string,
+) => {
+  const resolved = [...items];
+  if (selected && !resolved.some((item) => item.name === selected)) {
+    resolved.push({
+      name: selected,
+      label: `${selected}（当前配置，暂不可用）`,
+      summary: "当前配置中的网卡已不可用或没有可用地址",
+      hasIpv4: false,
+      hasIpv6: false,
+      addresses: [],
+      selectableAddresses: [],
+    });
+  }
+  return resolved;
+};
+
 // ─── State ─────────────────────────────────────────────────────
 const isInitialized = ref(false);
 const configStore = useConfigStore();
@@ -171,6 +245,19 @@ const statusUpdateScope = ref<DDNSUpdateScope>(DEFAULT_DDNS_UPDATE_SCOPE);
 const statusIpSource = ref<DDNSIpSource>(DEFAULT_DDNS_IP_SOURCE);
 const statusNetworkInterface = ref("");
 const networkInterfaces = ref<DDNSNetworkInterfacePayload[]>([]);
+const targetSummaries = ref<DDNSTargetSummaryPayload[]>([]);
+const showTargetDialog = ref(false);
+const targetDialogMode = ref<"create" | "edit">("create");
+const targetDialogState = ref<TargetDialogState>({
+  id: null,
+  name: "",
+  enabled: true,
+  provider: "",
+  config: normalizeTargetConfigValues({}),
+});
+const testingTargetId = ref("");
+const deletingTargetId = ref("");
+const togglingTargetId = ref("");
 
 const { isPending: isSaving, run: runSaveConfig } = useAsyncAction({
   rethrow: true,
@@ -240,12 +327,55 @@ const { isPending: isLoading, run: runInitialize } = useAsyncAction({
     });
   },
 });
+const { isPending: isSavingTarget, run: runSaveTarget } = useAsyncAction({
+  rethrow: true,
+  onError: (error) => {
+    toast.error("保存更多域失败", {
+      description: extractErrorMessage(error, "保存更多域失败"),
+    });
+  },
+});
+const { run: runDeleteTarget } = useAsyncAction({
+  onError: (error) => {
+    toast.error("删除更多域失败", {
+      description: extractErrorMessage(error, "删除更多域失败"),
+    });
+  },
+});
+const { run: runToggleTarget } = useAsyncAction({
+  onError: (error) => {
+    toast.error("切换更多域状态失败", {
+      description: extractErrorMessage(error, "切换更多域状态失败"),
+    });
+  },
+});
+const { run: runTestTarget } = useAsyncAction({
+  onError: (error) => {
+    toast.error("更多域更新失败", {
+      description: extractErrorMessage(error, "更多域更新失败"),
+    });
+  },
+});
 
 const fieldVisibility = ref<Record<string, boolean>>({});
+const targetFieldVisibility = ref<Record<string, boolean>>({});
 const fieldEditReady = ref<Record<string, boolean>>({});
 
 const toggleFieldVisibility = (key: string) => {
   fieldVisibility.value[key] = !fieldVisibility.value[key];
+};
+
+const getTargetFieldStateKey = (key: string) =>
+  `${targetDialogState.value.provider}:${targetDialogState.value.id || "new"}:${key}`;
+
+const toggleTargetFieldVisibility = (key: string) => {
+  const stateKey = getTargetFieldStateKey(key);
+  targetFieldVisibility.value[stateKey] =
+    !targetFieldVisibility.value[stateKey];
+};
+
+const isTargetFieldVisible = (key: string) => {
+  return targetFieldVisibility.value[getTargetFieldStateKey(key)] === true;
 };
 
 const getFieldStateKey = (key: string) => `${selectedProvider.value}:${key}`;
@@ -278,6 +408,110 @@ const getFieldAutocomplete = (field: ProviderField) => {
 
 const currentProviderDef = computed(() => {
   return providers.value.find((p) => p.name === selectedProvider.value) || null;
+});
+
+const findProviderDef = (providerName: string) =>
+  providers.value.find((provider) => provider.name === providerName) || null;
+
+const extraTargets = computed(() =>
+  targetSummaries.value.filter((target) => !target.isPrimary),
+);
+
+const hasExtraTargets = computed(() => extraTargets.value.length > 0);
+
+const targetDialogTitle = computed(() =>
+  targetDialogMode.value === "create" ? "新增域" : "编辑域",
+);
+
+const targetDialogDescription = computed(() =>
+  targetDialogMode.value === "create"
+    ? "额外加入的 DDNS 更新目标，不影响主域配置。"
+    : "修改当前额外 DDNS 条目的 provider、域名和更新策略。",
+);
+
+const targetDialogProviderDef = computed(() =>
+  findProviderDef(targetDialogState.value.provider),
+);
+
+const targetDialogResolvedNetworkInterfaces = computed(() =>
+  resolveNetworkInterfaceOptions(
+    networkInterfaces.value,
+    normalizeNetworkInterface(
+      targetDialogState.value.config[NETWORK_INTERFACE_KEY],
+    ),
+  ),
+);
+
+const targetDialogNetworkInterfaceLabel = computed(() => {
+  const selected = normalizeNetworkInterface(
+    targetDialogState.value.config[NETWORK_INTERFACE_KEY],
+  );
+  if (!selected) {
+    return "自动选择";
+  }
+  return (
+    targetDialogResolvedNetworkInterfaces.value.find(
+      (item) => item.name === selected,
+    )?.label || selected
+  );
+});
+
+const targetDialogNetworkInterfaceOption = computed(() => {
+  const selected = normalizeNetworkInterface(
+    targetDialogState.value.config[NETWORK_INTERFACE_KEY],
+  );
+  if (!selected) {
+    return null;
+  }
+  return (
+    targetDialogResolvedNetworkInterfaces.value.find(
+      (item) => item.name === selected,
+    ) || null
+  );
+});
+
+const targetDialogShouldShowInterfaceBlock = computed(
+  () =>
+    !!targetDialogState.value.provider &&
+    normalizeIpSource(targetDialogState.value.config[IP_SOURCE_KEY]) ===
+      "interface",
+);
+
+const targetDialogUpdateScope = computed(() =>
+  normalizeUpdateScope(targetDialogState.value.config[UPDATE_SCOPE_KEY]),
+);
+
+const shouldShowTargetIPv4Status = (target: DDNSTargetSummaryPayload) =>
+  normalizeUpdateScope(target.updateScope) !== "ipv6_only";
+
+const shouldShowTargetIPv6Status = (target: DDNSTargetSummaryPayload) =>
+  normalizeUpdateScope(target.updateScope) !== "ipv4_only";
+
+const getTargetDisplayName = (target: DDNSTargetSummaryPayload) =>
+  target.name || target.domainSummary || target.providerLabel;
+
+const getTargetLastCheckTooltipLines = (target: DDNSTargetSummaryPayload) =>
+  buildDDNSTimestampTooltipLines({
+    updatedAt: target.lastIP.updated_at,
+    checkedAt: target.lastCheck.checked_at,
+  });
+
+const targetDialogIPv4Options = computed(() => {
+  return (targetDialogNetworkInterfaceOption.value?.selectableAddresses || [])
+    .filter((item) => item.family === "ipv4")
+    .map((item, index) => ({
+      value: String(index),
+      label: `第 ${index + 1} 个 IPv4: ${item.address}`,
+    }));
+});
+
+const targetDialogIPv6Options = computed(() => {
+  return (targetDialogNetworkInterfaceOption.value?.selectableAddresses || [])
+    .filter((item) => item.family === "ipv6")
+    .map((item, index) => ({
+      value: String(index),
+      label: `第 ${index + 1} 个 IPv6: ${item.address}`,
+    }));
 });
 
 const {
@@ -487,9 +721,7 @@ async function loadStatus() {
   await runLoadStatus(async () => {
     const status = await DDNSAPI.getStatus();
     enabled.value = status.enabled;
-    if (status.provider) {
-      selectedProvider.value = status.provider;
-    }
+    selectedProvider.value = status.provider || "";
     lastIP.value = status.lastIP;
     lastCheck.value = status.lastCheck;
     statusUpdateScope.value = normalizeUpdateScope(status.updateScope);
@@ -497,6 +729,7 @@ async function loadStatus() {
     statusNetworkInterface.value = normalizeNetworkInterface(
       status.networkInterface,
     );
+    targetSummaries.value = status.targets || [];
   });
 }
 
@@ -575,9 +808,8 @@ const ddnsPolling = useTargetPolling({
     statusNetworkInterface.value = normalizeNetworkInterface(
       status.networkInterface,
     );
-    if (status.provider) {
-      selectedProvider.value = status.provider;
-    }
+    targetSummaries.value = status.targets || [];
+    selectedProvider.value = status.provider || "";
     if (enabledInitialized && status.enabled !== enabled.value) {
       enabledInitialized = false;
       enabled.value = status.enabled;
@@ -716,6 +948,245 @@ function validateCommonConfig() {
   }
 
   return true;
+}
+
+function resetTargetDialogState(next?: Partial<TargetDialogState>) {
+  targetFieldVisibility.value = {};
+  targetDialogState.value = {
+    id: next?.id ?? null,
+    name: next?.name ?? "",
+    enabled: next?.enabled ?? true,
+    provider: next?.provider ?? selectedProvider.value,
+    config: normalizeTargetConfigValues(
+      next?.config ?? extractCommonTargetConfig(providerConfig.value),
+    ),
+  };
+}
+
+function openCreateTargetDialog() {
+  targetDialogMode.value = "create";
+  resetTargetDialogState({
+    provider: selectedProvider.value,
+    enabled: true,
+  });
+  showTargetDialog.value = true;
+}
+
+function applyTargetDetailToDialog(detail: DDNSTargetDetailPayload) {
+  targetDialogMode.value = "edit";
+  resetTargetDialogState({
+    id: detail.id,
+    name: detail.rawName || "",
+    enabled: detail.enabled,
+    provider: detail.provider || "",
+    config: detail.config,
+  });
+  showTargetDialog.value = true;
+}
+
+async function openEditTargetDialog(targetId: string) {
+  try {
+    const detail = await DDNSAPI.getTarget(targetId);
+    applyTargetDetailToDialog(detail);
+  } catch (error) {
+    toast.error("加载更多域失败", {
+      description: extractErrorMessage(error, "加载更多域失败"),
+    });
+  }
+}
+
+function updateTargetDialogNetworkInterface(value: string) {
+  targetDialogState.value.config = {
+    ...targetDialogState.value.config,
+    [NETWORK_INTERFACE_KEY]: value,
+    [INTERFACE_IPV4_INDEX_KEY]: "",
+    [INTERFACE_IPV6_INDEX_KEY]: "",
+  };
+}
+
+function handleTargetDialogProviderChange(value: string) {
+  targetFieldVisibility.value = {};
+  targetDialogState.value.provider = value;
+  targetDialogState.value.config = normalizeTargetConfigValues(
+    extractCommonTargetConfig(targetDialogState.value.config),
+  );
+}
+
+function validateTargetDialogConfig() {
+  const provider = targetDialogState.value.provider.trim();
+  if (!provider) {
+    toast.error("请选择 DDNS 提供商");
+    return false;
+  }
+
+  const providerDef = targetDialogProviderDef.value;
+  if (providerDef) {
+    const missingField = providerDef.fields.find((field) => {
+      if (field.required === false) {
+        return false;
+      }
+      return !targetDialogState.value.config[field.key]?.toString().trim();
+    });
+    if (missingField) {
+      toast.error(`请填写 ${missingField.label}`);
+      return false;
+    }
+  }
+
+  const config = targetDialogState.value.config;
+  const ipSource = normalizeIpSource(config[IP_SOURCE_KEY]);
+  if (ipSource !== "interface") {
+    return true;
+  }
+
+  const networkInterface = normalizeNetworkInterface(
+    config[NETWORK_INTERFACE_KEY],
+  );
+  if (!networkInterface) {
+    toast.error("请先选择出站网卡", {
+      description: "从网卡直接获取时，必须明确指定一张网卡。",
+    });
+    return false;
+  }
+
+  if (
+    targetDialogUpdateScope.value === "ipv4_only" &&
+    targetDialogIPv4Options.value.length === 0
+  ) {
+    toast.error("当前网卡没有可用的 IPv4 地址");
+    return false;
+  }
+
+  if (
+    targetDialogUpdateScope.value === "ipv6_only" &&
+    targetDialogIPv6Options.value.length === 0
+  ) {
+    toast.error("当前网卡没有可用的 IPv6 地址");
+    return false;
+  }
+
+  if (
+    targetDialogUpdateScope.value === "dual_stack" &&
+    targetDialogIPv4Options.value.length === 0 &&
+    targetDialogIPv6Options.value.length === 0
+  ) {
+    toast.error("当前网卡没有可用的地址");
+    return false;
+  }
+
+  if (
+    targetDialogUpdateScope.value !== "ipv6_only" &&
+    targetDialogIPv4Options.value.length > 0 &&
+    !normalizeInterfaceAddressIndex(config[INTERFACE_IPV4_INDEX_KEY])
+  ) {
+    toast.error("请选择 IPv4 地址");
+    return false;
+  }
+
+  if (
+    targetDialogUpdateScope.value !== "ipv4_only" &&
+    targetDialogIPv6Options.value.length > 0 &&
+    !normalizeInterfaceAddressIndex(config[INTERFACE_IPV6_INDEX_KEY])
+  ) {
+    toast.error("请选择 IPv6 地址");
+    return false;
+  }
+
+  return true;
+}
+
+async function saveTargetDialog() {
+  if (!validateTargetDialogConfig()) {
+    return;
+  }
+
+  const payload = {
+    name: targetDialogState.value.name.trim() || undefined,
+    provider: targetDialogState.value.provider,
+    enabled: targetDialogState.value.enabled,
+    config: { ...targetDialogState.value.config },
+  };
+
+  await runSaveTarget(
+    async () => {
+      if (targetDialogMode.value === "edit" && targetDialogState.value.id) {
+        await DDNSAPI.updateTarget(targetDialogState.value.id, payload);
+        return;
+      }
+
+      await DDNSAPI.createTarget(payload);
+    },
+    {
+      onSuccess: async () => {
+        showTargetDialog.value = false;
+        toast.success(
+          targetDialogMode.value === "create" ? "更多域已创建" : "更多域已更新",
+        );
+        await loadStatus();
+        ddnsPolling.resetCursor();
+        void ddnsPolling.refresh();
+      },
+    },
+  );
+}
+
+async function onTestExtraTarget(target: DDNSTargetSummaryPayload) {
+  testingTargetId.value = target.id;
+  await runTestTarget(
+    async () => {
+      const result = await DDNSAPI.testTarget(target.id);
+      if (result.success) {
+        toast.success("更多域更新成功");
+      } else {
+        toast.error("更多域更新失败", { description: result.message });
+      }
+    },
+    {
+      onFinally: async () => {
+        testingTargetId.value = "";
+        await loadStatus();
+      },
+    },
+  );
+}
+
+async function onToggleExtraTarget(
+  target: DDNSTargetSummaryPayload,
+  enabled: boolean,
+) {
+  togglingTargetId.value = target.id;
+  await runToggleTarget(
+    async () => {
+      await DDNSAPI.setTargetEnabled(target.id, enabled);
+    },
+    {
+      onSuccess: async () => {
+        toast.success(enabled ? "更多域已启用" : "更多域已停用");
+        await loadStatus();
+      },
+      onFinally: () => {
+        togglingTargetId.value = "";
+      },
+    },
+  );
+}
+
+async function onDeleteExtraTarget(target: DDNSTargetSummaryPayload) {
+  deletingTargetId.value = target.id;
+  await runDeleteTarget(
+    async () => {
+      await DDNSAPI.deleteTarget(target.id);
+    },
+    {
+      onSuccess: async () => {
+        toast.success("更多域已删除");
+        await loadStatus();
+      },
+      onFinally: () => {
+        deletingTargetId.value = "";
+      },
+    },
+  );
 }
 
 async function onSaveConfigSilent() {
@@ -1026,13 +1497,13 @@ onUnmounted(() => {
     </Card>
 
     <ConfigCollapsibleCard
-      title="提供商配置"
+      title="主域配置"
       :configured="hasProviderConfig"
       :ready="!isLoading"
       expanded-content-class="p-0 sm:p-0"
     >
       <template #summary>
-        当前提供商: {{ currentProviderDef?.label || "未配置" }}
+        主域当前提供商: {{ currentProviderDef?.label || "未配置" }}
       </template>
 
       <template v-if="hasSavedProviderConfig" #collapsed-actions>
@@ -1542,6 +2013,181 @@ onUnmounted(() => {
 
     <Card class="gap-2">
       <CardHeader>
+        <div
+          class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"
+        >
+          <div class="space-y-1">
+            <CardTitle class="text-base">更多域</CardTitle>
+            <p class="text-sm text-muted-foreground">
+              额外加入的 DDNS 更新目标，不影响主域配置。
+            </p>
+          </div>
+          <Button size="sm" @click="openCreateTargetDialog">
+            <Plus class="mr-1.5 h-4 w-4" />
+            新增域
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent class="space-y-3">
+        <div
+          v-if="!hasExtraTargets"
+          class="rounded-xl border border-dashed px-4 py-6 text-sm text-muted-foreground"
+        >
+          暂无更多域。新增后可让主域和额外域一起参与自动更新。
+        </div>
+
+        <div v-else class="space-y-3">
+          <div
+            v-for="target in extraTargets"
+            :key="target.id"
+            class="rounded-xl border bg-card px-4 py-4"
+          >
+            <div
+              class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between"
+            >
+              <div class="min-w-0 space-y-2">
+                <div class="flex flex-wrap items-center gap-2">
+                  <p class="text-sm font-medium">
+                    {{ getTargetDisplayName(target) }}
+                  </p>
+                  <LiveStatusBadge
+                    :active="target.enabled"
+                    active-label="已启用"
+                    inactive-label="已停用"
+                  />
+                </div>
+                <p
+                  class="text-sm text-muted-foreground break-all"
+                  v-if="target.domainSummary"
+                >
+                  {{ target.domainSummary }}
+                </p>
+                <p class="text-xs text-muted-foreground">
+                  {{ target.providerLabel }}
+                </p>
+                <p
+                  v-if="target.lastCheck.message"
+                  class="text-xs text-muted-foreground"
+                >
+                  {{ target.lastCheck.message }}
+                </p>
+              </div>
+
+              <div class="grid gap-3 sm:grid-cols-3 lg:min-w-[360px]">
+                <div
+                  v-if="shouldShowTargetIPv4Status(target)"
+                  class="rounded-lg px-3 py-3"
+                >
+                  <p
+                    class="text-[10px] uppercase tracking-wider text-muted-foreground"
+                  >
+                    IPv4地址
+                  </p>
+                  <button
+                    type="button"
+                    class="mt-1 block text-left text-sm font-mono font-medium transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 rounded-sm disabled:pointer-events-none disabled:text-foreground"
+                    :disabled="!target.lastIP.ipv4"
+                    @click="copyIpAddress('IPv4', target.lastIP.ipv4)"
+                  >
+                    {{ target.lastIP.ipv4 || "---.---.---.---" }}
+                  </button>
+                </div>
+                <div
+                  v-if="shouldShowTargetIPv6Status(target)"
+                  class="rounded-lg px-3 py-3"
+                >
+                  <p
+                    class="text-[10px] uppercase tracking-wider text-muted-foreground"
+                  >
+                    IPv6地址
+                  </p>
+                  <button
+                    type="button"
+                    class="mt-1 block min-w-0 max-w-full rounded-sm text-left transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:text-foreground"
+                    :disabled="!target.lastIP.ipv6"
+                    @click="copyIpAddress('IPv6', target.lastIP.ipv6)"
+                  >
+                    <OverflowTooltipText
+                      as="span"
+                      :text="target.lastIP.ipv6 || '未检测到地址'"
+                      class="text-sm font-mono font-medium"
+                    />
+                  </button>
+                </div>
+                <div class="rounded-lg px-3 py-3">
+                  <p
+                    class="text-[10px] uppercase tracking-wider text-muted-foreground"
+                  >
+                    最后检查
+                  </p>
+                  <div class="mt-1 text-sm">
+                    <HumanFriendlyTime
+                      :value="target.lastCheck.checked_at"
+                      empty-text="从未"
+                      :tooltip-lines="getTargetLastCheckTooltipLines(target)"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-4 flex flex-wrap justify-end gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                :disabled="isSavingTarget"
+                @click="openEditTargetDialog(target.id)"
+              >
+                编辑
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                :disabled="testingTargetId === target.id"
+                @click="onTestExtraTarget(target)"
+              >
+                <RefreshCw
+                  v-if="testingTargetId === target.id"
+                  class="mr-1.5 h-3.5 w-3.5 animate-spin"
+                />
+                {{ testingTargetId === target.id ? "更新中..." : "立即更新" }}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                :disabled="togglingTargetId === target.id"
+                @click="onToggleExtraTarget(target, !target.enabled)"
+              >
+                {{ target.enabled ? "停用" : "启用" }}
+              </Button>
+              <ConfirmDangerPopover
+                title="确认删除更多域？"
+                :description="`删除后将不再自动更新 ${getTargetDisplayName(target)}，且该条目的运行状态会一并移除。`"
+                :loading="deletingTargetId === target.id"
+                :disabled="deletingTargetId === target.id"
+                :on-confirm="() => onDeleteExtraTarget(target)"
+                content-class="w-72 text-left"
+              >
+                <template #trigger>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    :disabled="deletingTargetId === target.id"
+                    class="text-destructive hover:text-destructive"
+                  >
+                    <Trash2 class="mr-1.5 h-3.5 w-3.5" />
+                    {{ deletingTargetId === target.id ? "删除中..." : "删除" }}
+                  </Button>
+                </template>
+              </ConfirmDangerPopover>
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+
+    <Card class="gap-2">
+      <CardHeader>
         <div class="flex items-center justify-between">
           <CardTitle class="text-base">日志</CardTitle>
           <div class="flex gap-2">
@@ -1568,6 +2214,489 @@ onUnmounted(() => {
         />
       </CardContent>
     </Card>
+
+    <Dialog :open="showTargetDialog" @update:open="showTargetDialog = $event">
+      <DialogContent class="sm:max-w-[760px] max-h-[88vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{{ targetDialogTitle }}</DialogTitle>
+          <DialogDescription>{{ targetDialogDescription }}</DialogDescription>
+        </DialogHeader>
+
+        <div class="overflow-hidden rounded-lg border divide-y divide-border">
+          <div
+            class="p-4 sm:p-5 grid gap-2 sm:grid-cols-[180px_1fr] md:grid-cols-[220px_1fr] items-start transition-colors hover:bg-muted/10"
+          >
+            <div class="space-y-1 mt-1.5">
+              <Label class="text-sm font-medium">启用状态</Label>
+              <p class="text-xs text-muted-foreground hidden sm:block pr-4">
+                关闭则不再自动更新。
+              </p>
+            </div>
+            <div class="w-full max-w-md space-y-2">
+              <div class="flex h-10 w-full items-center justify-end gap-3 px-3">
+                <Switch v-model="targetDialogState.enabled" />
+                <span class="text-sm text-muted-foreground">
+                  {{ targetDialogState.enabled ? "已启用" : "已停用" }}
+                </span>
+              </div>
+              <p class="text-[11px] text-muted-foreground sm:hidden">
+                关闭则不再自动更新。
+              </p>
+            </div>
+          </div>
+
+          <div
+            class="p-4 sm:p-5 grid gap-2 sm:grid-cols-[180px_1fr] md:grid-cols-[220px_1fr] items-start transition-colors hover:bg-muted/10"
+          >
+            <div class="space-y-1 mt-1.5">
+              <Label for="ddns-target-name" class="text-sm font-medium">
+                名称
+              </Label>
+              <p class="text-xs text-muted-foreground hidden sm:block pr-4">
+                可选，仅用于区分这个额外 DDNS 条目，例如 NAS、备用入口。
+              </p>
+            </div>
+            <div class="w-full max-w-md space-y-2">
+              <Input
+                id="ddns-target-name"
+                v-model="targetDialogState.name"
+                placeholder="例如：NAS、备用入口"
+              />
+              <p class="text-[11px] text-muted-foreground sm:hidden">
+                可选，仅用于区分这个额外 DDNS 条目，例如 NAS、备用入口。
+              </p>
+            </div>
+          </div>
+
+          <div
+            class="p-4 sm:p-5 grid gap-2 sm:grid-cols-[180px_1fr] md:grid-cols-[220px_1fr] items-start transition-colors hover:bg-muted/10"
+          >
+            <div class="space-y-1 mt-1.5">
+              <Label for="ddns-target-provider" class="text-sm font-medium">
+                DDNS 提供商
+              </Label>
+              <p class="text-xs text-muted-foreground hidden sm:block pr-4">
+                每个额外域都可以使用独立的配置项。
+              </p>
+            </div>
+            <div class="w-full max-w-md space-y-2">
+              <Select
+                :modelValue="targetDialogState.provider"
+                @update:modelValue="
+                  (val: any) =>
+                    handleTargetDialogProviderChange(String(val ?? ''))
+                "
+              >
+                <SelectTrigger id="ddns-target-provider">
+                  <SelectValue placeholder="选择提供商" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem
+                    v-for="provider in providers"
+                    :key="provider.name"
+                    :value="provider.name"
+                  >
+                    {{ provider.label }}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p class="text-[11px] text-muted-foreground sm:hidden">
+                每个额外域都可以使用独立的配置项。
+              </p>
+            </div>
+          </div>
+
+          <template v-if="targetDialogState.provider">
+            <div
+              class="p-4 sm:p-5 grid gap-2 sm:grid-cols-[180px_1fr] md:grid-cols-[220px_1fr] items-start transition-colors hover:bg-muted/10"
+            >
+              <div class="space-y-1 mt-1.5">
+                <Label
+                  for="ddns-target-update-scope"
+                  class="text-sm font-medium"
+                >
+                  更新范围
+                </Label>
+                <p class="text-xs text-muted-foreground hidden sm:block pr-4">
+                  更新 IPv4、IPv6，或同时更新两者。
+                </p>
+              </div>
+              <div class="w-full max-w-md space-y-2">
+                <Select
+                  :modelValue="
+                    targetDialogState.config[UPDATE_SCOPE_KEY] ||
+                    DEFAULT_DDNS_UPDATE_SCOPE
+                  "
+                  @update:modelValue="
+                    (val: any) =>
+                      (targetDialogState.config[UPDATE_SCOPE_KEY] =
+                        normalizeUpdateScope(String(val ?? '')))
+                  "
+                >
+                  <SelectTrigger id="ddns-target-update-scope">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem
+                      v-for="option in UPDATE_SCOPE_OPTIONS"
+                      :key="option.value"
+                      :value="option.value"
+                    >
+                      {{ option.label }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <p class="text-[11px] text-muted-foreground sm:hidden">
+                  更新 IPv4、IPv6，或同时更新两者。
+                </p>
+              </div>
+            </div>
+
+            <div
+              class="p-4 sm:p-5 grid gap-2 sm:grid-cols-[180px_1fr] md:grid-cols-[220px_1fr] items-start transition-colors hover:bg-muted/10"
+            >
+              <div class="space-y-1 mt-1.5">
+                <Label for="ddns-target-ip-source" class="text-sm font-medium">
+                  获取 IP 方式
+                </Label>
+                <p class="text-xs text-muted-foreground hidden sm:block pr-4">
+                  可从公网探测当前出口地址，或直接使用所选网卡上的地址。
+                </p>
+              </div>
+              <div class="w-full max-w-md space-y-2">
+                <Select
+                  :modelValue="
+                    targetDialogState.config[IP_SOURCE_KEY] ||
+                    DEFAULT_DDNS_IP_SOURCE
+                  "
+                  @update:modelValue="
+                    (val: any) =>
+                      (targetDialogState.config[IP_SOURCE_KEY] =
+                        normalizeIpSource(String(val ?? '')))
+                  "
+                >
+                  <SelectTrigger id="ddns-target-ip-source">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem
+                      v-for="option in IP_SOURCE_OPTIONS"
+                      :key="option.value"
+                      :value="option.value"
+                    >
+                      {{ option.label }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <p class="text-[11px] text-muted-foreground">
+                  从网卡直接获取时，只显示看起来可直接用于 DDNS
+                  的地址，并过滤明显内网地址。
+                </p>
+              </div>
+            </div>
+
+            <div
+              class="p-4 sm:p-5 grid gap-2 sm:grid-cols-[180px_1fr] md:grid-cols-[220px_1fr] items-start transition-colors hover:bg-muted/10"
+            >
+              <div class="space-y-1 mt-1.5">
+                <Label
+                  for="ddns-target-network-interface"
+                  class="text-sm font-medium"
+                >
+                  出站网卡
+                </Label>
+                <p class="text-xs text-muted-foreground hidden sm:block pr-4">
+                  测试更新和自动更新都会优先从这里选择的网卡发起请求。
+                </p>
+              </div>
+              <div class="w-full max-w-md space-y-2">
+                <Select
+                  :modelValue="
+                    toNetworkInterfaceSelectValue(
+                      targetDialogState.config[NETWORK_INTERFACE_KEY],
+                    )
+                  "
+                  @update:modelValue="
+                    (val: any) =>
+                      updateTargetDialogNetworkInterface(
+                        val === NETWORK_INTERFACE_AUTO_VALUE
+                          ? ''
+                          : String(val ?? ''),
+                      )
+                  "
+                >
+                  <SelectTrigger id="ddns-target-network-interface">
+                    <SelectValue :placeholder="'自动选择'">
+                      <span class="block min-w-0 max-w-full truncate">
+                        {{ targetDialogNetworkInterfaceLabel }}
+                      </span>
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent
+                    class="w-[var(--reka-select-trigger-width)] max-w-[min(32rem,calc(100vw-2rem))]"
+                  >
+                    <SelectItem :value="NETWORK_INTERFACE_AUTO_VALUE">
+                      自动选择
+                    </SelectItem>
+                    <SelectItem
+                      v-for="networkInterface in targetDialogResolvedNetworkInterfaces"
+                      :key="networkInterface.name"
+                      :value="networkInterface.name"
+                    >
+                      <div class="min-w-0 flex-1 pr-5">
+                        <OverflowTooltipText
+                          :text="networkInterface.label"
+                          class="text-sm"
+                          tooltip-align="start"
+                          tooltip-side="right"
+                        />
+                      </div>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <p class="text-[11px] text-muted-foreground sm:hidden">
+                  测试更新和自动更新都会优先从这里选择的网卡发起请求。
+                </p>
+              </div>
+            </div>
+
+            <div
+              v-if="targetDialogShouldShowInterfaceBlock"
+              class="p-4 sm:p-5 grid gap-2 sm:grid-cols-[180px_1fr] md:grid-cols-[220px_1fr] items-start transition-colors hover:bg-muted/10"
+            >
+              <div class="space-y-1 mt-1.5">
+                <Label class="text-sm font-medium">网卡地址说明</Label>
+                <p class="text-xs text-muted-foreground hidden sm:block pr-4">
+                  下方地址列表只展示过滤后的候选项，用于避免误选明显内网地址。
+                </p>
+              </div>
+              <div
+                class="w-full max-w-md space-y-2 text-[11px] leading-5 text-muted-foreground"
+              >
+                <p>
+                  当前按顺序保存“第几个 IPv4 /
+                  IPv6”。如果更换网卡，会自动清空已选地址。
+                </p>
+                <p>
+                  已过滤明显内网地址；如果列表为空，请更换网卡或改用从公网获取。
+                </p>
+              </div>
+            </div>
+
+            <div
+              v-if="
+                targetDialogUpdateScope !== 'ipv6_only' &&
+                targetDialogShouldShowInterfaceBlock
+              "
+              class="p-4 sm:p-5 grid gap-2 sm:grid-cols-[180px_1fr] md:grid-cols-[220px_1fr] items-start transition-colors hover:bg-muted/10"
+            >
+              <div class="space-y-1 mt-1.5">
+                <Label for="ddns-target-ipv4" class="text-sm font-medium">
+                  选择 IPv4 地址
+                </Label>
+                <p class="text-xs text-muted-foreground hidden sm:block pr-4">
+                  将把所选网卡上的这个 IPv4 地址写入 DDNS。
+                </p>
+              </div>
+              <div class="w-full max-w-md space-y-2">
+                <Select
+                  :modelValue="
+                    normalizeInterfaceAddressIndex(
+                      targetDialogState.config[INTERFACE_IPV4_INDEX_KEY],
+                    ) || undefined
+                  "
+                  :disabled="targetDialogIPv4Options.length === 0"
+                  @update:modelValue="
+                    (val: any) =>
+                      (targetDialogState.config[INTERFACE_IPV4_INDEX_KEY] =
+                        normalizeInterfaceAddressIndex(String(val ?? '')))
+                  "
+                >
+                  <SelectTrigger id="ddns-target-ipv4">
+                    <SelectValue placeholder="选择一个 IPv4 地址" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem
+                      v-for="option in targetDialogIPv4Options"
+                      :key="option.value"
+                      :value="option.value"
+                    >
+                      {{ option.label }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <p class="text-[11px] text-muted-foreground sm:hidden">
+                  将把所选网卡上的这个 IPv4 地址写入 DDNS。
+                </p>
+              </div>
+            </div>
+
+            <div
+              v-if="
+                targetDialogUpdateScope !== 'ipv4_only' &&
+                targetDialogShouldShowInterfaceBlock
+              "
+              class="p-4 sm:p-5 grid gap-2 sm:grid-cols-[180px_1fr] md:grid-cols-[220px_1fr] items-start transition-colors hover:bg-muted/10"
+            >
+              <div class="space-y-1 mt-1.5">
+                <Label for="ddns-target-ipv6" class="text-sm font-medium">
+                  选择 IPv6 地址
+                </Label>
+                <p class="text-xs text-muted-foreground hidden sm:block pr-4">
+                  将把所选网卡上的这个 IPv6 地址写入 DDNS。
+                </p>
+              </div>
+              <div class="w-full max-w-md space-y-2">
+                <Select
+                  :modelValue="
+                    normalizeInterfaceAddressIndex(
+                      targetDialogState.config[INTERFACE_IPV6_INDEX_KEY],
+                    ) || undefined
+                  "
+                  :disabled="targetDialogIPv6Options.length === 0"
+                  @update:modelValue="
+                    (val: any) =>
+                      (targetDialogState.config[INTERFACE_IPV6_INDEX_KEY] =
+                        normalizeInterfaceAddressIndex(String(val ?? '')))
+                  "
+                >
+                  <SelectTrigger id="ddns-target-ipv6">
+                    <SelectValue placeholder="选择一个 IPv6 地址" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem
+                      v-for="option in targetDialogIPv6Options"
+                      :key="option.value"
+                      :value="option.value"
+                    >
+                      {{ option.label }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <p class="text-[11px] text-muted-foreground sm:hidden">
+                  将把所选网卡上的这个 IPv6 地址写入 DDNS。
+                </p>
+              </div>
+            </div>
+
+            <template v-if="targetDialogProviderDef">
+              <div
+                v-for="field in targetDialogProviderDef.fields"
+                :key="`target-${field.key}`"
+                class="p-4 sm:p-5 grid gap-2 sm:grid-cols-[180px_1fr] md:grid-cols-[220px_1fr] items-start transition-colors hover:bg-muted/10"
+              >
+                <div class="space-y-1 mt-1.5">
+                  <Label
+                    :for="`ddns-target-field-${field.key}`"
+                    class="text-sm font-medium flex items-center gap-1"
+                  >
+                    {{ field.label }}
+                    <span
+                      v-if="field.required !== false"
+                      class="text-destructive"
+                    >
+                      *
+                    </span>
+                  </Label>
+                  <p
+                    v-if="getFieldDescription(field)"
+                    class="text-xs text-muted-foreground hidden sm:block pr-4"
+                  >
+                    {{ getFieldDescription(field) }}
+                  </p>
+                </div>
+
+                <div class="w-full max-w-md space-y-2">
+                  <Select
+                    v-if="field.type === 'select' && field.options"
+                    :modelValue="
+                      targetDialogState.config[field.key] ||
+                      field.options[0]?.value ||
+                      ''
+                    "
+                    @update:modelValue="
+                      (val: any) =>
+                        (targetDialogState.config[field.key] = String(
+                          val ?? '',
+                        ))
+                    "
+                  >
+                    <SelectTrigger :id="`ddns-target-field-${field.key}`">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem
+                        v-for="option in field.options"
+                        :key="option.value"
+                        :value="option.value"
+                      >
+                        {{ option.label }}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+
+                  <div v-else-if="field.type === 'password'" class="relative">
+                    <Input
+                      :id="`ddns-target-field-${field.key}`"
+                      v-model="targetDialogState.config[field.key]"
+                      :type="
+                        isTargetFieldVisible(field.key) ? 'text' : 'password'
+                      "
+                      :placeholder="field.placeholder"
+                      :autocomplete="getFieldAutocomplete(field)"
+                      class="pr-10"
+                    />
+                    <button
+                      type="button"
+                      class="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                      @click="toggleTargetFieldVisibility(field.key)"
+                    >
+                      <component
+                        :is="isTargetFieldVisible(field.key) ? EyeOff : Eye"
+                        class="h-4 w-4"
+                      />
+                    </button>
+                  </div>
+
+                  <Input
+                    v-else
+                    :id="`ddns-target-field-${field.key}`"
+                    v-model="targetDialogState.config[field.key]"
+                    :type="field.type"
+                    :placeholder="field.placeholder"
+                    :autocomplete="getFieldAutocomplete(field)"
+                  />
+
+                  <p
+                    v-if="getFieldDescription(field)"
+                    class="text-[11px] text-muted-foreground sm:hidden"
+                  >
+                    {{ getFieldDescription(field) }}
+                  </p>
+                </div>
+              </div>
+            </template>
+          </template>
+        </div>
+
+        <DialogFooter class="gap-2">
+          <Button
+            variant="outline"
+            :disabled="isSavingTarget"
+            @click="showTargetDialog = false"
+          >
+            取消
+          </Button>
+          <Button :disabled="isSavingTarget" @click="saveTargetDialog">
+            <RefreshCw
+              v-if="isSavingTarget"
+              class="mr-1.5 h-4 w-4 animate-spin"
+            />
+            {{ isSavingTarget ? "保存中..." : "保存" }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </div>
 
   <div v-else class="flex h-full items-center justify-center min-h-[400px]">
