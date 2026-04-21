@@ -433,10 +433,13 @@ export class IPTablesWhiteListManager {
     for (const [id, raw] of Object.entries(allRecords)) {
       const record = deserializeRecord(raw);
       if (!record) continue;
+      const matchesExactIp =
+        isIPRecord(record) && normalizeIp(record.ip || "") === normalizedIp;
+      const matchesResolvedCname =
+        isCNAMERecord(record) &&
+        getCnameResolvedTargets(record).includes(normalizedIp);
       if (
-        (isIPRecord(record) ||
-          (isCNAMERecord(record) &&
-            getCnameResolvedTargets(record).includes(normalizedIp))) &&
+        (matchesExactIp || matchesResolvedCname) &&
         record.status === "active"
       ) {
         records.push(record);
