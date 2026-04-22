@@ -489,6 +489,12 @@ stop_external_resources() {
 
     # FRP client managed by server-admin route (/api/admin/frpc/start)
     stop_matching_processes "${frpc_config}" "FRPC"
+    if [ -d "${PKG_VAR_DIR}/frp/instances" ]; then
+        for frpc_instance_config in "${PKG_VAR_DIR}"/frp/instances/*/frpc.toml; do
+            [ -f "${frpc_instance_config}" ] || continue
+            stop_matching_processes "${frpc_instance_config}" "FRPC"
+        done
+    fi
     # Cloudflared managed by server-admin route (/api/admin/cloudflared/start)
     stop_matching_processes "${cloudflared_bin}" "Cloudflared"
     # Go reauth proxy fallback cleanup (in case PID file is stale/missing)

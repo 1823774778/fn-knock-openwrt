@@ -348,6 +348,9 @@ export const emitTunnelConnectivityEvent = async (payload: {
   connected: boolean;
   pid?: number | null;
   message?: string;
+  instanceId?: string;
+  instanceName?: string;
+  isPrimary?: boolean;
 }) =>
   systemEventManager.publishSafely({
     type:
@@ -362,13 +365,21 @@ export const emitTunnelConnectivityEvent = async (payload: {
     level: payload.connected ? FN_EVENT_LEVEL_INFO : FN_EVENT_LEVEL_ERROR,
     subject: {
       kind: SYSTEM_EVENT_SUBJECT_KIND_TUNNEL,
-      id: payload.tunnel,
+      id:
+        payload.tunnel === "frp" && payload.instanceId
+          ? `frp:${payload.instanceId}`
+          : payload.tunnel,
     },
     payload: {
       tunnel: payload.tunnel,
       status: payload.connected ? "connected" : "disconnected",
       ...(typeof payload.pid === "number" && Number.isFinite(payload.pid)
         ? { pid: payload.pid }
+        : {}),
+      ...(payload.instanceId ? { instance_id: payload.instanceId } : {}),
+      ...(payload.instanceName ? { instance_name: payload.instanceName } : {}),
+      ...(typeof payload.isPrimary === "boolean"
+        ? { is_primary: payload.isPrimary }
         : {}),
       ...(payload.message ? { message: payload.message } : {}),
     },

@@ -141,6 +141,18 @@ const router = createRouter({
           component: () => import("../views/Tunnel.vue"),
         },
         {
+          path: "tunnel/frp/instances/new",
+          name: "FrpcInstanceCreate",
+          component: () =>
+            import("../views/tunnel/frp/FrpcInstancePage.vue"),
+        },
+        {
+          path: "tunnel/frp/instances/:id",
+          name: "FrpcInstanceDetail",
+          component: () =>
+            import("../views/tunnel/frp/FrpcInstancePage.vue"),
+        },
+        {
           path: "ddns",
           name: "DDNSManagement",
           component: () => import("../views/DDNSManagement.vue"),
@@ -185,6 +197,7 @@ router.beforeEach(async (to, from) => {
     to.path !== "/subdomains" &&
     to.path !== "/terminal" &&
     to.path !== "/tunnel" &&
+    !to.path.startsWith("/tunnel/") &&
     to.path !== "/system/smart-connect"
   ) {
     return true;
@@ -219,7 +232,10 @@ router.beforeEach(async (to, from) => {
     return configStore.config?.run_type === 1 ? "/proxy" : "/whitelist";
   }
 
-  if (to.path === "/tunnel" && configStore.config?.run_type !== 1) {
+  if (
+    (to.path === "/tunnel" || to.path.startsWith("/tunnel/")) &&
+    configStore.config?.run_type !== 1
+  ) {
     return "/system";
   }
 

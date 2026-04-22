@@ -19,8 +19,6 @@ type TomlTable = Record<string, unknown>
 const DEFAULT_SERVER_PORT = '7000'
 const DEFAULT_REMOTE_PORT = '0'
 const DEFAULT_WEB_USER = 'admin'
-const DEFAULT_WEB_ADDR = '127.0.0.1'
-const DEFAULT_WEB_PORT = 7995
 const DEFAULT_PROXY_NAME = 'reproxy'
 const DEFAULT_PROXY_TYPE = 'tcp'
 const DEFAULT_LOCAL_IP = '127.0.0.1'
@@ -156,10 +154,6 @@ function ensureManagedProxy(doc: TomlTable): TomlTable {
   return proxy
 }
 
-function generatePassword(): string {
-  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
-}
-
 export function extractVisualFieldsFromToml(raw: string, defaults: FrpcVisualDefaults): FrpcVisualFields {
   const doc = parseTomlDocument(raw)
   const auth = isTomlTable(doc.auth) ? doc.auth : null
@@ -190,25 +184,11 @@ export function mergeVisualFieldsIntoToml(
   const serverAddr = fields.serverAddr.trim()
   const serverPort = resolvePortNumber(fields.serverPort, DEFAULT_SERVER_PORT)
   const serverToken = fields.serverToken.trim()
-  const webUser = fields.webUser.trim() || DEFAULT_WEB_USER
-  const webPassword = fields.webPassword.trim() || generatePassword()
   const localPort = resolvePortNumber(fields.localPort, defaults.localPort)
   const remotePort = resolvePortNumber(fields.remotePort, DEFAULT_REMOTE_PORT)
 
   writeAliasedString(doc, ['serverAddr', 'server_addr'], serverAddr)
   writeAliasedNumber(doc, ['serverPort', 'server_port'], serverPort)
-
-  const webServer = ensureTable(doc, 'webServer')
-  if (typeof webServer.addr !== 'string' || !webServer.addr.trim()) {
-    webServer.addr = DEFAULT_WEB_ADDR
-  }
-  if (normalizePortString(webServer.port, String(DEFAULT_WEB_PORT)) !== String(DEFAULT_WEB_PORT)) {
-    webServer.port = resolvePortNumber(String(webServer.port ?? DEFAULT_WEB_PORT), String(DEFAULT_WEB_PORT))
-  } else {
-    webServer.port = DEFAULT_WEB_PORT
-  }
-  webServer.user = webUser
-  webServer.password = webPassword
 
   let wroteToken = false
   if (isTomlTable(doc.auth)) {

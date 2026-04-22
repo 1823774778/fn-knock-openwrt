@@ -55,6 +55,7 @@ ensure_runtime_layout() {
   mkdir -p \
     "${DATA_DIR}" \
     "${DATA_DIR}/frp" \
+    "${DATA_DIR}/frp/instances" \
     "${DATA_DIR}/cloudflared" \
     "${DATA_DIR}/updates" \
     "${GATEWAY_CONFIG_DIR}"
