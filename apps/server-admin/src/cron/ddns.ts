@@ -3,7 +3,7 @@ import { cron } from "@elysiajs/cron";
 import { runAutomaticDDNSCheck } from "../lib/ddns/auto-check";
 
 export const registerDDNSCron = (app: Elysia) => {
-  const pattern = process.env.DDNS_CRON || "*/5 * * * *";
+  const pattern = process.env.DDNS_CRON || "*/10 * * * *";
 
   app.use(
     cron({

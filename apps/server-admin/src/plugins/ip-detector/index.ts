@@ -6,13 +6,13 @@ const IP_DETECTION_TIMEOUT_MS = 7000;
 
 export class IPDetector {
   private static readonly V4_SOURCES = [
+    "https://4.wxlnk.com",
     "http://ipv4.icanhazip.com",
-    "http://4.ipw.cn",
   ];
 
   private static readonly V6_SOURCES = [
-    "http://6.ipw.cn",
-    "http://6.fnknock.cn"
+    "https://6.wxlnk.com",
+    "https://ipv6.icanhazip.com/"
   ];
 
   private static parseDetectedIP(value: unknown, family: 4 | 6): string | null {
