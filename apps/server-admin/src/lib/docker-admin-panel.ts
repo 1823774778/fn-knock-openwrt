@@ -1,15 +1,12 @@
 import type { IncomingMessage } from "node:http";
 import { BlockList, isIP } from "node:net";
 import { randomBytes, scrypt as scryptCallback } from "node:crypto";
-import { promisify } from "node:util";
 import { normalizeCidrLines } from "../../../../packages/admin-shared/src/utils/cidr";
 import { redis } from "./redis";
 import { getRequiredEnv } from "./env";
 import { getClientIp } from "./auth-request";
 import { normalizeIp, isWhitelistExemptIp } from "./ip-normalize";
 import { safeEqualString } from "./security";
-
-const scryptAsync = promisify(scryptCallback);
 
 const DOCKER_ADMIN_PASSWORD_KEY = "fn_knock:docker_admin:password:v1";
 const DOCKER_ADMIN_SESSION_PREFIX = "fn_knock:docker_admin:session:v1";
@@ -38,6 +35,27 @@ const SCRYPT_PARAMS = {
   maxmem: 128 * 1024 * 1024,
 };
 
+const scryptAsync = (
+  password: string,
+  salt: Buffer,
+  keyLength: number,
+  options: {
+    N: number;
+    r: number;
+    p: number;
+    maxmem: number;
+  },
+) =>
+  new Promise<Buffer>((resolve, reject) => {
+    scryptCallback(password, salt, keyLength, options, (error, derivedKey) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(derivedKey);
+    });
+  });
+
 const PROXY_PROTO_HEADERS = [
   "eo-connecting-ip",
   "ali-real-client-ip",
@@ -55,7 +73,7 @@ const normalizeTrustedProxyEntry = (value: string): string => {
     return `${normalizedIp}/${isIP(normalizedIp) === 6 ? "128" : "32"}`;
   }
 
-  const [rawAddress, rawPrefix] = raw.split("/", 2);
+  const [rawAddress = "", rawPrefix = ""] = raw.split("/", 2);
   const normalizedIp = normalizeIp(rawAddress);
   if (!normalizedIp || !/^\d+$/.test(rawPrefix?.trim() || "")) {
     return "";
@@ -223,9 +241,11 @@ const parseCookieValue = (
 };
 
 const normalizeIncomingForwardedIp = (
-  headerValue: string | null | undefined,
+  headerValue: string | string[] | null | undefined,
 ): string => {
-  const raw = String(headerValue ?? "").trim();
+  const raw = String(
+    Array.isArray(headerValue) ? headerValue[0] : (headerValue ?? ""),
+  ).trim();
   if (!raw) return "";
 
   return normalizeIp(raw.split(",")[0]?.trim());
@@ -513,11 +533,14 @@ const getLoginAttemptRecord = async (
       return null;
     }
 
+    const attempts = Number(parsed.attempts);
+    const blockedUntil = Number(parsed.blocked_until);
+
     return {
       ip: parsed.ip,
-      attempts: Math.max(0, Math.trunc(parsed.attempts)),
+      attempts: Math.max(0, Math.trunc(attempts)),
       last_attempt_at: parsed.last_attempt_at,
-      blocked_until: Math.trunc(parsed.blocked_until),
+      blocked_until: Math.trunc(blockedUntil),
     };
   } catch {
     return null;

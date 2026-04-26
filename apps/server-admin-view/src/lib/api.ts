@@ -41,6 +41,8 @@ import type {
   DashboardDisplayConfig,
   IpLocationBatchPayload,
   IpLocationSnapshot,
+  AutoHttpsConfig,
+  AutoHttpsDetails,
   ProtocolMappingFeatureConfig,
   SmartConnectConfig,
   SmartConnectDetails,
@@ -1061,6 +1063,16 @@ export const SystemAPI = {
     );
     return res.data.data;
   },
+  async getAutoHttpsDetails(): Promise<AutoHttpsDetails> {
+    const res = await apiClient.get("/config/auto_https");
+    return res.data.data;
+  },
+  async updateAutoHttps(
+    payload: Partial<AutoHttpsConfig>,
+  ): Promise<AutoHttpsDetails> {
+    const res = await apiClient.post("/config/auto_https", payload);
+    return res.data.data;
+  },
   async getSmartConnectDetails(): Promise<SmartConnectDetails> {
     const res = await apiClient.get("/config/smart_connect/details");
     return res.data.data;
@@ -1275,10 +1287,7 @@ export const FrpcAPI = {
     const res = await apiClient.post("/frpc/instances", payload);
     return res.data.data;
   },
-  async getInstance(
-    id: string,
-    limit = 200,
-  ): Promise<FrpcInstanceDetail> {
+  async getInstance(id: string, limit = 200): Promise<FrpcInstanceDetail> {
     const res = await apiClient.get(
       `/frpc/instances/${encodeURIComponent(id)}`,
       { params: { limit } },

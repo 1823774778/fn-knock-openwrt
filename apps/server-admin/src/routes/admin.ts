@@ -99,6 +99,10 @@ import {
 } from "../lib/session-cookie";
 import { isValidHostPort } from "../../../../packages/admin-shared/src/utils/parseHostPort";
 import { routeDoc, withRouteDoc } from "../lib/openapi";
+import {
+  autoHttpsRedirectManager,
+  type AutoHttpsConfig,
+} from "../lib/auto-https-redirect";
 
 const parseIntSafe = (value: string | undefined, fallback: number) => {
   const v = Number.parseInt(String(value ?? ""), 10);
@@ -454,6 +458,14 @@ const rollbackGatewayVisibilityConfigAndRuntime = async (
   }
 
   return null;
+};
+
+const buildAutoHttpsDetails = async (settings?: AutoHttpsConfig) => {
+  const config = settings ?? (await configManager.getAutoHttpsConfig());
+  return {
+    ...config,
+    runtime: autoHttpsRedirectManager.getRuntimeState(),
+  };
 };
 
 const rollbackGatewayProxyHeadersConfigAndRuntime = async (
@@ -1645,6 +1657,14 @@ export const adminRoutes = new Elysia({
     },
     routeDoc("获取首页展示配置"),
   )
+  .get(
+    "/config/auto_https",
+    async () => {
+      const details = await buildAutoHttpsDetails();
+      return { success: true, data: details };
+    },
+    routeDoc("获取自动 HTTPS 配置"),
+  )
   .post(
     "/config/auth_credential_settings",
     async ({ body }) => {
@@ -1678,6 +1698,57 @@ export const adminRoutes = new Elysia({
     withRouteDoc("更新首页展示配置", {
       body: t.Object({
         show_entry_status_module: t.Optional(t.Boolean()),
+      }),
+    }),
+  )
+  .post(
+    "/config/auto_https",
+    async ({ body, set }) => {
+      if (body.enabled === true && getRuntimeProfile().is_docker) {
+        set.status = 403;
+        return {
+          success: false,
+          message: "Docker 版本不支持自动 HTTPS",
+        };
+      }
+
+      if (body.enabled === true) {
+        const runtime = await autoHttpsRedirectManager.applyConfig({
+          enabled: true,
+        });
+        const next = await configManager.updateAutoHttpsConfig({
+          enabled: runtime.status === "active",
+        });
+        return {
+          success: true,
+          data: {
+            ...next,
+            runtime,
+          },
+          message:
+            runtime.status === "error"
+              ? runtime.last_error || "自动 HTTPS 启动失败"
+              : undefined,
+        };
+      }
+
+      const next = await configManager.updateAutoHttpsConfig(body);
+      const runtime = await autoHttpsRedirectManager.applyConfig(next);
+      return {
+        success: true,
+        data: {
+          ...next,
+          runtime,
+        },
+        message:
+          runtime.status === "error"
+            ? runtime.last_error || "自动 HTTPS 启动失败"
+            : undefined,
+      };
+    },
+    withRouteDoc("更新自动 HTTPS 配置", {
+      body: t.Object({
+        enabled: t.Optional(t.Boolean()),
       }),
     }),
   )

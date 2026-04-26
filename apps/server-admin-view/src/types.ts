@@ -235,6 +235,28 @@ export interface ProtocolMappingFeatureConfig {
   enabled: boolean;
 }
 
+export interface AutoHttpsConfig {
+  enabled: boolean;
+}
+
+export type AutoHttpsRuntimeStatus = "disabled" | "active" | "error";
+
+export interface AutoHttpsRuntimeState {
+  enabled: boolean;
+  active: boolean;
+  status: AutoHttpsRuntimeStatus;
+  listen_host: string;
+  listen_port: number;
+  redirect_scheme: "https";
+  last_error: string | null;
+  last_error_at: string | null;
+  updated_at: string;
+}
+
+export interface AutoHttpsDetails extends AutoHttpsConfig {
+  runtime: AutoHttpsRuntimeState;
+}
+
 export interface DashboardDisplayConfig {
   show_entry_status_module: boolean;
 }
@@ -492,6 +514,7 @@ export interface AppConfig {
   gateway_proxy_headers?: GatewayProxyHeadersConfig;
   gateway_host_response?: GatewayHostResponseConfig;
   protocol_mapping_feature?: ProtocolMappingFeatureConfig;
+  auto_https?: AutoHttpsConfig;
   dashboard_display?: DashboardDisplayConfig;
   smart_connect?: SmartConnectConfig;
   auth_credential_settings?: AuthCredentialSettings;

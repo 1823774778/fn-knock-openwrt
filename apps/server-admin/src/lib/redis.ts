@@ -34,6 +34,7 @@ import {
   DEFAULT_AUTO_MANAGE_FIREWALL,
   normalizeAutoManageFirewall,
 } from "./firewall-automation";
+import type { AutoHttpsConfig } from "./auto-https-redirect";
 import { normalizeIp } from "./ip-normalize";
 import { getRuntimeCapabilities, getRuntimeProfile } from "./runtime-profile";
 import { normalizeCidrLines } from "../../../../packages/admin-shared/src/utils/cidr";
@@ -436,6 +437,7 @@ export interface AppConfig {
   gateway_proxy_headers?: GatewayProxyHeadersConfig;
   gateway_host_response?: GatewayHostResponseConfig;
   dashboard_display?: DashboardDisplayConfig;
+  auto_https?: AutoHttpsConfig;
   smart_connect?: SmartConnectConfig;
   auth_credential_settings?: AuthCredentialSettings;
   event_system?: EventSystemConfig;
@@ -502,6 +504,10 @@ export const DEFAULT_GATEWAY_HOST_RESPONSE_CONFIG: GatewayHostResponseConfig = {
 
 export const DEFAULT_DASHBOARD_DISPLAY_CONFIG: DashboardDisplayConfig = {
   show_entry_status_module: true,
+};
+
+export const DEFAULT_AUTO_HTTPS_CONFIG: AutoHttpsConfig = {
+  enabled: false,
 };
 
 const DEFAULT_GATEWAY_HOST_RESPONSE_RUNTIME_STATE: GatewayHostResponseRuntimeState =
@@ -711,6 +717,9 @@ const DEFAULT_CONFIG: AppConfig = {
   },
   dashboard_display: {
     ...DEFAULT_DASHBOARD_DISPLAY_CONFIG,
+  },
+  auto_https: {
+    ...DEFAULT_AUTO_HTTPS_CONFIG,
   },
   smart_connect: {
     ...DEFAULT_SMART_CONNECT_CONFIG,
@@ -1115,6 +1124,16 @@ const normalizeDashboardDisplayConfig = (
 
   return {
     show_entry_status_module: raw.show_entry_status_module !== false,
+  };
+};
+
+const normalizeAutoHttpsConfig = (
+  value?: Partial<AutoHttpsConfig> | null,
+): AutoHttpsConfig => {
+  const raw = value ?? {};
+
+  return {
+    enabled: raw.enabled === true,
   };
 };
 
@@ -2255,6 +2274,7 @@ return actual
         parsed.dashboard_display = normalizeDashboardDisplayConfig(
           parsed.dashboard_display,
         );
+        parsed.auto_https = normalizeAutoHttpsConfig(parsed.auto_https);
         parsed.smart_connect = normalizeSmartConnectConfig(
           parsed.smart_connect,
         );
@@ -2298,6 +2318,9 @@ return actual
       },
       dashboard_display: {
         ...DEFAULT_DASHBOARD_DISPLAY_CONFIG,
+      },
+      auto_https: {
+        ...DEFAULT_AUTO_HTTPS_CONFIG,
       },
       smart_connect: {
         ...DEFAULT_SMART_CONNECT_CONFIG,
@@ -2355,6 +2378,12 @@ return actual
     ) {
       config.smart_connect.enabled = false;
       corrected.push("smart_connect.enabled -> false");
+    }
+
+    config.auto_https = normalizeAutoHttpsConfig(config.auto_https);
+    if (getRuntimeProfile().is_docker && config.auto_https.enabled === true) {
+      config.auto_https.enabled = false;
+      corrected.push("auto_https.enabled -> false");
     }
 
     const normalizedAutoManageFirewall = normalizeAutoManageFirewall(
@@ -4106,6 +4135,11 @@ return actual
     return normalizeDashboardDisplayConfig(config.dashboard_display);
   }
 
+  async getAutoHttpsConfig(): Promise<AutoHttpsConfig> {
+    const config = await this.getConfig();
+    return normalizeAutoHttpsConfig(config.auto_https);
+  }
+
   async getGatewayVisibilityRuntimeState(): Promise<GatewayVisibilityRuntimeState> {
     try {
       const raw = await this.redis.get(this.gatewayVisibilityRuntimeKey);
@@ -4300,6 +4334,19 @@ return actual
       ...patch,
     });
     config.dashboard_display = next;
+    await this.saveConfig(config);
+    return next;
+  }
+
+  async updateAutoHttpsConfig(
+    patch: Partial<AutoHttpsConfig>,
+  ): Promise<AutoHttpsConfig> {
+    const config = await this.getConfig();
+    const next = normalizeAutoHttpsConfig({
+      ...config.auto_https,
+      ...patch,
+    });
+    config.auto_https = next;
     await this.saveConfig(config);
     return next;
   }

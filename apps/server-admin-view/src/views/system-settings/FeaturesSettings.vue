@@ -16,6 +16,7 @@ import { toast } from "@admin-shared/utils/toast";
 import { ConfigAPI, SystemAPI } from "../../lib/api";
 import type {
   AuthCredentialSettings,
+  AutoHttpsDetails,
   DashboardDisplayConfig,
   ProtocolMappingFeatureConfig,
 } from "../../types";
@@ -31,6 +32,7 @@ const configStore = useConfigStore();
 const protocolMappingEnabled = ref(false);
 const passkeyBindPromptEnabled = ref(true);
 const showEntryStatusModule = ref(true);
+const autoHttpsDetails = ref<AutoHttpsDetails | null>(null);
 const runTypeLabelMap = {
   0: "直连模式",
   1: "反代模式",
@@ -82,9 +84,22 @@ const smartConnectDisabledReason = computed(() => {
   }
   return `仅子域模式可用，当前为${currentRunTypeLabel.value}。`;
 });
+const autoHttpsEnabled = computed(
+  () => autoHttpsDetails.value?.enabled === true,
+);
+const autoHttpsRuntimeError = computed(() => {
+  const runtime = autoHttpsDetails.value?.runtime;
+  if (runtime?.status !== "error") return "";
+  return runtime.last_error || "自动 HTTPS 未能监听 80 端口";
+});
+const showAutoHttpsEntry = computed(() => !configStore.isDockerDeployment);
 
 const applyProtocolMappingSettings = (data: ProtocolMappingFeatureConfig) => {
   protocolMappingEnabled.value = data.enabled;
+};
+
+const applyAutoHttpsDetails = (data: AutoHttpsDetails) => {
+  autoHttpsDetails.value = data;
 };
 
 const applyAuthCredentialSettings = (data: AuthCredentialSettings) => {
@@ -108,13 +123,20 @@ const syncDashboardDisplayFromConfig = () => {
 
 const fetchSettings = async () => {
   await runLoadSettings(async () => {
-    const [protocolMappingSettings, authCredentialSettings] =
-      await Promise.all([
+    const [protocolMappingSettings, authCredentialSettings] = await Promise.all(
+      [
         SystemAPI.getProtocolMappingFeatureConfig(),
         ConfigAPI.getAuthCredentialSettings(),
-      ]);
+      ],
+    );
     applyProtocolMappingSettings(protocolMappingSettings);
     applyAuthCredentialSettings(authCredentialSettings);
+
+    if (showAutoHttpsEntry.value) {
+      applyAutoHttpsDetails(await SystemAPI.getAutoHttpsDetails());
+    } else {
+      autoHttpsDetails.value = null;
+    }
   });
 };
 
@@ -196,6 +218,54 @@ const savePasskeyBindPromptEnabled = async (nextValue: boolean) => {
 
   if (!result) {
     passkeyBindPromptEnabled.value = previousValue;
+  }
+};
+
+const saveAutoHttpsEnabled = async (nextValue: boolean) => {
+  if (isSaving.value) {
+    return;
+  }
+
+  const previousValue = autoHttpsDetails.value;
+  autoHttpsDetails.value = {
+    enabled: nextValue,
+    runtime: previousValue?.runtime ?? {
+      enabled: false,
+      active: false,
+      status: "disabled",
+      listen_host: "0.0.0.0",
+      listen_port: 80,
+      redirect_scheme: "https",
+      last_error: null,
+      last_error_at: null,
+      updated_at: new Date().toISOString(),
+    },
+  };
+
+  const result = await runSaveSettings(
+    () =>
+      SystemAPI.updateAutoHttps({
+        enabled: nextValue,
+      }),
+    {
+      onSuccess: async (data) => {
+        applyAutoHttpsDetails(data);
+        if (data.runtime.status === "error") {
+          toast.error("自动 HTTPS 启动失败", {
+            description:
+              data.runtime.last_error ||
+              "80 端口无法监听，请检查权限或占用情况",
+          });
+        } else {
+          toast.success("功能设置已更新");
+        }
+        await configStore.loadConfig();
+      },
+    },
+  );
+
+  if (!result) {
+    autoHttpsDetails.value = previousValue;
   }
 };
 
@@ -285,6 +355,40 @@ watch(
           :model-value="passkeyBindPromptEnabled"
           :disabled="isSaving"
           @update:model-value="savePasskeyBindPromptEnabled($event === true)"
+        />
+      </div>
+
+      <div
+        v-if="showAutoHttpsEntry"
+        class="flex items-center justify-between bg-muted/10 p-6"
+      >
+        <div class="space-y-1 pr-6">
+          <Label
+            class="cursor-pointer text-base font-medium"
+            :class="autoHttpsRuntimeError ? 'text-red-600' : ''"
+            @click="saveAutoHttpsEnabled(!autoHttpsEnabled)"
+          >
+            自动HTTPS
+          </Label>
+          <div
+            class="text-sm"
+            :class="
+              autoHttpsRuntimeError ? 'text-red-600' : 'text-muted-foreground'
+            "
+          >
+            如果80，443没有被运营商封锁，应用设置，Go 代理端口 (GO_REPROXY_PORT)可改为443，然后开启此开关即可自动跳HTTPS
+          </div>
+          <div
+            v-if="autoHttpsRuntimeError"
+            class="text-xs leading-5 text-red-600"
+          >
+            {{ autoHttpsRuntimeError }}
+          </div>
+        </div>
+        <Switch
+          :model-value="autoHttpsEnabled"
+          :disabled="isSaving"
+          @update:model-value="saveAutoHttpsEnabled($event === true)"
         />
       </div>
 

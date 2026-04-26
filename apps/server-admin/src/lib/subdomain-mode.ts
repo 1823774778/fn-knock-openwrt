@@ -95,7 +95,7 @@ const parseExplicitUrlPort = (
 };
 
 const shouldOmitDerivedGatewayPort = (
-  config?: Pick<AppConfig, "run_type" | "subdomain_mode"> | null,
+  config?: Partial<Pick<AppConfig, "run_type" | "subdomain_mode">> | null,
 ): boolean =>
   config?.run_type === 3 &&
   config.subdomain_mode?.edge_client_ip_enabled === true &&

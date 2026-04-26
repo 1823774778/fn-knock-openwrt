@@ -169,7 +169,7 @@ const maskBytes = (
     }
 
     const mask = (0xff << (8 - remainingBits)) & 0xff;
-    masked[index] &= mask;
+    masked[index] = (masked[index] ?? 0) & mask;
     remainingBits = 0;
   }
 
@@ -210,7 +210,7 @@ const bytesMatchPrefix = (
   const remainingBits = prefixLength % 8;
 
   for (let index = 0; index < fullBytes; index += 1) {
-    if (address[index] !== network[index]) {
+    if ((address[index] ?? 0) !== (network[index] ?? 0)) {
       return false;
     }
   }
@@ -220,7 +220,9 @@ const bytesMatchPrefix = (
   }
 
   const mask = (0xff << (8 - remainingBits)) & 0xff;
-  return (address[fullBytes] & mask) === (network[fullBytes] & mask);
+  return (
+    ((address[fullBytes] ?? 0) & mask) === ((network[fullBytes] ?? 0) & mask)
+  );
 };
 
 export const inferWhiteListTargetType = (

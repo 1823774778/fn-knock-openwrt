@@ -86,6 +86,7 @@ import {
   resolveDockerAdminDiscoverIpFromIncomingMessage,
   resolveDockerAdminIncomingRequestContext,
 } from "./lib/docker-admin-panel";
+import { autoHttpsRedirectManager } from "./lib/auto-https-redirect";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const runtimeProfile = getRuntimeProfile();
@@ -766,6 +767,25 @@ if (runtimeCapabilities.smart_connect_available) {
   console.log(
     `[smart-connect] skipped boot sync: ${getCapabilityUnavailableMessage("smart_connect_available")}`,
   );
+}
+if (runtimeProfile.is_docker) {
+  await autoHttpsRedirectManager.applyConfig({ enabled: false });
+  console.log("[auto-https] skipped boot sync: Docker version is unsupported");
+} else {
+  await autoHttpsRedirectManager
+    .applyConfig(config.auto_https ?? { enabled: false })
+    .then((runtime) => {
+      if (runtime.status === "active") {
+        console.log(
+          `[auto-https] redirect server listening on ${runtime.listen_host}:${runtime.listen_port}`,
+        );
+      } else if (runtime.status === "error") {
+        console.error(`[auto-https] ${runtime.last_error}`);
+      }
+    })
+    .catch((error) => {
+      console.error("[auto-https] failed to apply boot config:", error);
+    });
 }
 await firewallService.applyRunTypeConfig(config.run_type);
 syncGatewayLoggingToGateway(config.gateway_logging).catch((error) => {

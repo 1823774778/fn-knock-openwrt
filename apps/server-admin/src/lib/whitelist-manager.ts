@@ -247,7 +247,10 @@ const deserializeRecord = (raw: string): WhiteListRecord | null => {
 
 export class IPTablesWhiteListManager {
   private redis: Redis;
-  private cnameRefreshTasks = new Map<string, Promise<CnameRefreshResult>>();
+  private cnameRefreshTasks = new Map<
+    string,
+    Promise<CnameRefreshResult | null>
+  >();
 
   constructor() {
     this.redis = redis;
