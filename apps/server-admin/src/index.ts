@@ -774,13 +774,14 @@ if (runtimeProfile.is_docker) {
 } else {
   await autoHttpsRedirectManager
     .applyConfig(config.auto_https ?? { enabled: false })
-    .then((runtime) => {
+    .then(async (runtime) => {
       if (runtime.status === "active") {
         console.log(
           `[auto-https] redirect server listening on ${runtime.listen_host}:${runtime.listen_port}`,
         );
       } else if (runtime.status === "error") {
         console.error(`[auto-https] ${runtime.last_error}`);
+        await configManager.updateAutoHttpsConfig({ enabled: false });
       }
     })
     .catch((error) => {

@@ -2297,16 +2297,18 @@ onUnmounted(() => {
 
         <div class="overflow-hidden rounded-lg border divide-y divide-border">
           <div
-            class="p-4 sm:p-5 grid gap-2 sm:grid-cols-[180px_1fr] md:grid-cols-[220px_1fr] items-start transition-colors hover:bg-muted/10"
+            class="p-4 sm:p-5 grid gap-3 sm:grid-cols-[180px_1fr] md:grid-cols-[220px_1fr] items-start transition-colors hover:bg-muted/10"
           >
-            <div class="space-y-1 mt-1.5">
+            <div class="space-y-1 sm:mt-1.5">
               <Label class="text-sm font-medium">启用状态</Label>
               <p class="text-xs text-muted-foreground hidden sm:block pr-4">
                 关闭则不再自动更新。
               </p>
             </div>
-            <div class="w-full max-w-md space-y-2">
-              <div class="flex h-10 w-full items-center justify-end gap-3 px-3">
+            <div class="w-full max-w-md space-y-2 sm:justify-self-end">
+              <div
+                class="flex min-h-10 w-full items-center justify-start gap-3 sm:justify-end sm:px-3"
+              >
                 <Switch v-model="targetDialogState.enabled" />
                 <span class="text-sm text-muted-foreground">
                   {{ targetDialogState.enabled ? "已启用" : "已停用" }}
