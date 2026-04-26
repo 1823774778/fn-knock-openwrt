@@ -296,7 +296,7 @@ const getCreateRuleUnavailableTip = () => {
   if (!hasProviders.value) {
     return {
       title: "暂时无法新增规则",
-      description: "请先在上方添加至少一个通知提供商",
+      description: "请先在“提供商”选项卡中添加至少一个通知提供商",
     };
   }
 
@@ -707,7 +707,7 @@ watch(
       v-if="!hasProviders"
       class="rounded-md border border-dashed bg-muted/30 px-4 py-6 text-sm text-muted-foreground"
     >
-      还没有可用的通知提供商。请先在上方“通知提供商”区域配置至少一个
+      还没有可用的通知提供商。请先在“提供商”选项卡配置至少一个
       provider。
     </div>
 

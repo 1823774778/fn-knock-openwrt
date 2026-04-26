@@ -22,12 +22,19 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Cable,
   RefreshCw,
   Trash2,
   Globe,
   Wifi,
   Clock,
+  ChevronDown,
   Network,
   Route as RouteIcon,
   Eye,
@@ -247,6 +254,7 @@ const statusNetworkInterface = ref("");
 const networkInterfaces = ref<DDNSNetworkInterfacePayload[]>([]);
 const targetSummaries = ref<DDNSTargetSummaryPayload[]>([]);
 const showTargetDialog = ref(false);
+const showClearPrimaryConfigDialog = ref(false);
 const targetDialogMode = ref<"create" | "edit">("create");
 const targetDialogState = ref<TargetDialogState>({
   id: null,
@@ -258,6 +266,7 @@ const targetDialogState = ref<TargetDialogState>({
 const testingTargetId = ref("");
 const deletingTargetId = ref("");
 const togglingTargetId = ref("");
+const pendingPrimaryConfigCollapse = ref<(() => void) | null>(null);
 
 const { isPending: isSaving, run: runSaveConfig } = useAsyncAction({
   rethrow: true,
@@ -267,6 +276,14 @@ const { isPending: isSaving, run: runSaveConfig } = useAsyncAction({
     });
   },
 });
+const { isPending: isClearingPrimaryConfig, run: runClearPrimaryConfig } =
+  useAsyncAction({
+    onError: (error) => {
+      toast.error("清空主域配置失败", {
+        description: extractErrorMessage(error, "清空主域配置失败"),
+      });
+    },
+  });
 const { isPending: isTesting, run: runTestUpdate } = useAsyncAction({
   onError: (error) => {
     toast.error("更新失败", {
@@ -1199,6 +1216,36 @@ async function onSaveConfigSilent() {
   return true;
 }
 
+function openClearPrimaryConfigDialog(collapse: () => void) {
+  pendingPrimaryConfigCollapse.value = collapse;
+  showClearPrimaryConfigDialog.value = true;
+}
+
+async function confirmClearPrimaryConfig() {
+  if (!selectedProvider.value) return;
+
+  await runClearPrimaryConfig(
+    async () => {
+      await DDNSAPI.saveConfig(selectedProvider.value, {});
+    },
+    {
+      onSuccess: async () => {
+        providerConfig.value = {};
+        savedProviderConfig.value = {};
+        fieldEditReady.value = {};
+        showClearPrimaryConfigDialog.value = false;
+        pendingPrimaryConfigCollapse.value?.();
+        pendingPrimaryConfigCollapse.value = null;
+        await loadStatus();
+        await loadConfig();
+        ddnsPolling.resetCursor();
+        void ddnsPolling.refresh();
+        toast.success("主域配置已清空");
+      },
+    },
+  );
+}
+
 function applyCredentialTransfer() {
   const result = applyTransferredCredentials();
   if (!result) return;
@@ -1360,7 +1407,7 @@ onUnmounted(() => {
             class="flex items-center gap-1.5 text-xs text-muted-foreground bg-muted/50 px-2 py-1 rounded-md"
           >
             <Clock class="h-3.5 w-3.5" />
-            <span>每 5 分钟自动同步</span>
+            <span>每 10 分钟自动同步</span>
           </div>
         </div>
       </CardHeader>
@@ -1999,6 +2046,32 @@ onUnmounted(() => {
           class="p-4 sm:px-6 sm:py-4 bg-muted/30 border-t flex items-center justify-end gap-3 rounded-b-lg"
         >
           <Button variant="outline" @click="collapse">折叠</Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger as-child>
+              <Button
+                variant="outline"
+                class="w-24 gap-2"
+                :disabled="
+                  isClearingPrimaryConfig ||
+                  !selectedProvider ||
+                  !hasSavedProviderConfig
+                "
+              >
+                <span>操作</span>
+                <ChevronDown class="h-4 w-4 text-muted-foreground" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" class="w-48">
+              <DropdownMenuItem
+                variant="destructive"
+                :disabled="isClearingPrimaryConfig || !hasSavedProviderConfig"
+                @click="openClearPrimaryConfigDialog(collapse)"
+              >
+                <Trash2 class="mr-2 h-4 w-4" />
+                清空主域配置
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button
             :disabled="isTesting || isSaving || !selectedProvider"
             @click="onTest"
@@ -2693,6 +2766,40 @@ onUnmounted(() => {
               class="mr-1.5 h-4 w-4 animate-spin"
             />
             {{ isSavingTarget ? "保存中..." : "保存" }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog
+      :open="showClearPrimaryConfigDialog"
+      @update:open="showClearPrimaryConfigDialog = $event"
+    >
+      <DialogContent class="sm:max-w-[420px]">
+        <DialogHeader>
+          <DialogTitle>清空主域配置？</DialogTitle>
+          <DialogDescription>
+            清空后当前主域的 DDNS 提供商配置会立即置空，自动更新将无法继续使用该主域配置，直到重新填写并保存。
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button
+            variant="outline"
+            :disabled="isClearingPrimaryConfig"
+            @click="showClearPrimaryConfigDialog = false"
+          >
+            取消
+          </Button>
+          <Button
+            variant="destructive"
+            :disabled="isClearingPrimaryConfig"
+            @click="confirmClearPrimaryConfig"
+          >
+            <RefreshCw
+              v-if="isClearingPrimaryConfig"
+              class="mr-2 h-4 w-4 animate-spin"
+            />
+            {{ isClearingPrimaryConfig ? "清空中..." : "确认清空" }}
           </Button>
         </DialogFooter>
       </DialogContent>

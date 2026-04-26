@@ -1,14 +1,14 @@
 /**
  * 本地当前版本号
  */
-export const APP_LOCAL_VERSION = "1.5.2";
+export const APP_LOCAL_VERSION = "1.5.3";
 
 export const APP_GITHUB_URL = "https://github.com/kci-lnk/fn-knock-turborepo";
 
 export const APP_BACKUP_SCHEMA_VERSION = 1;
 
 export const APP_BACKUP_IMPORT_VERSION_RANGE = {
-  min: "1.1.3",
+  min: "1.4.0",
   max: APP_LOCAL_VERSION,
 } as const;
 
