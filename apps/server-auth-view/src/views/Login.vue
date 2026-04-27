@@ -747,7 +747,7 @@ async function handleLogin() {
     });
 
     if (res.data.success) {
-      const runType = (res.data.data?.run_type ?? 1) as 0 | 1 | 3;
+      const runType = (res.data.data?.run_type ?? 3) as 0 | 1 | 3;
       const redirectTo =
         typeof res.data.data?.redirect_to === "string"
           ? res.data.data.redirect_to
@@ -843,7 +843,7 @@ async function handlePasskeyLogin() {
     if (verifyRes.data.success) {
       await rememberKnownPasskeyCredentialId(payload.id);
       completeLogin(
-        (verifyRes.data.data?.run_type ?? 1) as 0 | 1 | 3,
+        (verifyRes.data.data?.run_type ?? 3) as 0 | 1 | 3,
         typeof verifyRes.data.data?.redirect_to === "string"
           ? verifyRes.data.data.redirect_to
           : null,

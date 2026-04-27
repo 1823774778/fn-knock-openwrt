@@ -670,7 +670,7 @@ export type PasskeyCredential = {
 };
 
 const DEFAULT_ROUTE_PLACEHOLDER = "/__select__";
-const DEFAULT_RUN_TYPE: RunType = getRuntimeProfile().is_docker ? 3 : 1;
+const DEFAULT_RUN_TYPE: RunType = 3;
 
 const DEFAULT_CONFIG: AppConfig = {
   run_type: DEFAULT_RUN_TYPE,
