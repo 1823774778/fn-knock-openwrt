@@ -519,6 +519,7 @@ export interface AppConfig {
   smart_connect?: SmartConnectConfig;
   auth_credential_settings?: AuthCredentialSettings;
   terminal_feature?: TerminalFeatureConfig;
+  ssh_security?: SSHSecurityConfig;
   ssl: {
     enabled: boolean;
     active_cert_id?: string;
@@ -661,6 +662,104 @@ export type GatewayVisibilityDetails = {
   summary: GatewayVisibilitySummary;
 };
 
+export type SSHSecurityBlockDurationUnit = "minute" | "hour" | "day";
+
+export type SSHSecuritySelection = GatewayVisibilitySelection;
+
+export type SSHSecurityConfig = {
+  enabled: boolean;
+  window_minutes: number;
+  failed_login_threshold: number;
+  block_duration_value: number;
+  block_duration_unit: SSHSecurityBlockDurationUnit;
+  allowed_regions: SSHSecuritySelection[];
+  custom_cidrs: string[];
+  configured_at: string | null;
+  updated_at: string | null;
+};
+
+export type SSHSecuritySummary = {
+  configured: boolean;
+  enabled: boolean;
+  allowed_cidr_count: number;
+  active_block_count: number;
+  ssh_ports: number[];
+  log_source: "journal" | "auth.log" | "unavailable";
+  available: boolean;
+  unavailable_reason: string;
+  updated_at: string | null;
+};
+
+export type SSHSecurityDetails = {
+  config: SSHSecurityConfig;
+  summary: SSHSecuritySummary;
+};
+
+export type SSHLoginLogEntry = {
+  id: string;
+  happened_at: string;
+  outcome: "success" | "failure";
+  username: string;
+  invalid_user: boolean;
+  ip: string;
+  ipLocation?: string;
+  port?: number;
+  related_ports?: number[];
+  repeat_count?: number;
+  auth_method?: string;
+  service: "sshd";
+  source: "journal" | "auth.log";
+  raw: string;
+};
+
+export type SSHLoginLogListPayload = {
+  items: SSHLoginLogEntry[];
+  total: number;
+  page: number;
+  limit: number;
+};
+
+export type SSHSecurityBlockReason =
+  | "failed_login_threshold"
+  | "cidr_not_allowed";
+
+export type SSHSecurityBlockRecord = {
+  ip: string;
+  ipLocation?: string;
+  ports?: number[];
+  blocked_at: string;
+  expires_at: string;
+  reason: SSHSecurityBlockReason;
+  failed_count: number;
+  window_minutes: number;
+  threshold: number;
+  sample_user?: string;
+  sample_auth_method?: string;
+  sample_log_time?: string;
+  applied: boolean;
+  removed_at?: string | null;
+  remove_reason?: "manual" | "expired" | "disabled" | null;
+};
+
+export type SSHSecurityBlockListPayload = {
+  items: SSHSecurityBlockRecord[];
+  total: number;
+  page: number;
+  limit: number;
+};
+
+export type SSHSecurityFirewallSyncResult = {
+  cleared: number;
+  synced: number;
+  active_blocks: number;
+  allowed_cidrs: number;
+  ports: number[];
+};
+
+export type SSHSecurityFirewallClearResult = {
+  cleared_blocks: number;
+};
+
 export type GatewayProxyHeadersConfig = {
   disabled_hosts: string[];
 };
@@ -776,6 +875,9 @@ export type SystemEventType =
   | "FN_EVENT_SECURITY_SCANNER_BLOCKED"
   | "FN_EVENT_DDNS_UPDATE_COMPLETED"
   | "FN_EVENT_GATEWAY_THROTTLE_BLOCKED"
+  | "FN_EVENT_SSH_LOGIN_SUCCESS"
+  | "FN_EVENT_SSH_LOGIN_FAILURE"
+  | "FN_EVENT_SSH_IP_BLOCKED"
   | "FN_EVENT_SYSTEM_APP_UPDATE_AVAILABLE"
   | "FN_EVENT_SYSTEM_CPU_ALERT"
   | "FN_EVENT_SYSTEM_CPU_RECOVERED"

@@ -12,6 +12,9 @@ import {
   FN_EVENT_AUTH_SESSION_IP_DRIFT,
   FN_EVENT_DDNS_UPDATE_COMPLETED,
   FN_EVENT_GATEWAY_THROTTLE_BLOCKED,
+  FN_EVENT_SSH_IP_BLOCKED,
+  FN_EVENT_SSH_LOGIN_FAILURE,
+  FN_EVENT_SSH_LOGIN_SUCCESS,
   FN_EVENT_SYSTEM_APP_UPDATE_AVAILABLE,
   FN_EVENT_SECURITY_SCANNER_BLOCKED,
   FN_EVENT_SYSTEM_CPU_ALERT,
@@ -136,6 +139,41 @@ export type SystemEventGatewayThrottleBlockedPayload = {
   is_auth_route: boolean;
 };
 
+export type SystemEventSSHLoginSuccessPayload = {
+  ip: string;
+  ip_location?: string;
+  username: string;
+  auth_method?: string;
+  port?: number;
+  log_time: string;
+};
+
+export type SystemEventSSHLoginFailurePayload = {
+  ip: string;
+  ip_location?: string;
+  username: string;
+  invalid_user: boolean;
+  auth_method?: string;
+  port?: number;
+  attempts: number;
+  window_minutes: number;
+  threshold: number;
+  log_time: string;
+};
+
+export type SystemEventSSHIPBlockedPayload = {
+  ip: string;
+  ip_location?: string;
+  blocked_at: string;
+  blocked_until: string;
+  block_seconds: number;
+  reason: "failed_login_threshold" | "cidr_not_allowed";
+  failed_count: number;
+  window_minutes: number;
+  threshold: number;
+  username?: string;
+};
+
 export type SystemEventResourceAlertPayload = {
   hostname: string;
   usage_percent: number;
@@ -170,6 +208,9 @@ export type SystemEventPayloadMap = {
   [FN_EVENT_SECURITY_SCANNER_BLOCKED]: SystemEventScannerBlockedPayload;
   [FN_EVENT_DDNS_UPDATE_COMPLETED]: SystemEventDDNSUpdateCompletedPayload;
   [FN_EVENT_GATEWAY_THROTTLE_BLOCKED]: SystemEventGatewayThrottleBlockedPayload;
+  [FN_EVENT_SSH_LOGIN_SUCCESS]: SystemEventSSHLoginSuccessPayload;
+  [FN_EVENT_SSH_LOGIN_FAILURE]: SystemEventSSHLoginFailurePayload;
+  [FN_EVENT_SSH_IP_BLOCKED]: SystemEventSSHIPBlockedPayload;
   [FN_EVENT_SYSTEM_APP_UPDATE_AVAILABLE]: SystemEventAppUpdateAvailablePayload;
   [FN_EVENT_SYSTEM_CPU_ALERT]: SystemEventResourceAlertPayload;
   [FN_EVENT_SYSTEM_CPU_RECOVERED]: SystemEventResourceAlertPayload;

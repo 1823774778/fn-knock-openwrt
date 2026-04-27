@@ -284,6 +284,7 @@ import {
   Menu,
   Network,
   Server,
+  ShieldAlert,
 } from "lucide-vue-next";
 
 const router = useRouter();
@@ -398,11 +399,20 @@ const navItems = computed(() => {
     });
   }
   items.push({ name: "认证配置", path: "/auth", icon: Key });
+  if (
+    !configStore.isDockerDeployment &&
+    configStore.config?.ssh_security?.enabled === true
+  ) {
+    items.push({ name: "SSH安全", path: "/ssh-security", icon: ShieldAlert });
+  }
   items.push({ name: "事件中心", path: "/events", icon: Bell });
   if (configStore.config?.gateway_logging?.enabled) {
     items.push({ name: "请求日志", path: "/request-logs", icon: ScrollText });
   }
-  if (configStore.canUseTerminal && configStore.config?.terminal_feature?.enabled) {
+  if (
+    configStore.canUseTerminal &&
+    configStore.config?.terminal_feature?.enabled
+  ) {
     items.push({ name: "Web终端", path: "/terminal", icon: Terminal });
   }
   items.push({ name: "系统设置", path: "/system", icon: Settings });

@@ -26,6 +26,11 @@ import {
   normalizeTerminalFeatureConfig,
 } from "./terminal-shared";
 import {
+  DEFAULT_SSH_SECURITY_CONFIG,
+  normalizeSSHSecurityConfig,
+} from "./ssh-security/config";
+import type { SSHSecurityConfig } from "./ssh-security/types";
+import {
   DEFAULT_REVERSE_PROXY_SUBMODE,
   normalizeReverseProxySubmode,
   type ReverseProxySubmode,
@@ -217,6 +222,9 @@ export interface EventSystemConfig {
     app_update_available: EventSystemSimpleRuleConfig;
     frp_tunnel: EventSystemSimpleRuleConfig;
     cloudflared_tunnel: EventSystemSimpleRuleConfig;
+    ssh_login_success: EventSystemSimpleRuleConfig;
+    ssh_login_failure: EventSystemSimpleRuleConfig;
+    ssh_ip_blocked: EventSystemSimpleRuleConfig;
     cpu_alert: EventSystemResourceAlertRuleConfig;
     memory_alert: EventSystemResourceAlertRuleConfig;
   };
@@ -442,6 +450,7 @@ export interface AppConfig {
   auth_credential_settings?: AuthCredentialSettings;
   event_system?: EventSystemConfig;
   terminal_feature?: TerminalFeatureConfig;
+  ssh_security?: SSHSecurityConfig;
 }
 
 export interface RunModePromptPreferences {
@@ -559,6 +568,15 @@ export const DEFAULT_EVENT_SYSTEM_CONFIG: EventSystemConfig = {
       enabled: true,
     },
     cloudflared_tunnel: {
+      enabled: true,
+    },
+    ssh_login_success: {
+      enabled: true,
+    },
+    ssh_login_failure: {
+      enabled: true,
+    },
+    ssh_ip_blocked: {
       enabled: true,
     },
     cpu_alert: {
@@ -754,6 +772,15 @@ const DEFAULT_CONFIG: AppConfig = {
       cloudflared_tunnel: {
         ...DEFAULT_EVENT_SYSTEM_CONFIG.rules.cloudflared_tunnel,
       },
+      ssh_login_success: {
+        ...DEFAULT_EVENT_SYSTEM_CONFIG.rules.ssh_login_success,
+      },
+      ssh_login_failure: {
+        ...DEFAULT_EVENT_SYSTEM_CONFIG.rules.ssh_login_failure,
+      },
+      ssh_ip_blocked: {
+        ...DEFAULT_EVENT_SYSTEM_CONFIG.rules.ssh_ip_blocked,
+      },
       cpu_alert: {
         ...DEFAULT_EVENT_SYSTEM_CONFIG.rules.cpu_alert,
       },
@@ -764,6 +791,11 @@ const DEFAULT_CONFIG: AppConfig = {
   },
   terminal_feature: {
     ...DEFAULT_TERMINAL_FEATURE_CONFIG,
+  },
+  ssh_security: {
+    ...DEFAULT_SSH_SECURITY_CONFIG,
+    allowed_regions: [],
+    custom_cidrs: [],
   },
 };
 
@@ -936,6 +968,18 @@ const normalizeEventSystemConfig = (
       cloudflared_tunnel: normalizeEventSystemSimpleRuleConfig(
         rawRules.cloudflared_tunnel,
         DEFAULT_EVENT_SYSTEM_CONFIG.rules.cloudflared_tunnel,
+      ),
+      ssh_login_success: normalizeEventSystemSimpleRuleConfig(
+        rawRules.ssh_login_success,
+        DEFAULT_EVENT_SYSTEM_CONFIG.rules.ssh_login_success,
+      ),
+      ssh_login_failure: normalizeEventSystemSimpleRuleConfig(
+        rawRules.ssh_login_failure,
+        DEFAULT_EVENT_SYSTEM_CONFIG.rules.ssh_login_failure,
+      ),
+      ssh_ip_blocked: normalizeEventSystemSimpleRuleConfig(
+        rawRules.ssh_ip_blocked,
+        DEFAULT_EVENT_SYSTEM_CONFIG.rules.ssh_ip_blocked,
       ),
       cpu_alert: normalizeEventSystemResourceAlertRuleConfig(
         rawRules.cpu_alert,
@@ -2289,6 +2333,7 @@ return actual
         parsed.terminal_feature = normalizeTerminalFeatureConfig(
           parsed.terminal_feature,
         );
+        parsed.ssh_security = normalizeSSHSecurityConfig(parsed.ssh_security);
         return parsed;
       }
     } catch (e) {
@@ -2328,6 +2373,11 @@ return actual
       auth_credential_settings: { ...DEFAULT_AUTH_CREDENTIAL_SETTINGS },
       event_system: normalizeEventSystemConfig(DEFAULT_CONFIG.event_system),
       terminal_feature: { ...DEFAULT_TERMINAL_FEATURE_CONFIG },
+      ssh_security: {
+        ...DEFAULT_SSH_SECURITY_CONFIG,
+        allowed_regions: [],
+        custom_cidrs: [],
+      },
     };
   }
 
@@ -2384,6 +2434,15 @@ return actual
     if (getRuntimeProfile().is_docker && config.auto_https.enabled === true) {
       config.auto_https.enabled = false;
       corrected.push("auto_https.enabled -> false");
+    }
+
+    config.ssh_security = normalizeSSHSecurityConfig(config.ssh_security);
+    if (
+      !capabilities.host_firewall_available &&
+      config.ssh_security.enabled === true
+    ) {
+      config.ssh_security.enabled = false;
+      corrected.push("ssh_security.enabled -> false");
     }
 
     const normalizedAutoManageFirewall = normalizeAutoManageFirewall(
@@ -4400,6 +4459,11 @@ return actual
     return normalizeTerminalFeatureConfig(config.terminal_feature);
   }
 
+  async getSSHSecurityConfig(): Promise<SSHSecurityConfig> {
+    const config = await this.getConfig();
+    return normalizeSSHSecurityConfig(config.ssh_security);
+  }
+
   async getAuthCredentialSettings(): Promise<AuthCredentialSettings> {
     const config = await this.getConfig();
     return normalizeAuthCredentialSettings(config.auth_credential_settings, {
@@ -4436,6 +4500,16 @@ return actual
       ...patch,
     });
     config.terminal_feature = next;
+    await this.saveConfig(config);
+    return next;
+  }
+
+  async updateSSHSecurityConfig(
+    nextValue: SSHSecurityConfig,
+  ): Promise<SSHSecurityConfig> {
+    const config = await this.getConfig();
+    const next = normalizeSSHSecurityConfig(nextValue);
+    config.ssh_security = next;
     await this.saveConfig(config);
     return next;
   }

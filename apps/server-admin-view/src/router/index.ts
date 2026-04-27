@@ -82,6 +82,11 @@ const router = createRouter({
           component: () => import("../views/EventCenter.vue"),
         },
         {
+          path: "ssh-security",
+          name: "SSHSecurity",
+          component: () => import("../views/SSHSecurity.vue"),
+        },
+        {
           path: "logs",
           redirect: "/events",
         },
@@ -143,14 +148,12 @@ const router = createRouter({
         {
           path: "tunnel/frp/instances/new",
           name: "FrpcInstanceCreate",
-          component: () =>
-            import("../views/tunnel/frp/FrpcInstancePage.vue"),
+          component: () => import("../views/tunnel/frp/FrpcInstancePage.vue"),
         },
         {
           path: "tunnel/frp/instances/:id",
           name: "FrpcInstanceDetail",
-          component: () =>
-            import("../views/tunnel/frp/FrpcInstancePage.vue"),
+          component: () => import("../views/tunnel/frp/FrpcInstancePage.vue"),
         },
         {
           path: "ddns",
@@ -196,6 +199,7 @@ router.beforeEach(async (to, from) => {
     to.path !== "/proxy" &&
     to.path !== "/subdomains" &&
     to.path !== "/terminal" &&
+    to.path !== "/ssh-security" &&
     to.path !== "/tunnel" &&
     !to.path.startsWith("/tunnel/") &&
     to.path !== "/system/smart-connect"
@@ -241,6 +245,19 @@ router.beforeEach(async (to, from) => {
 
   if (to.path === "/terminal" && !configStore.canUseTerminal) {
     return "/system";
+  }
+
+  if (
+    to.path === "/ssh-security" &&
+    (configStore.isDockerDeployment ||
+      configStore.config?.ssh_security?.enabled !== true)
+  ) {
+    return {
+      path: "/system",
+      query: {
+        tab: "features",
+      },
+    };
   }
 
   if (to.path === "/system/smart-connect" && !configStore.canUseSmartConnect) {

@@ -15,6 +15,9 @@ const EVENT_LABELS: Record<SystemEventEnvelope["type"], string> = {
   FN_EVENT_SECURITY_SCANNER_BLOCKED: "扫描器拦截",
   FN_EVENT_DDNS_UPDATE_COMPLETED: "DDNS 更新",
   FN_EVENT_GATEWAY_THROTTLE_BLOCKED: "网关节流封锁",
+  FN_EVENT_SSH_LOGIN_SUCCESS: "SSH 登录成功",
+  FN_EVENT_SSH_LOGIN_FAILURE: "SSH 登录失败",
+  FN_EVENT_SSH_IP_BLOCKED: "SSH IP 封锁",
   FN_EVENT_SYSTEM_APP_UPDATE_AVAILABLE: "应用更新提示",
   FN_EVENT_SYSTEM_CPU_ALERT: "CPU 告警",
   FN_EVENT_SYSTEM_CPU_RECOVERED: "CPU 恢复",
@@ -512,6 +515,91 @@ const buildNotificationDetails = (args: {
       );
       break;
     }
+    case "FN_EVENT_SSH_LOGIN_SUCCESS": {
+      const ip = readPayloadValue(event, "ip") || "未知 IP";
+      const ipLocation = readPayloadValue(event, "ip_location");
+      const username = readPayloadValue(event, "username") || "未知用户";
+      const authMethod = readPayloadValue(event, "auth_method");
+
+      summary = `SSH 用户「${username}」从 ${ip} 登录成功`;
+      overview = `检测到一次 SSH 登录成功，来源为 ${ip}${ipLocation ? `（${ipLocation}）` : ""}${authMethod ? `，认证方式为 ${authMethod}` : ""}。`;
+      advice = "如该登录并非预期，请检查 SSH 账号、密钥和来源访问策略。";
+
+      pushFact(facts, "用户", username);
+      pushFact(facts, "来源 IP", ip);
+      pushFact(facts, "IP 位置", ipLocation);
+      pushFact(facts, "认证方式", authMethod);
+      pushFact(facts, "端口", readPayloadValue(event, "port"));
+      pushFact(
+        facts,
+        "日志时间",
+        formatDateTime(readPayloadValue(event, "log_time")),
+      );
+      break;
+    }
+    case "FN_EVENT_SSH_LOGIN_FAILURE": {
+      const ip = readPayloadValue(event, "ip") || "未知 IP";
+      const ipLocation = readPayloadValue(event, "ip_location");
+      const username = readPayloadValue(event, "username") || "未知用户";
+      const attempts = readPayloadValue(event, "attempts") || "0";
+      const threshold = readPayloadValue(event, "threshold") || "0";
+      const windowMinutes = readPayloadValue(event, "window_minutes") || "0";
+
+      summary = `SSH 用户「${username}」从 ${ip} 登录失败`;
+      overview = `该来源在 ${windowMinutes} 分钟窗口内累计 ${attempts}/${threshold} 次 SSH 登录失败${ipLocation ? `，位置为 ${ipLocation}` : ""}。`;
+      advice =
+        "请关注失败次数是否接近封锁阈值，必要时收紧 SSH 暴露范围或调整凭据。";
+
+      pushFact(facts, "用户", username);
+      pushFact(
+        facts,
+        "无效用户",
+        formatBoolean(readPayloadValue(event, "invalid_user")),
+      );
+      pushFact(facts, "来源 IP", ip);
+      pushFact(facts, "IP 位置", ipLocation);
+      pushFact(facts, "认证方式", readPayloadValue(event, "auth_method"));
+      pushFact(facts, "端口", readPayloadValue(event, "port"));
+      pushFact(facts, "失败次数", attempts);
+      pushFact(facts, "阈值", threshold);
+      pushFact(facts, "窗口", `${windowMinutes} 分钟`);
+      break;
+    }
+    case "FN_EVENT_SSH_IP_BLOCKED": {
+      const ip = readPayloadValue(event, "ip") || "未知 IP";
+      const ipLocation = readPayloadValue(event, "ip_location");
+      const reason = readPayloadValue(event, "reason");
+      const reasonLabel =
+        reason === "cidr_not_allowed" ? "不在允许地区范围" : "失败次数达到阈值";
+
+      summary = `${ip} 已被 SSH 安全封锁`;
+      overview = `SSH 安全已封锁来源 ${ip}${ipLocation ? `（${ipLocation}）` : ""}，原因是${reasonLabel}。`;
+      advice =
+        "请确认该来源是否可信；如为误封，可在 SSH 安全的封锁列表中解除。";
+
+      pushFact(facts, "来源 IP", ip);
+      pushFact(facts, "IP 位置", ipLocation);
+      pushFact(facts, "封锁原因", reasonLabel);
+      pushFact(facts, "关联用户", readPayloadValue(event, "username"));
+      pushFact(facts, "失败次数", readPayloadValue(event, "failed_count"));
+      pushFact(
+        facts,
+        "窗口",
+        `${readPayloadValue(event, "window_minutes")} 分钟`,
+      );
+      pushFact(facts, "阈值", readPayloadValue(event, "threshold"));
+      pushFact(
+        facts,
+        "封锁时间",
+        formatDateTime(readPayloadValue(event, "blocked_at")),
+      );
+      pushFact(
+        facts,
+        "封锁截止",
+        formatDateTime(readPayloadValue(event, "blocked_until")),
+      );
+      break;
+    }
     case "FN_EVENT_SYSTEM_APP_UPDATE_AVAILABLE": {
       const localVersion =
         readPayloadValue(event, "local_version") || "当前版本未知";
@@ -696,6 +784,27 @@ const formatEventSummary = (event: SystemEventEnvelope) => {
         readPayloadValue(event, "block_seconds")
           ? `封锁${readPayloadValue(event, "block_seconds")}s`
           : "触发封锁",
+      );
+    case "FN_EVENT_SSH_LOGIN_SUCCESS":
+      return joinCompactParts(
+        readPayloadValue(event, "username"),
+        readPayloadValue(event, "ip"),
+        "SSH 登录成功",
+      );
+    case "FN_EVENT_SSH_LOGIN_FAILURE":
+      return joinCompactParts(
+        readPayloadValue(event, "username"),
+        readPayloadValue(event, "ip"),
+        readPayloadValue(event, "attempts")
+          ? `${readPayloadValue(event, "attempts")}次失败`
+          : "SSH 登录失败",
+      );
+    case "FN_EVENT_SSH_IP_BLOCKED":
+      return joinCompactParts(
+        readPayloadValue(event, "ip"),
+        readPayloadValue(event, "reason") === "cidr_not_allowed"
+          ? "地区不允许"
+          : "失败阈值",
       );
     case "FN_EVENT_SYSTEM_APP_UPDATE_AVAILABLE":
       return joinCompactParts(

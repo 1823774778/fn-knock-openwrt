@@ -58,6 +58,8 @@ import { syncSSLDeploymentToGateway } from "./lib/ssl-gateway";
 import { syncSmartConnectOnBoot } from "./lib/smart-connect";
 import { terminalRoutes } from "./routes/terminal";
 import { terminalManager } from "./lib/terminal-manager";
+import { sshSecurityRoutes } from "./routes/ssh-security";
+import { sshSecurityService } from "./lib/ssh-security/service";
 import { applyNoStoreHeaders } from "./lib/auth-access";
 import { cidrRoutes } from "./routes/cidr";
 import { ipLocationRoutes } from "./routes/ip-location";
@@ -610,6 +612,7 @@ app.use(gatewayLogsRoutes);
 app.use(ipLocationRoutes);
 app.use(updateRoutes);
 app.use(terminalRoutes);
+app.use(sshSecurityRoutes);
 app.use(cidrRoutes);
 
 app.use(
@@ -624,7 +627,9 @@ app.use(
         .then(([expiredChanged, cnameChanged]) => {
           if (!expiredChanged && !cnameChanged) return;
           scheduleSyncReverseProxyTrustedIPs({
-            reason: expiredChanged ? "whitelist-expiry" : "whitelist-cname-refresh",
+            reason: expiredChanged
+              ? "whitelist-expiry"
+              : "whitelist-cname-refresh",
             delayMs: 50,
           });
         })
@@ -789,6 +794,9 @@ if (runtimeProfile.is_docker) {
     });
 }
 await firewallService.applyRunTypeConfig(config.run_type);
+await sshSecurityService.syncFromConfigOnBoot().catch((error) => {
+  console.error("[ssh-security] failed to sync on boot:", error);
+});
 syncGatewayLoggingToGateway(config.gateway_logging).catch((error) => {
   console.error(
     "[gateway-logging] failed to sync logging config on boot:",

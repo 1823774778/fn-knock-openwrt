@@ -222,9 +222,29 @@ export interface TcpRedirectRequest {
   target_port: number;
 }
 
+export interface TcpPortRuleRequest {
+  ip: string;
+  port: number;
+}
+
+export interface SSHFirewallSyncRequest {
+  chain_name?: string;
+  parent_chain?: string[];
+  ports: number[];
+  allowed_cidrs: string[];
+  blocked_ips?: string[];
+  include_local_cidrs?: boolean;
+}
+
+export interface SSHFirewallClearRequest {
+  chain_name?: string;
+  parent_chain?: string[];
+}
+
 export class GoBackendService {
   private baseUrl: string;
   private requestTimeoutMs: number;
+  private sshFirewallTimeoutMs: number;
   private trafficApiUnavailable = false;
   private trafficApiUnavailableLogged = false;
   private lastTrafficStats: TrafficStats = {
@@ -242,6 +262,10 @@ export class GoBackendService {
     this.requestTimeoutMs = this.parseTimeout(
       process.env.GO_BACKEND_TIMEOUT_MS,
       5000,
+    );
+    this.sshFirewallTimeoutMs = this.parseTimeout(
+      process.env.GO_BACKEND_SSH_FIREWALL_TIMEOUT_MS,
+      Math.max(this.requestTimeoutMs, 30000),
     );
   }
 
@@ -677,6 +701,40 @@ export class GoBackendService {
     return this.request("/api/iptables/block", "POST", {
       ip,
     } satisfies IpRequest);
+  }
+
+  async blockTCPPortForIP(ip: string, port: number): Promise<GoResponse> {
+    return this.request("/api/iptables/tcp-port/block", "POST", {
+      ip,
+      port,
+    } satisfies TcpPortRuleRequest);
+  }
+
+  async removeTCPPortRule(ip: string, port: number): Promise<GoResponse> {
+    return this.request("/api/iptables/tcp-port/remove", "POST", {
+      ip,
+      port,
+    } satisfies TcpPortRuleRequest);
+  }
+
+  async syncSSHFirewall(payload: SSHFirewallSyncRequest): Promise<GoResponse> {
+    return this.request(
+      "/api/iptables/ssh/sync",
+      "POST",
+      payload,
+      this.sshFirewallTimeoutMs,
+    );
+  }
+
+  async clearSSHFirewall(
+    payload: SSHFirewallClearRequest = {},
+  ): Promise<GoResponse> {
+    return this.request(
+      "/api/iptables/ssh/clear",
+      "POST",
+      payload,
+      this.sshFirewallTimeoutMs,
+    );
   }
 
   async allowAll(): Promise<GoResponse> {

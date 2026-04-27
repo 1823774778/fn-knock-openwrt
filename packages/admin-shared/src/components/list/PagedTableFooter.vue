@@ -1,7 +1,21 @@
 <script setup lang="ts">
-import { computed } from 'vue';
-import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationNext, PaginationPrevious } from '@/components/ui/pagination';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { computed } from "vue";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationFirst,
+  PaginationItem,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 const props = withDefaults(
   defineProps<{
@@ -13,31 +27,35 @@ const props = withDefaults(
     totalText?: string;
   }>(),
   {
-    pageSizeOptions: () => ['10', '20', '50', '100'],
-    totalText: '条记录',
+    pageSizeOptions: () => ["10", "20", "50", "100"],
+    totalText: "条记录",
   },
 );
 
 const emit = defineEmits<{
-  'update:page': [value: number];
-  'update:limit': [value: string];
+  "update:page": [value: number];
+  "update:limit": [value: string];
 }>();
 
 const currentLimit = computed({
   get: () => props.limit,
   set: (value: string) => {
-    emit('update:limit', value);
+    emit("update:limit", value);
   },
 });
 
 const handlePageUpdate = (value: number) => {
-  emit('update:page', value);
+  emit("update:page", value);
 };
 </script>
 
 <template>
-  <div class="p-4 border-t flex items-center justify-between flex-shrink-0 bg-background">
-    <div class="text-sm text-muted-foreground">共 {{ props.total }} {{ props.totalText }}</div>
+  <div
+    class="p-4 border-t flex items-center justify-between flex-shrink-0 bg-background"
+  >
+    <div class="text-sm text-muted-foreground">
+      共 {{ props.total }} {{ props.totalText }}
+    </div>
     <div class="flex items-center gap-6">
       <div class="flex items-center gap-2 text-sm">
         <Select v-model="currentLimit">
@@ -45,7 +63,11 @@ const handlePageUpdate = (value: number) => {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem v-for="option in props.pageSizeOptions" :key="option" :value="option">
+            <SelectItem
+              v-for="option in props.pageSizeOptions"
+              :key="option"
+              :value="option"
+            >
               {{ option }}
             </SelectItem>
           </SelectContent>
@@ -63,6 +85,7 @@ const handlePageUpdate = (value: number) => {
         @update:page="handlePageUpdate"
       >
         <PaginationContent v-slot="{ items }" class="flex items-center gap-1">
+          <PaginationFirst />
           <PaginationPrevious />
           <template v-for="(item, index) in items" :key="index">
             <PaginationItem

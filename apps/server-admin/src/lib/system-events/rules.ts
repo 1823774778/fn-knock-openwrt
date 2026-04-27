@@ -6,6 +6,9 @@ import {
   FN_EVENT_AUTH_SESSION_IP_DRIFT,
   FN_EVENT_DDNS_UPDATE_COMPLETED,
   FN_EVENT_GATEWAY_THROTTLE_BLOCKED,
+  FN_EVENT_SSH_IP_BLOCKED,
+  FN_EVENT_SSH_LOGIN_FAILURE,
+  FN_EVENT_SSH_LOGIN_SUCCESS,
   FN_EVENT_LEVEL_ERROR,
   FN_EVENT_LEVEL_INFO,
   FN_EVENT_LEVEL_WARN,
@@ -43,6 +46,12 @@ export const isSystemEventTypeEnabled = (
       return config.rules.ddns_update.enabled;
     case FN_EVENT_GATEWAY_THROTTLE_BLOCKED:
       return config.rules.gateway_throttle_block.enabled;
+    case FN_EVENT_SSH_LOGIN_SUCCESS:
+      return config.rules.ssh_login_success.enabled;
+    case FN_EVENT_SSH_LOGIN_FAILURE:
+      return config.rules.ssh_login_failure.enabled;
+    case FN_EVENT_SSH_IP_BLOCKED:
+      return config.rules.ssh_ip_blocked.enabled;
     case FN_EVENT_SYSTEM_APP_UPDATE_AVAILABLE:
       return config.rules.app_update_available.enabled;
     case FN_EVENT_SYSTEM_CPU_ALERT:
@@ -74,6 +83,7 @@ export const getDefaultSystemEventLevel = (
     case FN_EVENT_SYSTEM_MEMORY_RECOVERED:
     case FN_EVENT_TUNNEL_FRP_CONNECTED:
     case FN_EVENT_TUNNEL_CLOUDFLARED_CONNECTED:
+    case FN_EVENT_SSH_LOGIN_SUCCESS:
       return FN_EVENT_LEVEL_INFO;
     case FN_EVENT_SYSTEM_CPU_ALERT:
     case FN_EVENT_SYSTEM_MEMORY_ALERT:
@@ -82,6 +92,8 @@ export const getDefaultSystemEventLevel = (
     case FN_EVENT_AUTH_SESSION_IP_DRIFT:
     case FN_EVENT_SECURITY_SCANNER_BLOCKED:
     case FN_EVENT_GATEWAY_THROTTLE_BLOCKED:
+    case FN_EVENT_SSH_LOGIN_FAILURE:
+    case FN_EVENT_SSH_IP_BLOCKED:
     case FN_EVENT_TUNNEL_FRP_DISCONNECTED:
     case FN_EVENT_TUNNEL_CLOUDFLARED_DISCONNECTED:
       return FN_EVENT_LEVEL_WARN;

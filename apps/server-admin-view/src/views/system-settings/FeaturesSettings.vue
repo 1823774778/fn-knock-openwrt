@@ -13,7 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { ChevronRight } from "lucide-vue-next";
 import { toast } from "@admin-shared/utils/toast";
-import { ConfigAPI, SystemAPI } from "../../lib/api";
+import { ConfigAPI, SSHSecurityAPI, SystemAPI } from "../../lib/api";
 import type {
   AuthCredentialSettings,
   AutoHttpsDetails,
@@ -33,6 +33,8 @@ const protocolMappingEnabled = ref(false);
 const passkeyBindPromptEnabled = ref(true);
 const showEntryStatusModule = ref(true);
 const autoHttpsDetails = ref<AutoHttpsDetails | null>(null);
+const sshSecurityEnabled = ref(false);
+const sshSecurityUnavailableReason = ref("");
 const runTypeLabelMap = {
   0: "直连模式",
   1: "反代模式",
@@ -93,6 +95,18 @@ const autoHttpsRuntimeError = computed(() => {
   return runtime.last_error || "自动 HTTPS 未能监听 80 端口";
 });
 const showAutoHttpsEntry = computed(() => !configStore.isDockerDeployment);
+const showSSHSecurityEntry = computed(() => !configStore.isDockerDeployment);
+const isSSHSecurityAvailable = computed(
+  () =>
+    configStore.canManageHostFirewall && !sshSecurityUnavailableReason.value,
+);
+const sshSecurityDisabledReason = computed(() => {
+  if (isSSHSecurityAvailable.value) return "";
+  return (
+    sshSecurityUnavailableReason.value ||
+    "当前运行环境暂不支持宿主机 SSH 防火墙管理。"
+  );
+});
 
 const applyProtocolMappingSettings = (data: ProtocolMappingFeatureConfig) => {
   protocolMappingEnabled.value = data.enabled;
@@ -100,6 +114,15 @@ const applyProtocolMappingSettings = (data: ProtocolMappingFeatureConfig) => {
 
 const applyAutoHttpsDetails = (data: AutoHttpsDetails) => {
   autoHttpsDetails.value = data;
+};
+
+const applySSHSecurityDetails = (
+  data: Awaited<ReturnType<typeof SSHSecurityAPI.getDetails>>,
+) => {
+  sshSecurityEnabled.value = data.config.enabled;
+  sshSecurityUnavailableReason.value = data.summary.available
+    ? ""
+    : data.summary.unavailable_reason;
 };
 
 const applyAuthCredentialSettings = (data: AuthCredentialSettings) => {
@@ -136,6 +159,13 @@ const fetchSettings = async () => {
       applyAutoHttpsDetails(await SystemAPI.getAutoHttpsDetails());
     } else {
       autoHttpsDetails.value = null;
+    }
+
+    if (showSSHSecurityEntry.value) {
+      applySSHSecurityDetails(await SSHSecurityAPI.getDetails());
+    } else {
+      sshSecurityEnabled.value = false;
+      sshSecurityUnavailableReason.value = "";
     }
   });
 };
@@ -269,6 +299,33 @@ const saveAutoHttpsEnabled = async (nextValue: boolean) => {
   }
 };
 
+const saveSSHSecurityEnabled = async (nextValue: boolean) => {
+  if (isSaving.value || (!isSSHSecurityAvailable.value && nextValue)) {
+    return;
+  }
+
+  const previousValue = sshSecurityEnabled.value;
+  sshSecurityEnabled.value = nextValue;
+
+  const result = await runSaveSettings(
+    () =>
+      SSHSecurityAPI.updateConfig({
+        enabled: nextValue,
+      }),
+    {
+      onSuccess: async (data) => {
+        applySSHSecurityDetails(data);
+        toast.success("功能设置已更新");
+        await configStore.loadConfig();
+      },
+    },
+  );
+
+  if (!result) {
+    sshSecurityEnabled.value = previousValue;
+  }
+};
+
 const openSmartConnect = () => {
   if (!isSmartConnectAvailable.value) {
     return;
@@ -376,7 +433,8 @@ watch(
               autoHttpsRuntimeError ? 'text-red-600' : 'text-muted-foreground'
             "
           >
-            如果80，443没有被运营商封锁，应用设置，Go 代理端口 (GO_REPROXY_PORT)可改为443，然后开启此开关即可自动跳HTTPS
+            如果80，443没有被运营商封锁，应用设置，Go 代理端口
+            (GO_REPROXY_PORT)可改为443，然后开启此开关即可自动跳HTTPS
           </div>
           <div
             v-if="autoHttpsRuntimeError"
@@ -389,6 +447,44 @@ watch(
           :model-value="autoHttpsEnabled"
           :disabled="isSaving"
           @update:model-value="saveAutoHttpsEnabled($event === true)"
+        />
+      </div>
+
+      <div
+        v-if="showSSHSecurityEntry"
+        class="flex items-center justify-between bg-muted/10 p-6"
+      >
+        <div class="space-y-1 pr-6">
+          <Label
+            class="text-base font-medium"
+            :class="
+              isSSHSecurityAvailable
+                ? 'cursor-pointer'
+                : 'cursor-not-allowed text-zinc-500'
+            "
+            @click="saveSSHSecurityEnabled(!sshSecurityEnabled)"
+          >
+            SSH安全
+          </Label>
+          <div
+            class="text-sm"
+            :class="
+              isSSHSecurityAvailable ? 'text-muted-foreground' : 'text-zinc-500'
+            "
+          >
+            开启后显示“SSH安全”入口，并根据 SSH 登录日志自动封锁异常来源
+          </div>
+          <div
+            v-if="!isSSHSecurityAvailable"
+            class="text-xs leading-5 text-zinc-500"
+          >
+            {{ sshSecurityDisabledReason }}
+          </div>
+        </div>
+        <Switch
+          :model-value="isSSHSecurityAvailable ? sshSecurityEnabled : false"
+          :disabled="!isSSHSecurityAvailable || isSaving"
+          @update:model-value="saveSSHSecurityEnabled($event === true)"
         />
       </div>
 

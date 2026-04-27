@@ -9,6 +9,9 @@ import {
   FN_EVENT_LEVEL_INFO,
   FN_EVENT_LEVEL_WARN,
   FN_EVENT_SECURITY_SCANNER_BLOCKED,
+  FN_EVENT_SSH_IP_BLOCKED,
+  FN_EVENT_SSH_LOGIN_FAILURE,
+  FN_EVENT_SSH_LOGIN_SUCCESS,
   FN_EVENT_SYSTEM_APP_UPDATE_AVAILABLE,
   FN_EVENT_SYSTEM_CPU_ALERT,
   FN_EVENT_SYSTEM_CPU_RECOVERED,
@@ -274,6 +277,100 @@ export const emitDDNSUpdateCompletedEvent = async (payload: {
       previous_ipv6: payload.previousIpv6 ?? null,
       next_ipv4: payload.nextIpv4 ?? null,
       next_ipv6: payload.nextIpv6 ?? null,
+    },
+  });
+
+export const emitSSHLoginSuccessEvent = async (payload: {
+  ip: string;
+  ipLocation?: string;
+  username: string;
+  authMethod?: string;
+  port?: number;
+  logTime: string;
+}) =>
+  systemEventManager.publishSafely({
+    type: FN_EVENT_SSH_LOGIN_SUCCESS,
+    source: SYSTEM_EVENT_SOURCE_SERVER_ADMIN,
+    level: FN_EVENT_LEVEL_INFO,
+    subject: {
+      kind: SYSTEM_EVENT_SUBJECT_KIND_IP,
+      id: payload.ip,
+    },
+    payload: {
+      ip: payload.ip,
+      ...(payload.ipLocation ? { ip_location: payload.ipLocation } : {}),
+      username: payload.username,
+      ...(payload.authMethod ? { auth_method: payload.authMethod } : {}),
+      ...(payload.port ? { port: payload.port } : {}),
+      log_time: payload.logTime,
+    },
+  });
+
+export const emitSSHLoginFailureEvent = async (payload: {
+  ip: string;
+  ipLocation?: string;
+  username: string;
+  invalidUser: boolean;
+  authMethod?: string;
+  port?: number;
+  attempts: number;
+  windowMinutes: number;
+  threshold: number;
+  logTime: string;
+}) =>
+  systemEventManager.publishSafely({
+    type: FN_EVENT_SSH_LOGIN_FAILURE,
+    source: SYSTEM_EVENT_SOURCE_SERVER_ADMIN,
+    level: FN_EVENT_LEVEL_WARN,
+    subject: {
+      kind: SYSTEM_EVENT_SUBJECT_KIND_IP,
+      id: payload.ip,
+    },
+    payload: {
+      ip: payload.ip,
+      ...(payload.ipLocation ? { ip_location: payload.ipLocation } : {}),
+      username: payload.username,
+      invalid_user: payload.invalidUser,
+      ...(payload.authMethod ? { auth_method: payload.authMethod } : {}),
+      ...(payload.port ? { port: payload.port } : {}),
+      attempts: payload.attempts,
+      window_minutes: payload.windowMinutes,
+      threshold: payload.threshold,
+      log_time: payload.logTime,
+    },
+  });
+
+export const emitSSHIPBlockedEvent = async (payload: {
+  ip: string;
+  ipLocation?: string;
+  blockedAt: string;
+  blockedUntil: string;
+  blockSeconds: number;
+  reason: "failed_login_threshold" | "cidr_not_allowed";
+  failedCount: number;
+  windowMinutes: number;
+  threshold: number;
+  username?: string;
+}) =>
+  systemEventManager.publishSafely({
+    type: FN_EVENT_SSH_IP_BLOCKED,
+    source: SYSTEM_EVENT_SOURCE_SERVER_ADMIN,
+    level: FN_EVENT_LEVEL_WARN,
+    subject: {
+      kind: SYSTEM_EVENT_SUBJECT_KIND_IP,
+      id: payload.ip,
+    },
+    payload: {
+      ip: payload.ip,
+      ...(payload.ipLocation ? { ip_location: payload.ipLocation } : {}),
+      blocked_at: payload.blockedAt,
+      blocked_until: payload.blockedUntil,
+      block_seconds: payload.blockSeconds,
+      reason: payload.reason,
+      failed_count: payload.failedCount,
+      window_minutes: payload.windowMinutes,
+      threshold: payload.threshold,
+      ...(payload.username ? { username: payload.username } : {}),
     },
   });
 

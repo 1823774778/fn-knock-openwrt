@@ -543,6 +543,20 @@ const describeEvent = (event: SystemEventRecord) => {
       return `${formatIpDisplay(payload.ip)} 触发节流封锁 ${String(
         payload.block_seconds || "-",
       )} 秒`;
+    case "FN_EVENT_SSH_LOGIN_SUCCESS":
+      return `SSH 用户 ${String(payload.username || "-")} 从 ${formatIpDisplay(
+        payload.ip,
+      )} 登录成功`;
+    case "FN_EVENT_SSH_LOGIN_FAILURE":
+      return `SSH 用户 ${String(payload.username || "-")} 从 ${formatIpDisplay(
+        payload.ip,
+      )} 登录失败，窗口内第 ${String(payload.attempts || "-")} 次`;
+    case "FN_EVENT_SSH_IP_BLOCKED":
+      return `${formatIpDisplay(payload.ip)} 被 SSH 安全封锁，原因 ${
+        String(payload.reason) === "cidr_not_allowed"
+          ? "不在允许地区"
+          : "失败次数达到阈值"
+      }`;
     case "FN_EVENT_SYSTEM_APP_UPDATE_AVAILABLE":
       return `发现新版本 ${String(payload.latest_version || "-")}，当前版本 ${String(
         payload.local_version || "-",

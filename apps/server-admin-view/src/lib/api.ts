@@ -66,6 +66,13 @@ import type {
   NotificationRuleListPayload,
   NotificationTriggerListPayload,
   NotificationTriggerStatus,
+  SSHLoginLogListPayload,
+  SSHSecurityBlockListPayload,
+  SSHSecurityBlockRecord,
+  SSHSecurityConfig,
+  SSHSecurityDetails,
+  SSHSecurityFirewallClearResult,
+  SSHSecurityFirewallSyncResult,
   WelcomeGuideStatus,
 } from "../types";
 import { createApiClient } from "@frontend-core/api/createApiClient";
@@ -1220,6 +1227,73 @@ export const ScannerAPI = {
   },
   async deleteBlacklistByIp(ip: string): Promise<void> {
     await apiClient.delete(`/scanner/blacklist/${encodeURIComponent(ip)}`);
+  },
+};
+
+export const SSHSecurityAPI = {
+  async getDetails(): Promise<SSHSecurityDetails> {
+    const res = await apiClient.get("/ssh-security/config");
+    return res.data.data;
+  },
+  async updateConfig(
+    payload: Partial<Omit<SSHSecurityConfig, "allowed_regions">> & {
+      allowed_regions?: Array<{
+        province: string;
+        query_city?: string | null;
+      }>;
+    },
+  ): Promise<SSHSecurityDetails> {
+    const res = await apiClient.post("/ssh-security/config", payload);
+    return res.data.data;
+  },
+  async syncFirewall(): Promise<SSHSecurityFirewallSyncResult> {
+    const res = await apiClient.post("/ssh-security/firewall/sync");
+    return res.data.data;
+  },
+  async clearFirewall(): Promise<SSHSecurityFirewallClearResult> {
+    const res = await apiClient.post("/ssh-security/firewall/clear");
+    return res.data.data;
+  },
+  async getLoginLogs(params: {
+    page: number;
+    limit: string;
+    search?: string;
+    outcome?: "success" | "failure" | "all";
+  }): Promise<SSHLoginLogListPayload> {
+    const res = await apiClient.get("/ssh-security/login-logs", {
+      params: {
+        page: params.page,
+        limit: params.limit,
+        search: params.search || undefined,
+        outcome:
+          params.outcome && params.outcome !== "all"
+            ? params.outcome
+            : undefined,
+      },
+    });
+    return res.data.data;
+  },
+  async getBlocks(
+    page: number,
+    limit: string,
+    search: string,
+  ): Promise<SSHSecurityBlockListPayload> {
+    const res = await apiClient.get("/ssh-security/blocks", {
+      params: { page, limit, search },
+    });
+    return res.data.data;
+  },
+  async getBlock(ip: string): Promise<SSHSecurityBlockRecord> {
+    const res = await apiClient.get(
+      `/ssh-security/blocks/${encodeURIComponent(ip)}`,
+    );
+    return res.data.data;
+  },
+  async deleteBlock(ip: string): Promise<void> {
+    await apiClient.delete(`/ssh-security/blocks/${encodeURIComponent(ip)}`);
+  },
+  async deleteBlocks(ips: string[]): Promise<void> {
+    await apiClient.delete("/ssh-security/blocks", { data: { ips } });
   },
 };
 

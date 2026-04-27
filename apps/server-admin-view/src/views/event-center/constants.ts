@@ -17,6 +17,9 @@ export const SYSTEM_EVENT_TYPE_OPTIONS: Array<{
   { value: "FN_EVENT_SECURITY_SCANNER_BLOCKED", label: "扫描器拦截" },
   { value: "FN_EVENT_DDNS_UPDATE_COMPLETED", label: "DDNS 更新" },
   { value: "FN_EVENT_GATEWAY_THROTTLE_BLOCKED", label: "网关节流封锁" },
+  { value: "FN_EVENT_SSH_LOGIN_SUCCESS", label: "SSH 登录成功" },
+  { value: "FN_EVENT_SSH_LOGIN_FAILURE", label: "SSH 登录失败" },
+  { value: "FN_EVENT_SSH_IP_BLOCKED", label: "SSH IP 封锁" },
   { value: "FN_EVENT_SYSTEM_APP_UPDATE_AVAILABLE", label: "应用更新提示" },
   { value: "FN_EVENT_SYSTEM_CPU_ALERT", label: "CPU 告警" },
   { value: "FN_EVENT_SYSTEM_CPU_RECOVERED", label: "CPU 恢复" },
@@ -91,6 +94,9 @@ export const DEFAULT_GROUP_BY_BY_EVENT_TYPE: Record<
   FN_EVENT_SECURITY_SCANNER_BLOCKED: "IP",
   FN_EVENT_DDNS_UPDATE_COMPLETED: "PROVIDER",
   FN_EVENT_GATEWAY_THROTTLE_BLOCKED: "IP",
+  FN_EVENT_SSH_LOGIN_SUCCESS: "IP",
+  FN_EVENT_SSH_LOGIN_FAILURE: "IP",
+  FN_EVENT_SSH_IP_BLOCKED: "IP",
   FN_EVENT_SYSTEM_APP_UPDATE_AVAILABLE: "SUBJECT",
   FN_EVENT_SYSTEM_CPU_ALERT: "HOSTNAME",
   FN_EVENT_SYSTEM_CPU_RECOVERED: "HOSTNAME",
@@ -119,7 +125,8 @@ export const formatSystemEventTypeLabel = (type: SystemEventType) =>
   SYSTEM_EVENT_TYPE_OPTIONS.find((item) => item.value === type)?.label || type;
 
 export const formatSystemEventLevelLabel = (level: SystemEventLevel) =>
-  SYSTEM_EVENT_LEVEL_OPTIONS.find((item) => item.value === level)?.label || level;
+  SYSTEM_EVENT_LEVEL_OPTIONS.find((item) => item.value === level)?.label ||
+  level;
 
 export const formatSystemEventSourceLabel = (source: SystemEventSource) =>
   SYSTEM_EVENT_SOURCE_OPTIONS.find((item) => item.value === source)?.label ||

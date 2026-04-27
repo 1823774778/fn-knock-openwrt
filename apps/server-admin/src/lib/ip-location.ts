@@ -97,6 +97,8 @@ export const ipLocationRefs = {
   sessionTimeline: (id: string) => `session-timeline|${id}`,
   scannerBlacklist: (ip: string) => `scanner-blacklist|${ip}`,
   systemEvent: (id: string) => `system-event|${id}`,
+  sshLoginLog: (id: string) => `ssh-login-log|${id}`,
+  sshBlocklist: (ip: string) => `ssh-blocklist|${ip}`,
 };
 
 type IpLocationCarrier = {
