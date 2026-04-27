@@ -1157,6 +1157,34 @@ export const CaptchaAPI = {
   },
 };
 
+export type IpLocationApiMode = "online" | "custom";
+
+export type IpLocationApiConfig = {
+  ip_lookup_mode: IpLocationApiMode;
+  ip_lookup_url: string;
+  cidr_mode: IpLocationApiMode;
+  cidr_url: string;
+};
+
+export const IpLocationSettingsAPI = {
+  async getSettings(): Promise<IpLocationApiConfig> {
+    const res = await apiClient.get("/config/ip_location_api");
+    return res.data.data;
+  },
+  async updateSettings(payload: IpLocationApiConfig): Promise<IpLocationApiConfig> {
+    const res = await apiClient.post("/config/ip_location_api", payload);
+    return res.data.data;
+  },
+  async testIpLookup(url: string): Promise<{ success: boolean; message: string }> {
+    const res = await apiClient.post("/config/ip_location_api/test-ip-lookup", { url });
+    return res.data;
+  },
+  async testCidr(url: string): Promise<{ success: boolean; message: string }> {
+    const res = await apiClient.post("/config/ip_location_api/test-cidr", { url });
+    return res.data;
+  },
+};
+
 export const UpdateAPI = {
   async getStatus(): Promise<UpdateStatusPayload> {
     const res = await apiClient.get("/update/status");

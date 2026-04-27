@@ -1,4 +1,5 @@
-import { redis } from "../redis";
+import { redis, configManager } from "../redis";
+import { resolveIpLocationApiBaseUrl } from "../ip-location-api-url";
 import {
   CIDR_PROVINCE_WIDE_VALUE,
   type CidrCitiesPayload,
@@ -11,8 +12,6 @@ import {
   type CidrSelectorPayload,
 } from "./types";
 
-const CIDR_API_BASE =
-  process.env.CIDR_API_BASE?.trim() || "https://cidr.wxlnk.com/api/v1";
 const CIDR_REQUEST_TIMEOUT_MS = Math.max(
   2000,
   Number.parseInt(process.env.CIDR_REQUEST_TIMEOUT_MS || "10000", 10) || 10000,
@@ -95,8 +94,10 @@ export class CidrServiceError extends Error {
   }
 }
 
-const ensureBaseUrl = (value: string) =>
-  value.endsWith("/") ? value : `${value}/`;
+const ensureBaseUrl = (value: string) => {
+  const baseUrl = resolveIpLocationApiBaseUrl(value);
+  return baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+};
 
 const normalizeName = (value: unknown): string => String(value ?? "").trim();
 
@@ -263,7 +264,8 @@ class CidrService {
     path: string,
     query?: Record<string, string>,
   ): Promise<T> {
-    const baseUrl = ensureBaseUrl(CIDR_API_BASE);
+    const settings = await configManager.getIpLocationApiSettings();
+    const baseUrl = ensureBaseUrl(settings.cidr_url);
     const url = new URL(path.replace(/^\/+/, ""), baseUrl);
 
     if (query) {

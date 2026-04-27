@@ -1,4 +1,5 @@
-import { redis } from "./redis";
+import { redis, configManager } from "./redis";
+import { buildIpLocationApiUrl } from "./ip-location-api-url";
 import { isWhitelistExemptIp, normalizeIp } from "./ip-normalize";
 import {
   applySystemEventIpLocations,
@@ -6,9 +7,6 @@ import {
 } from "./system-events/ip-fields";
 import type { SystemEventEnvelope } from "./system-events/types";
 
-const LOOKUP_ENDPOINT =
-  process.env.IP_LOOKUP_API_BASE ||
-  "https://ipaddress.fnknock.cn/api/v1/ip/lookup";
 const LOOKUP_TIMEOUT_MS = Math.max(
   2000,
   Number.parseInt(process.env.IP_LOOKUP_TIMEOUT_MS || "8000", 10) || 8000,
@@ -537,7 +535,8 @@ class IpLocationService {
     const timeout = setTimeout(() => controller.abort(), LOOKUP_TIMEOUT_MS);
 
     try {
-      const url = new URL(LOOKUP_ENDPOINT);
+      const settings = await configManager.getIpLocationApiSettings();
+      const url = buildIpLocationApiUrl(settings.ip_lookup_url, "ip/lookup");
       url.searchParams.set("ip", ip);
 
       const response = await fetch(url, {

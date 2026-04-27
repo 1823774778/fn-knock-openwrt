@@ -1,5 +1,6 @@
 import { Elysia, t } from "elysia";
 import {
+  DEFAULT_IP_LOCATION_API_CONFIG,
   DEFAULT_GATEWAY_HOST_RESPONSE_CONFIG,
   type AppConfig,
   configManager,
@@ -10,6 +11,7 @@ import {
   type GatewayProxyHeadersRuntimeState,
   type GatewayVisibilityRuntimeState,
   type HostMapping,
+  type IpLocationApiMode,
   type LoginSession,
   type ProtocolMappingFeatureConfig,
   type ProxyMapping,
@@ -98,6 +100,10 @@ import {
   buildAdminPanelSessionCookie,
 } from "../lib/session-cookie";
 import { isValidHostPort } from "../../../../packages/admin-shared/src/utils/parseHostPort";
+import {
+  buildIpLocationApiUrl,
+  normalizeIpLocationServiceUrl,
+} from "../lib/ip-location-api-url";
 import { routeDoc, withRouteDoc } from "../lib/openapi";
 import {
   autoHttpsRedirectManager,
@@ -212,6 +218,36 @@ const ensureGoResponseSuccess = <T>(
 
 const isValidStreamTarget = (target: string): boolean => {
   return isValidHostPort(target);
+};
+
+const validateIpLocationBaseUrl = (value: unknown, label: string) => {
+  const url = normalizeIpLocationServiceUrl(value);
+  if (!url) {
+    return {
+      valid: false as const,
+      url,
+      message: `${label}不能为空`,
+    };
+  }
+
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return {
+        valid: false as const,
+        url,
+        message: `${label}必须以 http:// 或 https:// 开头`,
+      };
+    }
+  } catch {
+    return {
+      valid: false as const,
+      url,
+      message: `${label}格式不正确`,
+    };
+  }
+
+  return { valid: true as const, url };
 };
 
 type StreamMappingInput = Pick<
@@ -1634,6 +1670,179 @@ export const adminRoutes = new Elysia({
     }),
   )
   .get(
+    "/config/ip_location_api",
+    async () => {
+      const settings = await configManager.getIpLocationApiSettings();
+      return { success: true, data: settings };
+    },
+    routeDoc("获取 IP 归属地 API 配置"),
+  )
+  .post(
+    "/config/ip_location_api",
+    async ({ body, set }) => {
+      const ipLookupMode: IpLocationApiMode = body.ip_lookup_mode;
+      const cidrMode: IpLocationApiMode = body.cidr_mode;
+      const ipLookupUrl =
+        ipLookupMode === "custom"
+          ? validateIpLocationBaseUrl(body.ip_lookup_url, "IP 识别库地址")
+          : {
+              valid: true as const,
+              url: DEFAULT_IP_LOCATION_API_CONFIG.ip_lookup_url,
+            };
+      const cidrUrl =
+        cidrMode === "custom"
+          ? validateIpLocationBaseUrl(body.cidr_url, "CIDR 地址库地址")
+          : {
+              valid: true as const,
+              url: DEFAULT_IP_LOCATION_API_CONFIG.cidr_url,
+            };
+
+      if (!ipLookupUrl.valid) {
+        set.status = 400;
+        return { success: false, message: ipLookupUrl.message };
+      }
+      if (!cidrUrl.valid) {
+        set.status = 400;
+        return { success: false, message: cidrUrl.message };
+      }
+
+      const next = await configManager.updateIpLocationApiSettings({
+        ip_lookup_mode: ipLookupMode,
+        ip_lookup_url: ipLookupUrl.url,
+        cidr_mode: cidrMode,
+        cidr_url: cidrUrl.url,
+      });
+      return { success: true, data: next };
+    },
+    withRouteDoc("更新 IP 归属地 API 配置", {
+      body: t.Object({
+        ip_lookup_mode: t.Union([t.Literal("online"), t.Literal("custom")]),
+        ip_lookup_url: t.String(),
+        cidr_mode: t.Union([t.Literal("online"), t.Literal("custom")]),
+        cidr_url: t.String(),
+      }),
+    }),
+  )
+  .post(
+    "/config/ip_location_api/test-ip-lookup",
+    async ({ body, set }) => {
+      const validation = validateIpLocationBaseUrl(body.url, "URL");
+      if (!validation.valid) {
+        set.status = 400;
+        return { success: false, message: validation.message };
+      }
+
+      const timeoutMs = 5000;
+
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        const url = buildIpLocationApiUrl(validation.url, "ip/lookup");
+        url.searchParams.set("ip", "8.8.8.8");
+
+        const response = await fetch(url, {
+          signal: controller.signal,
+          headers: { "User-Agent": "fn-knock-server-admin/1.0" },
+        });
+
+        clearTimeout(timer);
+
+        if (!response.ok) {
+          return {
+            success: false,
+            message: `服务返回错误状态码 ${response.status}`,
+          };
+        }
+
+        const data = (await response.json().catch(() => null)) as {
+          code?: number;
+          result?: unknown;
+          msg?: string;
+        } | null;
+        if (!data || data.code !== 0 || !data.result) {
+          return {
+            success: false,
+            message: data?.msg || "服务返回数据异常",
+          };
+        }
+
+        return { success: true, message: "连接成功" };
+      } catch (error: any) {
+        if (error?.name === "AbortError") {
+          return { success: false, message: "连接超时" };
+        }
+        return {
+          success: false,
+          message: error?.message || "连接失败",
+        };
+      }
+    },
+    withRouteDoc("测试 IP 识别库连接", {
+      body: t.Object({
+        url: t.String(),
+      }),
+    }),
+  )
+  .post(
+    "/config/ip_location_api/test-cidr",
+    async ({ body, set }) => {
+      const validation = validateIpLocationBaseUrl(body.url, "URL");
+      if (!validation.valid) {
+        set.status = 400;
+        return { success: false, message: validation.message };
+      }
+
+      const timeoutMs = 5000;
+
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        const url = buildIpLocationApiUrl(validation.url, "provinces");
+
+        const response = await fetch(url, {
+          signal: controller.signal,
+          headers: { "User-Agent": "fn-knock-server-admin/1.0" },
+        });
+
+        clearTimeout(timer);
+
+        if (!response.ok) {
+          return {
+            success: false,
+            message: `服务返回错误状态码 ${response.status}`,
+          };
+        }
+
+        const data = (await response.json().catch(() => null)) as {
+          code?: number;
+          data?: unknown;
+          message?: string;
+        } | null;
+        if (!data || data.code !== 0 || !data.data) {
+          return {
+            success: false,
+            message: data?.message || "服务返回数据异常",
+          };
+        }
+
+        return { success: true, message: "连接成功" };
+      } catch (error: any) {
+        if (error?.name === "AbortError") {
+          return { success: false, message: "连接超时" };
+        }
+        return {
+          success: false,
+          message: error?.message || "连接失败",
+        };
+      }
+    },
+    withRouteDoc("测试 CIDR 库连接", {
+      body: t.Object({
+        url: t.String(),
+      }),
+    }),
+  )
+  .get(
     "/config/terminal_feature",
     async () => {
       const settings = await configManager.getTerminalFeatureConfig();
@@ -2560,10 +2769,10 @@ export const adminRoutes = new Elysia({
           const session = await ensureSessionComment(id, data);
           const [mobility, fnosAttachments, trimMediaAttachments] =
             await Promise.all([
-            authMobilitySessionManager.getSessionMobilitySummary(id),
-            authMobilitySessionManager.listSessionFnosAttachments(id),
-            authMobilitySessionManager.listSessionTrimMediaAttachments(id),
-          ]);
+              authMobilitySessionManager.getSessionMobilitySummary(id),
+              authMobilitySessionManager.listSessionFnosAttachments(id),
+              authMobilitySessionManager.listSessionTrimMediaAttachments(id),
+            ]);
           return {
             id,
             ...session,
@@ -2591,10 +2800,10 @@ export const adminRoutes = new Elysia({
       const session = await ensureSessionComment(params.id, sess);
       const [mobility, fnosAttachments, trimMediaAttachments] =
         await Promise.all([
-        authMobilitySessionManager.getSessionMobilitySummary(params.id),
-        authMobilitySessionManager.listSessionFnosAttachments(params.id),
-        authMobilitySessionManager.listSessionTrimMediaAttachments(params.id),
-      ]);
+          authMobilitySessionManager.getSessionMobilitySummary(params.id),
+          authMobilitySessionManager.listSessionFnosAttachments(params.id),
+          authMobilitySessionManager.listSessionTrimMediaAttachments(params.id),
+        ]);
       const record = {
         id: params.id,
         ...session,

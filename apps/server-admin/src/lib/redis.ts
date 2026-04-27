@@ -321,6 +321,22 @@ export type CaptchaSettings = {
   turnstile: TurnstileCaptchaConfig;
 };
 
+export type IpLocationApiMode = "online" | "custom";
+
+export type IpLocationApiConfig = {
+  ip_lookup_mode: IpLocationApiMode;
+  ip_lookup_url: string;
+  cidr_mode: IpLocationApiMode;
+  cidr_url: string;
+};
+
+export const DEFAULT_IP_LOCATION_API_CONFIG: IpLocationApiConfig = {
+  ip_lookup_mode: "online",
+  ip_lookup_url: "https://ipaddress.fnknock.cn/api/v1",
+  cidr_mode: "online",
+  cidr_url: "https://cidr.wxlnk.com/api/v1",
+};
+
 export type AcmeJobStatus = "queued" | "running" | "succeeded" | "failed";
 export type AcmeJobMethod = "dns" | "http" | "https";
 export type AcmeJobTrigger = "manual_request" | "auto_renew";
@@ -1221,6 +1237,33 @@ const DEFAULT_CAPTCHA_SETTINGS: CaptchaSettings = {
   },
 };
 
+const normalizeIpLocationBaseUrl = (value: unknown, fallback = ""): string => {
+  if (typeof value !== "string") return fallback;
+  const normalized = value.trim().replace(/\/+$/, "");
+  return normalized || fallback;
+};
+
+const normalizeIpLocationApiConfig = (
+  value?: Partial<IpLocationApiConfig> | null,
+): IpLocationApiConfig => {
+  const raw = value ?? {};
+  const ipLookupMode = raw.ip_lookup_mode === "custom" ? "custom" : "online";
+  const cidrMode = raw.cidr_mode === "custom" ? "custom" : "online";
+
+  return {
+    ip_lookup_mode: ipLookupMode,
+    ip_lookup_url:
+      ipLookupMode === "custom"
+        ? normalizeIpLocationBaseUrl(raw.ip_lookup_url)
+        : DEFAULT_IP_LOCATION_API_CONFIG.ip_lookup_url,
+    cidr_mode: cidrMode,
+    cidr_url:
+      cidrMode === "custom"
+        ? normalizeIpLocationBaseUrl(raw.cidr_url)
+        : DEFAULT_IP_LOCATION_API_CONFIG.cidr_url,
+  };
+};
+
 const normalizePositiveInt = (
   value: unknown,
   fallback: number,
@@ -1934,6 +1977,7 @@ export class ConfigManager {
     "fn_knock:reverse-proxy:trusted-ips:runtime";
   private smartConnectRuntimeKey = "fn_knock:smart-connect:runtime";
   private captchaSettingsKey = "fn_knock:captcha:settings";
+  private ipLocationApiSettingsKey = "fn_knock:ip-location-api:settings";
   private protocolMappingFeatureKey = "fn_knock:protocol-mapping:feature";
   private caHostsKey = "fn_knock:ca:hosts";
   private acmeJobKey = "fn_knock:acme:job:";
@@ -4539,6 +4583,30 @@ return actual
       },
     });
     await this.redis.set(this.captchaSettingsKey, JSON.stringify(next));
+    return next;
+  }
+
+  async getIpLocationApiSettings(): Promise<IpLocationApiConfig> {
+    const raw = await this.redis.get(this.ipLocationApiSettingsKey);
+    if (!raw) return DEFAULT_IP_LOCATION_API_CONFIG;
+
+    try {
+      const parsed = JSON.parse(raw) as Partial<IpLocationApiConfig>;
+      return normalizeIpLocationApiConfig(parsed);
+    } catch {
+      return DEFAULT_IP_LOCATION_API_CONFIG;
+    }
+  }
+
+  async updateIpLocationApiSettings(
+    patch: Partial<IpLocationApiConfig>,
+  ): Promise<IpLocationApiConfig> {
+    const current = await this.getIpLocationApiSettings();
+    const next = normalizeIpLocationApiConfig({
+      ...current,
+      ...patch,
+    });
+    await this.redis.set(this.ipLocationApiSettingsKey, JSON.stringify(next));
     return next;
   }
 

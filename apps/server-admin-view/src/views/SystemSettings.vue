@@ -6,6 +6,7 @@ import RunModeSettings from "./system-settings/RunModeSettings.vue";
 import FrpSettings from "./system-settings/FrpSettings.vue";
 import CloudflaredSettings from "./system-settings/CloudflaredSettings.vue";
 import AcmeSSL from "./system-settings/AcmeSSL.vue";
+import IpLocationSettings from "./system-settings/IpLocationSettings.vue";
 import ScannerFirewallSettings from "./system-settings/ScannerFirewallSettings.vue";
 import FeaturesSettings from "./system-settings/FeaturesSettings.vue";
 import FnosSettings from "./system-settings/FnosSettings.vue";
@@ -35,6 +36,7 @@ const allowedTabs = computed(() => {
   const tabs = [
     "run-mode",
     "acme-ssl",
+    "ip-location",
     "fnos",
     "scanner-firewall",
     "features",
@@ -97,6 +99,9 @@ const { currentTab, navigateTo } = useSyncedQueryTab({
           <TabsTrigger value="acme-ssl" class="flex-none shrink-0 px-3"
             >ACME</TabsTrigger
           >
+          <TabsTrigger value="ip-location" class="flex-none shrink-0 px-3"
+            >归属地</TabsTrigger
+          >
           <TabsTrigger value="fnos" class="flex-none shrink-0 px-3"
             >飞牛</TabsTrigger
           >
@@ -150,6 +155,9 @@ const { currentTab, navigateTo } = useSyncedQueryTab({
       </TabsContent>
       <TabsContent value="acme-ssl" class="pt-2">
         <AcmeSSL />
+      </TabsContent>
+      <TabsContent value="ip-location" class="pt-2">
+        <IpLocationSettings />
       </TabsContent>
       <TabsContent value="fnos" class="pt-2">
         <FnosSettings />
