@@ -247,8 +247,10 @@
     :open="isDiscoverDialogOpen"
     @update:open="handleDiscoverDialogOpenChange"
   >
-    <DialogContent class="sm:max-w-[800px] max-h-[85vh] flex flex-col">
-      <DialogHeader>
+    <DialogContent
+      class="sm:max-w-[800px] max-h-[85vh] flex flex-col overflow-hidden"
+    >
+      <DialogHeader class="shrink-0">
         <div class="flex items-center justify-between">
           <DialogTitle>一键发现本地服务</DialogTitle>
           <RefreshButton
@@ -264,125 +266,135 @@
         </DialogDescription>
       </DialogHeader>
 
-      <div class="flex-1 overflow-auto py-2">
-        <div
-          v-if="isDiscovering"
-          class="flex flex-col items-center justify-center py-16 space-y-4"
-        >
-          <RefreshCw class="h-8 w-8 animate-spin text-muted-foreground" />
-          <p class="text-sm text-muted-foreground">
-            正在探测端口服务，这可能需要两秒钟...
-          </p>
-        </div>
+      <div class="flex-1 min-h-0 overflow-auto">
+        <div class="py-2">
+          <div
+            v-if="isDiscovering"
+            class="flex flex-col items-center justify-center py-16 space-y-4"
+          >
+            <RefreshCw class="h-8 w-8 animate-spin text-muted-foreground" />
+            <p class="text-sm text-muted-foreground">
+              正在探测端口服务，这可能需要两秒钟...
+            </p>
+          </div>
 
-        <div
-          v-else-if="discoveredData && discoveredData.services.length === 0"
-          class="text-center py-16 text-muted-foreground"
-        >
-          未探测到任何可代理的服务。
-        </div>
+          <div
+            v-else-if="discoveredData && discoveredData.services.length === 0"
+            class="text-center py-16 text-muted-foreground"
+          >
+            未探测到任何可代理的服务。
+          </div>
 
-        <div
-          v-else-if="discoveredData"
-          class="border rounded-md overflow-hidden"
-        >
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead class="w-[50px] text-center">
-                  <input
-                    type="checkbox"
-                    class="h-4 w-4 rounded border-gray-300 text-primary cursor-pointer"
-                    :checked="isAllSelected"
-                    @change="onToggleAllDiscoverSelect"
-                  />
-                </TableHead>
-                <TableHead v-if="showDiscoverHostColumn" class="w-[140px]">
-                  主机
-                </TableHead>
-                <TableHead class="w-[80px]">端口</TableHead>
-                <TableHead class="w-[100px]">状态</TableHead>
-                <TableHead>服务标识</TableHead>
-                <TableHead class="w-[200px]">建议路径</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              <TableRow
-                v-for="(svc, index) in discoveredData.services"
-                :key="index"
+          <div
+            v-else-if="discoveredData"
+            class="border rounded-md bg-background"
+          >
+            <Table container-class="overflow-visible">
+              <TableHeader
+                class="sticky top-0 z-10 bg-background shadow-sm [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background"
               >
-                <TableCell class="text-center">
-                  <input
-                    type="checkbox"
-                    class="h-4 w-4 rounded border-gray-300 text-primary cursor-pointer"
-                    :value="svc"
-                    v-model="selectedServices"
-                  />
-                </TableCell>
-                <TableCell
-                  v-if="showDiscoverHostColumn"
-                  class="font-mono text-xs text-muted-foreground"
+                <TableRow>
+                  <TableHead class="w-[50px] text-center">
+                    <input
+                      type="checkbox"
+                      class="h-4 w-4 rounded border-gray-300 text-primary cursor-pointer"
+                      :checked="isAllSelected"
+                      @change="onToggleAllDiscoverSelect"
+                    />
+                  </TableHead>
+                  <TableHead v-if="showDiscoverHostColumn" class="w-[140px]">
+                    主机
+                  </TableHead>
+                  <TableHead class="w-[80px]">端口</TableHead>
+                  <TableHead class="w-[100px]">状态</TableHead>
+                  <TableHead>服务标识</TableHead>
+                  <TableHead class="w-[200px]">建议路径</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                <TableRow
+                  v-for="(svc, index) in discoveredData.services"
+                  :key="index"
                 >
-                  {{ resolveDiscoveredServiceHost(svc) }}
-                </TableCell>
-                <TableCell class="font-medium">
-                  <a
-                    :href="`http://${resolveDiscoveredServiceHost(svc)}:${svc.port}`"
-                    target="_blank"
-                    class="text-primary hover:underline hover:text-primary/80 transition-colors"
-                    title="在新窗口打开"
+                  <TableCell class="text-center">
+                    <input
+                      type="checkbox"
+                      class="h-4 w-4 rounded border-gray-300 text-primary cursor-pointer"
+                      :value="svc"
+                      v-model="selectedServices"
+                    />
+                  </TableCell>
+                  <TableCell
+                    v-if="showDiscoverHostColumn"
+                    class="font-mono text-xs text-muted-foreground"
                   >
-                    {{ svc.port }}
-                  </a>
-                </TableCell>
-                <TableCell>
-                  <span
-                    v-if="svc.httpStatus === 401"
-                    class="text-amber-600 bg-amber-500/10 text-xs px-2 py-0.5 rounded"
-                    >需认证</span
-                  >
-                  <span
-                    v-else
-                    class="text-green-600 bg-green-500/10 text-xs px-2 py-0.5 rounded"
-                    >{{ svc.httpStatus }}</span
-                  >
-                </TableCell>
-                <TableCell>
-                  <span v-if="svc.detail.label" class="text-sm">{{
-                    svc.detail.label
-                  }}</span>
-                  <span v-else class="text-red-500 text-sm font-medium"
-                    >未知服务</span
-                  >
-                </TableCell>
-                <TableCell>
-                  <Input
-                    v-model="svc.detail.rule.path"
-                    placeholder="必填，例如 /app"
-                    class="h-8 text-sm"
-                    :class="{
-                      'border-destructive focus-visible:ring-destructive':
-                        selectedServices.includes(svc) &&
-                        !svc.detail.rule.path.trim(),
-                    }"
-                  />
-                </TableCell>
-              </TableRow>
-            </TableBody>
-          </Table>
+                    {{ resolveDiscoveredServiceHost(svc) }}
+                  </TableCell>
+                  <TableCell class="font-medium">
+                    <a
+                      :href="`http://${resolveDiscoveredServiceHost(svc)}:${svc.port}`"
+                      target="_blank"
+                      class="text-primary hover:underline hover:text-primary/80 transition-colors"
+                      title="在新窗口打开"
+                    >
+                      {{ svc.port }}
+                    </a>
+                  </TableCell>
+                  <TableCell>
+                    <span
+                      v-if="svc.httpStatus === 401"
+                      class="text-amber-600 bg-amber-500/10 text-xs px-2 py-0.5 rounded"
+                      >需认证</span
+                    >
+                    <span
+                      v-else
+                      class="text-green-600 bg-green-500/10 text-xs px-2 py-0.5 rounded"
+                      >{{ svc.httpStatus }}</span
+                    >
+                  </TableCell>
+                  <TableCell>
+                    <span v-if="svc.detail.label" class="text-sm">{{
+                      svc.detail.label
+                    }}</span>
+                    <span v-else class="text-red-500 text-sm font-medium"
+                      >未知服务</span
+                    >
+                  </TableCell>
+                  <TableCell>
+                    <Input
+                      v-model="svc.detail.rule.path"
+                      placeholder="必填，例如 /app"
+                      class="h-8 text-sm"
+                      :class="{
+                        'border-destructive focus-visible:ring-destructive':
+                          selectedServices.includes(svc) &&
+                          !svc.detail.rule.path.trim(),
+                      }"
+                    />
+                  </TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+          </div>
         </div>
       </div>
 
-      <DialogFooter class="sm:justify-between items-center mt-2">
+      <DialogFooter class="mt-2 shrink-0 items-center sm:justify-between">
         <span class="text-sm text-muted-foreground">
           <template v-if="discoveredData">
             已扫描 {{ discoveredData.totalPortsScanned }} 个端口，选中
             {{ selectedServices.length }} /
             {{ discoveredData.services.length }} 项
             <template
-              v-if="discoveredData.scannedHosts && discoveredData.scannedHosts > 1"
+              v-if="
+                discoveredData.scannedHosts && discoveredData.scannedHosts > 1
+              "
             >
-              ，覆盖 {{ discoveredData.scanScope || `${discoveredData.scannedHosts} 台主机` }}
+              ，覆盖
+              {{
+                discoveredData.scanScope ||
+                `${discoveredData.scannedHosts} 台主机`
+              }}
             </template>
           </template>
         </span>

@@ -119,8 +119,9 @@
                       仅对子域模式生效。开启后，公开鉴权地址不再自动补访问端口。
                     </p>
                     <p class="text-xs text-muted-foreground">
-                      你可以在下方选择真实 IP 头来源供应商，网关会按当前选择识别真实
-                      IP，并通过 X-Forwarded-For 传给鉴权服务。
+                      你可以在下方选择真实 IP
+                      头来源供应商，网关会按当前选择识别真实 IP，并通过
+                      X-Forwarded-For 传给鉴权服务。
                     </p>
                     <p
                       v-if="!isEdgeClientIPModeEditable"
@@ -136,13 +137,10 @@
                   />
                 </div>
 
-                <div
-                  v-if="modeForm.edge_client_ip_enabled"
-                >
+                <div v-if="modeForm.edge_client_ip_enabled">
                   <div
                     class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4"
-                  >
-                  </div>
+                  ></div>
 
                   <div class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
                     <button
@@ -189,8 +187,6 @@
                       </div>
                     </button>
                   </div>
-
-      
                 </div>
               </div>
             </div>
@@ -330,8 +326,8 @@
             href="#/system/gateway-proxy-headers"
             class="underline underline-offset-2 hover:text-foreground"
           >
-            关闭代理头
-          </a>，亦或尝试
+            关闭代理头 </a
+          >，亦或尝试
 
           <a
             href="#/system/gateway-host-response"
@@ -717,8 +713,10 @@
       :open="isDiscoverDialogOpen"
       @update:open="handleDiscoverDialogOpenChange"
     >
-      <DialogContent class="flex max-h-[85vh] flex-col sm:max-w-[820px]">
-        <DialogHeader>
+      <DialogContent
+        class="flex max-h-[85vh] flex-col overflow-hidden sm:max-w-[820px]"
+      >
+        <DialogHeader class="shrink-0">
           <div
             class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
           >
@@ -744,116 +742,126 @@
           </div>
         </DialogHeader>
 
-        <div class="flex-1 overflow-y-auto overflow-x-hidden py-2">
-          <div
-            v-if="isDiscovering"
-            class="flex flex-col items-center justify-center py-16 space-y-4"
-          >
-            <RefreshCw class="h-8 w-8 animate-spin text-muted-foreground" />
-            <p class="text-sm text-muted-foreground">
-              正在探测端口服务，这可能需要几秒钟...
-            </p>
-          </div>
+        <div class="flex-1 min-h-0 overflow-auto">
+          <div class="py-2">
+            <div
+              v-if="isDiscovering"
+              class="flex flex-col items-center justify-center py-16 space-y-4"
+            >
+              <RefreshCw class="h-8 w-8 animate-spin text-muted-foreground" />
+              <p class="text-sm text-muted-foreground">
+                正在探测端口服务，这可能需要几秒钟...
+              </p>
+            </div>
 
-          <div
-            v-else-if="discoveredData && discoveredData.services.length === 0"
-            class="text-center py-16 text-muted-foreground"
-          >
-            {{
-              discoveredData.foundServices > 0
-                ? "本次扫描到的服务都已添加到 Host 映射中。"
-                : "未探测到任何可代理的服务。"
-            }}
-          </div>
+            <div
+              v-else-if="discoveredData && discoveredData.services.length === 0"
+              class="text-center py-16 text-muted-foreground"
+            >
+              {{
+                discoveredData.foundServices > 0
+                  ? "本次扫描到的服务都已添加到 Host 映射中。"
+                  : "未探测到任何可代理的服务。"
+              }}
+            </div>
 
-          <div v-else-if="discoveredData" class="rounded-md border">
-            <Table class="min-w-[42rem]">
-              <TableHeader>
-                <TableRow>
-                  <TableHead class="w-[50px] text-center">
-                    <input
-                      type="checkbox"
-                      class="h-4 w-4 cursor-pointer"
-                      :checked="isAllSelected"
-                      @change="onToggleAllDiscoverSelect"
-                    />
-                  </TableHead>
-                  <TableHead v-if="showDiscoverHostColumn" class="w-[140px]">
-                    主机
-                  </TableHead>
-                  <TableHead class="w-[80px]">端口</TableHead>
-                  <TableHead class="w-[100px]">状态</TableHead>
-                  <TableHead class="min-w-[10rem]">服务标识</TableHead>
-                  <TableHead class="w-[260px] min-w-[18rem]">
-                    建议子域名
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                <TableRow
-                  v-for="(svc, index) in discoveredData.services"
-                  :key="`${resolveDiscoveredServiceHost(svc)}-${svc.port}-${index}`"
+            <div
+              v-else-if="discoveredData"
+              class="rounded-md border bg-background"
+            >
+              <Table
+                class="min-w-[42rem]"
+                container-class="overflow-visible"
+              >
+                <TableHeader
+                  class="sticky top-0 z-10 bg-background shadow-sm [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background"
                 >
-                  <TableCell class="text-center">
-                    <input
-                      type="checkbox"
-                      class="h-4 w-4 cursor-pointer"
-                      :value="svc"
-                      v-model="selectedServices"
-                    />
-                  </TableCell>
-                  <TableCell
-                    v-if="showDiscoverHostColumn"
-                    class="font-mono text-xs text-muted-foreground"
-                  >
-                    {{ resolveDiscoveredServiceHost(svc) }}
-                  </TableCell>
-                  <TableCell class="font-medium">{{ svc.port }}</TableCell>
-                  <TableCell>
-                    <span
-                      v-if="svc.httpStatus === 401"
-                      class="text-amber-600 bg-amber-500/10 text-xs px-2 py-0.5 rounded"
-                    >
-                      需认证
-                    </span>
-                    <span
-                      v-else
-                      class="text-green-600 bg-green-500/10 text-xs px-2 py-0.5 rounded"
-                    >
-                      {{ svc.httpStatus }}
-                    </span>
-                  </TableCell>
-                  <TableCell class="min-w-[10rem] text-sm">
-                    {{ svc.detail.label || svc.detail.name || "未知服务" }}
-                  </TableCell>
-                  <TableCell class="min-w-[18rem]">
-                    <div
-                      class="flex min-w-[18rem] items-stretch rounded-md border"
-                    >
-                      <Input
-                        v-model="svc.suggestedSubdomain"
-                        placeholder="service"
-                        class="h-8 rounded-none border-0 text-sm shadow-none focus-visible:ring-0"
-                        :class="{
-                          'border-destructive focus-visible:ring-destructive':
-                            selectedServices.includes(svc) &&
-                            !svc.suggestedSubdomain.trim(),
-                        }"
+                  <TableRow>
+                    <TableHead class="w-[50px] text-center">
+                      <input
+                        type="checkbox"
+                        class="h-4 w-4 cursor-pointer"
+                        :checked="isAllSelected"
+                        @change="onToggleAllDiscoverSelect"
                       />
-                      <div
-                        class="flex shrink-0 items-center border-l bg-muted/30 px-3 text-xs text-muted-foreground"
+                    </TableHead>
+                    <TableHead v-if="showDiscoverHostColumn" class="w-[140px]">
+                      主机
+                    </TableHead>
+                    <TableHead class="w-[80px]">端口</TableHead>
+                    <TableHead class="w-[100px]">状态</TableHead>
+                    <TableHead class="min-w-[10rem]">服务标识</TableHead>
+                    <TableHead class="w-[260px] min-w-[18rem]">
+                      建议子域名
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  <TableRow
+                    v-for="(svc, index) in discoveredData.services"
+                    :key="`${resolveDiscoveredServiceHost(svc)}-${svc.port}-${index}`"
+                  >
+                    <TableCell class="text-center">
+                      <input
+                        type="checkbox"
+                        class="h-4 w-4 cursor-pointer"
+                        :value="svc"
+                        v-model="selectedServices"
+                      />
+                    </TableCell>
+                    <TableCell
+                      v-if="showDiscoverHostColumn"
+                      class="font-mono text-xs text-muted-foreground"
+                    >
+                      {{ resolveDiscoveredServiceHost(svc) }}
+                    </TableCell>
+                    <TableCell class="font-medium">{{ svc.port }}</TableCell>
+                    <TableCell>
+                      <span
+                        v-if="svc.httpStatus === 401"
+                        class="text-amber-600 bg-amber-500/10 text-xs px-2 py-0.5 rounded"
                       >
-                        .{{ savedRootDomain }}
+                        需认证
+                      </span>
+                      <span
+                        v-else
+                        class="text-green-600 bg-green-500/10 text-xs px-2 py-0.5 rounded"
+                      >
+                        {{ svc.httpStatus }}
+                      </span>
+                    </TableCell>
+                    <TableCell class="min-w-[10rem] text-sm">
+                      {{ svc.detail.label || svc.detail.name || "未知服务" }}
+                    </TableCell>
+                    <TableCell class="min-w-[18rem]">
+                      <div
+                        class="flex min-w-[18rem] items-stretch rounded-md border"
+                      >
+                        <Input
+                          v-model="svc.suggestedSubdomain"
+                          placeholder="service"
+                          class="h-8 rounded-none border-0 text-sm shadow-none focus-visible:ring-0"
+                          :class="{
+                            'border-destructive focus-visible:ring-destructive':
+                              selectedServices.includes(svc) &&
+                              !svc.suggestedSubdomain.trim(),
+                          }"
+                        />
+                        <div
+                          class="flex shrink-0 items-center border-l bg-muted/30 px-3 text-xs text-muted-foreground"
+                        >
+                          .{{ savedRootDomain }}
+                        </div>
                       </div>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
+                    </TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </div>
           </div>
         </div>
 
-        <DialogFooter class="sm:justify-between items-center mt-2">
+        <DialogFooter class="mt-2 shrink-0 items-center sm:justify-between">
           <span class="text-sm text-muted-foreground">
             <template v-if="discoveredData">
               已扫描 {{ discoveredData.totalPortsScanned }} 个端口，选中
@@ -1105,13 +1113,15 @@ const edgeClientIpProviderOptions: Array<{
   {
     value: "tencent_edgeone",
     label: "腾讯 EdgeOne",
-    description: "适合腾讯 EdgeOne 回源场景，由网关识别 EO 头并回填真实客户端 IP。",
+    description:
+      "适合腾讯 EdgeOne 回源场景，由网关识别 EO 头并回填真实客户端 IP。",
     headerHint: "网关读取 EO-Connecting-IP，并转发到 X-Forwarded-For",
   },
   {
     value: "aliyun_esa",
     label: "阿里云 ESA",
-    description: "适合阿里云 ESA 回源场景，由网关识别 ESA 真实 IP 头并回填客户端 IP。",
+    description:
+      "适合阿里云 ESA 回源场景，由网关识别 ESA 真实 IP 头并回填客户端 IP。",
     headerHint:
       "网关读取 Ali-Real-Client-IP，并转发到 X-Forwarded-For；请开启 ESA 托管转换请求头选项",
   },
@@ -1209,6 +1219,7 @@ const accessEntryPort = ref("7999");
 const brokenFaviconKeys = ref(new Set<string>());
 const draggableVisibleMappings = ref<HostMapping[]>([]);
 const gatewayProxyHeadersDetails = ref<GatewayProxyHeadersDetails | null>(null);
+let gatewayProxyHeadersRequestId = 0;
 const mappingMetadataTarget = ref("");
 const openProtocolHeadersWarningHost = ref<string | null>(null);
 const modeForm = reactive<SubdomainModeConfig>(createDefaultModeForm());
@@ -1780,7 +1791,6 @@ async function loadAccessEntryPort() {
   }
 }
 
-let gatewayProxyHeadersRequestId = 0;
 let protocolHeadersWarningCloseTimer: number | null = null;
 
 const clearProtocolHeadersWarningCloseTimer = () => {

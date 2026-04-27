@@ -19,10 +19,43 @@ export interface AutoHttpsRuntimeState {
 }
 
 const AUTO_HTTPS_LISTEN_PORT = 80;
-const AUTO_HTTPS_LISTEN_HOST =
-  process.env.FN_KNOCK_AUTO_HTTPS_HOST?.trim() || "0.0.0.0";
+const AUTO_HTTPS_CONFIGURED_LISTEN_HOST =
+  process.env.FN_KNOCK_AUTO_HTTPS_HOST?.trim() || "";
+const AUTO_HTTPS_DUAL_STACK_LISTEN_HOST = "::";
+const AUTO_HTTPS_FALLBACK_IPV4_LISTEN_HOST = "0.0.0.0";
+
+interface AutoHttpsListenTarget {
+  host: string;
+  ipv6Only?: boolean;
+}
 
 const nowIso = () => new Date().toISOString();
+
+const isIpv6AnyAddress = (host: string) =>
+  host === "::" || host === "0:0:0:0:0:0:0:0";
+
+export const resolveAutoHttpsListenTargets = (
+  configuredHost = AUTO_HTTPS_CONFIGURED_LISTEN_HOST,
+): AutoHttpsListenTarget[] => {
+  const host = configuredHost.trim();
+  if (host) {
+    return [
+      isIpv6AnyAddress(host)
+        ? { host, ipv6Only: false }
+        : { host },
+    ];
+  }
+
+  return [
+    {
+      host: AUTO_HTTPS_DUAL_STACK_LISTEN_HOST,
+      ipv6Only: false,
+    },
+    {
+      host: AUTO_HTTPS_FALLBACK_IPV4_LISTEN_HOST,
+    },
+  ];
+};
 
 const stripDefaultHttpPort = (host: string) => {
   if (/^\[[^\]]+\]:80$/i.test(host)) {
@@ -78,6 +111,55 @@ const closeServer = (server: Server) =>
     });
   });
 
+const shouldFallbackToIpv4 = (
+  configuredHost: string,
+  target: AutoHttpsListenTarget,
+  error: unknown,
+) => {
+  if (configuredHost.trim()) {
+    return false;
+  }
+  if (target.host !== AUTO_HTTPS_DUAL_STACK_LISTEN_HOST) {
+    return false;
+  }
+
+  const err = error as NodeJS.ErrnoException;
+  return err?.code === "EAFNOSUPPORT" || err?.code === "EADDRNOTAVAIL";
+};
+
+const listenServer = (port: number, target: AutoHttpsListenTarget) => {
+  const server = createRedirectServer();
+
+  return new Promise<Server>((resolve, reject) => {
+    const onError = (error: Error) => {
+      server.off("listening", onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      server.off("error", onError);
+      resolve(server);
+    };
+
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen({
+      port,
+      host: target.host,
+      ...(typeof target.ipv6Only === "boolean"
+        ? { ipv6Only: target.ipv6Only }
+        : {}),
+    });
+  });
+};
+
+const resolveServerListenHost = (server: Server, fallbackHost: string) => {
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    return fallbackHost;
+  }
+  return address.address || fallbackHost;
+};
+
 const createRedirectServer = () => {
   const server = createServer((req, res) => {
     const host = normalizeRequestHost(req);
@@ -98,11 +180,19 @@ const createRedirectServer = () => {
 };
 
 export class AutoHttpsRedirectManager {
+  private readonly listenPort: number;
+  private readonly configuredListenHost: string;
   private server: Server | null = null;
-  private state: AutoHttpsRuntimeState = this.buildState(false, false);
-  private operation: Promise<AutoHttpsRuntimeState> = Promise.resolve(
-    this.state,
-  );
+  private state: AutoHttpsRuntimeState;
+  private operation: Promise<AutoHttpsRuntimeState>;
+
+  constructor(options?: { listenPort?: number; listenHost?: string }) {
+    this.listenPort = options?.listenPort ?? AUTO_HTTPS_LISTEN_PORT;
+    this.configuredListenHost =
+      options?.listenHost?.trim() ?? AUTO_HTTPS_CONFIGURED_LISTEN_HOST;
+    this.state = this.buildState(false, false);
+    this.operation = Promise.resolve(this.state);
+  }
 
   getRuntimeState(): AutoHttpsRuntimeState {
     return this.state;
@@ -120,13 +210,14 @@ export class AutoHttpsRedirectManager {
     enabled: boolean,
     active: boolean,
     error?: string | null,
+    listenHost = this.getDefaultListenHost(),
   ): AutoHttpsRuntimeState {
     return {
       enabled,
       active,
       status: !enabled ? "disabled" : active ? "active" : "error",
-      listen_host: AUTO_HTTPS_LISTEN_HOST,
-      listen_port: AUTO_HTTPS_LISTEN_PORT,
+      listen_host: listenHost,
+      listen_port: this.listenPort,
       redirect_scheme: "https",
       last_error: error || null,
       last_error_at: error ? nowIso() : null,
@@ -134,18 +225,31 @@ export class AutoHttpsRedirectManager {
     };
   }
 
-  private buildErrorState(error: string): AutoHttpsRuntimeState {
+  private buildErrorState(
+    error: string,
+    listenHost = this.getDefaultListenHost(),
+  ): AutoHttpsRuntimeState {
     return {
       enabled: false,
       active: false,
       status: "error",
-      listen_host: AUTO_HTTPS_LISTEN_HOST,
-      listen_port: AUTO_HTTPS_LISTEN_PORT,
+      listen_host: listenHost,
+      listen_port: this.listenPort,
       redirect_scheme: "https",
       last_error: error,
       last_error_at: nowIso(),
       updated_at: nowIso(),
     };
+  }
+
+  private getListenTargets() {
+    return resolveAutoHttpsListenTargets(this.configuredListenHost);
+  }
+
+  private getDefaultListenHost() {
+    return (
+      this.getListenTargets()[0]?.host || AUTO_HTTPS_FALLBACK_IPV4_LISTEN_HOST
+    );
   }
 
   private async applyConfigNow(
@@ -158,35 +262,51 @@ export class AutoHttpsRedirectManager {
     }
 
     if (this.server?.listening) {
-      this.state = this.buildState(true, true);
+      this.state = this.buildState(
+        true,
+        true,
+        null,
+        resolveServerListenHost(this.server, this.getDefaultListenHost()),
+      );
       return this.state;
     }
 
     await this.stopServer();
 
-    try {
-      const server = createRedirectServer();
-      await new Promise<void>((resolve, reject) => {
-        const onError = (error: Error) => {
-          server.off("listening", onListening);
-          reject(error);
-        };
-        const onListening = () => {
-          server.off("error", onError);
-          resolve();
-        };
+    let lastError: unknown = null;
+    for (const target of this.getListenTargets()) {
+      try {
+        const server = await listenServer(this.listenPort, target);
+        this.server = server;
+        this.state = this.buildState(
+          true,
+          true,
+          null,
+          resolveServerListenHost(server, target.host),
+        );
+        return this.state;
+      } catch (error) {
+        lastError = error;
+        if (
+          shouldFallbackToIpv4(this.configuredListenHost, target, error)
+        ) {
+          continue;
+        }
 
-        server.once("error", onError);
-        server.once("listening", onListening);
-        server.listen(AUTO_HTTPS_LISTEN_PORT, AUTO_HTTPS_LISTEN_HOST);
-      });
-      this.server = server;
-      this.state = this.buildState(true, true);
-    } catch (error) {
-      this.server = null;
-      this.state = this.buildErrorState(normalizeListenError(error));
+        this.server = null;
+        this.state = this.buildErrorState(
+          normalizeListenError(error),
+          target.host,
+        );
+        return this.state;
+      }
     }
 
+    this.server = null;
+    this.state = this.buildErrorState(
+      normalizeListenError(lastError),
+      this.getDefaultListenHost(),
+    );
     return this.state;
   }
 

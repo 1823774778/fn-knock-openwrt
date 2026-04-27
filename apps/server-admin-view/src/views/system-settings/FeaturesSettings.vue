@@ -263,7 +263,7 @@ const saveAutoHttpsEnabled = async (nextValue: boolean) => {
       enabled: false,
       active: false,
       status: "disabled",
-      listen_host: "0.0.0.0",
+      listen_host: "::",
       listen_port: 80,
       redirect_scheme: "https",
       last_error: null,
