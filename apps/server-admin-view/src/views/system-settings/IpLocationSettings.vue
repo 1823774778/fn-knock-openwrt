@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import {
   CheckCircle2,
   ExternalLink,
@@ -30,6 +30,8 @@ import type { IpLocationApiConfig } from "../../lib/api";
 
 const OFFICIAL_IP_LOOKUP_URL = "https://ipaddress.fnknock.cn/api/v1";
 const OFFICIAL_CIDR_URL = "https://cidr.wxlnk.com/api/v1";
+const DEFAULT_CUSTOM_IP_LOOKUP_URL = "http://127.0.0.1:30661";
+const DEFAULT_CUSTOM_CIDR_URL = "http://127.0.0.1:30662";
 const ipLookupDockerUrl = "https://hub.docker.com/r/kcilnk/go-ipaddress-api";
 const cidrDockerUrl = "https://hub.docker.com/r/kcilnk/go-cidr-api";
 
@@ -45,6 +47,19 @@ const ipLookupUrlInput = ref("");
 const cidrUrlInput = ref("");
 
 const normalizeBaseUrl = (value: string) => value.trim().replace(/\/+$/, "");
+
+const applyDefaultCustomUrls = () => {
+  if (
+    form.ip_lookup_mode === "custom" &&
+    !normalizeBaseUrl(ipLookupUrlInput.value)
+  ) {
+    ipLookupUrlInput.value = DEFAULT_CUSTOM_IP_LOOKUP_URL;
+  }
+
+  if (form.cidr_mode === "custom" && !normalizeBaseUrl(cidrUrlInput.value)) {
+    cidrUrlInput.value = DEFAULT_CUSTOM_CIDR_URL;
+  }
+};
 
 const buildPayload = (): IpLocationApiConfig => ({
   ip_lookup_mode: form.ip_lookup_mode,
@@ -159,6 +174,7 @@ const applyFromSettings = (data: IpLocationApiConfig) => {
     normalized.ip_lookup_mode === "custom" ? normalized.ip_lookup_url : "";
   cidrUrlInput.value =
     normalized.cidr_mode === "custom" ? normalized.cidr_url : "";
+  applyDefaultCustomUrls();
 };
 
 const fetchSettings = async () => {
@@ -229,6 +245,11 @@ const saveSettings = async () => {
     },
   });
 };
+
+watch(
+  () => [form.ip_lookup_mode, form.cidr_mode] as const,
+  applyDefaultCustomUrls,
+);
 
 onMounted(fetchSettings);
 </script>
