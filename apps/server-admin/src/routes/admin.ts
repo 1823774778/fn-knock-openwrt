@@ -304,22 +304,18 @@ const normalizeHostLike = (value: string | undefined | null): string =>
     .replace(/\/.*$/, "")
     .replace(/\.+$/, "");
 
-const resolveRequestScheme = (request: Request): "http" | "https" => {
-  const forwarded = request.headers
-    .get("x-forwarded-proto")
-    ?.split(",")[0]
-    ?.trim()
-    .toLowerCase();
-  if (forwarded === "http" || forwarded === "https") {
-    return forwarded;
-  }
+const isEdgeClientIpBookmarkMode = (
+  config: Pick<AppConfig, "run_type" | "subdomain_mode">,
+): boolean =>
+  config.run_type === 3 &&
+  config.subdomain_mode?.edge_client_ip_enabled === true &&
+  (config.subdomain_mode.aliyun_esa_enabled === true ||
+    config.subdomain_mode.tencent_edgeone_enabled === true);
 
-  try {
-    return new URL(request.url).protocol === "http:" ? "http" : "https";
-  } catch {
-    return "https";
-  }
-};
+const resolveBookmarkScheme = (
+  config: Pick<AppConfig, "ssl">,
+): "http" | "https" =>
+  config.ssl.cert.trim() && config.ssl.key.trim() ? "https" : "http";
 
 const validatePasskeyRpConfig = (
   config: Awaited<ReturnType<typeof configManager.getConfig>>,
@@ -2198,12 +2194,13 @@ export const adminRoutes = new Elysia({
   )
   .get(
     "/config/host_mappings/bookmarks/export",
-    async ({ request }) => {
+    async () => {
       const config = await configManager.getConfig();
       const document = buildHostMappingsBookmarksDocument({
         mappings: config.host_mappings,
-        scheme: resolveRequestScheme(request),
+        scheme: resolveBookmarkScheme(config),
         accessEntryPort: resolveAccessEntryInfo(config).port,
+        omitAccessEntryPort: isEdgeClientIpBookmarkMode(config),
         folderTitle: config.subdomain_mode?.root_domain?.trim()
           ? `${config.subdomain_mode.root_domain.trim()} 子域映射`
           : "fn-knock 子域映射",

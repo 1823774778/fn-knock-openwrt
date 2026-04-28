@@ -10,6 +10,7 @@ export interface HostMappingBookmarksDocumentOptions {
   mappings: HostMapping[];
   scheme?: BookmarkScheme;
   accessEntryPort?: number | string | null;
+  omitAccessEntryPort?: boolean;
   folderTitle?: string;
   exportedAt?: Date;
 }
@@ -49,13 +50,19 @@ const buildBookmarkUrl = ({
   host,
   scheme,
   accessEntryPort,
+  omitAccessEntryPort,
 }: {
   host: string;
   scheme: BookmarkScheme;
   accessEntryPort?: number | string | null;
+  omitAccessEntryPort?: boolean;
 }): string => {
   const normalizedHost = normalizeHost(host);
   if (!normalizedHost) return "";
+
+  if (omitAccessEntryPort) {
+    return `${scheme}://${normalizedHost}/`;
+  }
 
   const port = resolveAccessEntryPort(accessEntryPort);
   const parsedPort = Number.parseInt(port, 10);
@@ -84,6 +91,7 @@ export const buildHostMappingsBookmarksDocument = ({
   mappings,
   scheme = "https",
   accessEntryPort,
+  omitAccessEntryPort = false,
   folderTitle,
   exportedAt = new Date(),
 }: HostMappingBookmarksDocumentOptions): string => {
@@ -96,6 +104,7 @@ export const buildHostMappingsBookmarksDocument = ({
         host: mapping.host,
         scheme,
         accessEntryPort,
+        omitAccessEntryPort,
       });
       if (!href) return "";
 
