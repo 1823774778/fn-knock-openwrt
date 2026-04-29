@@ -299,7 +299,8 @@ const trafficOption = computed<EChartsOption>(() => {
 const threatOption = computed<EChartsOption>(() => {
   const failedSeries = threatOverview.value?.series.failedLogins ?? [];
   const blockedSeries = threatOverview.value?.series.blockedScanners ?? [];
-  const colors = ["#525252", "#171717"];
+  const wafSeries = threatOverview.value?.series.wafEvents ?? [];
+  const colors = ["#525252", "#171717", "#b45309"];
 
   return {
     color: colors,
@@ -344,6 +345,15 @@ const threatOption = computed<EChartsOption>(() => {
         lineStyle: { width: 2 },
         areaStyle: { opacity: 0.05, color: colors[1] },
         data: blockedSeries,
+      },
+      {
+        name: "WAF 命中",
+        type: "line",
+        smooth: true,
+        symbol: "none",
+        lineStyle: { width: 2 },
+        areaStyle: { opacity: 0.05, color: colors[2] },
+        data: wafSeries,
       },
     ],
   } satisfies EChartsOption;
@@ -559,6 +569,12 @@ const securityCards = computed(() => [
     hint: "已被加入黑名单",
     icon: Ban,
   },
+  {
+    label: "WAF 命中",
+    value: formatNumber(threatOverview.value?.totals?.wafEvents),
+    hint: "检测与拦截事件",
+    icon: TriangleAlert,
+  },
 ]);
 
 const ddnsState = computed(() => {
@@ -737,14 +753,15 @@ const tunnelCards = computed(() => [
           </CardHeader>
           <CardContent class="pt-0 space-y-4">
             <div v-if="isInitializing && showMainSkeleton" class="space-y-3">
-              <div class="grid gap-3 sm:grid-cols-2">
+              <div class="grid gap-3 sm:grid-cols-3">
+                <Skeleton class="h-[84px] w-full rounded-xl" />
                 <Skeleton class="h-[84px] w-full rounded-xl" />
                 <Skeleton class="h-[84px] w-full rounded-xl" />
               </div>
               <Skeleton class="h-[180px] w-full rounded-xl" />
             </div>
             <div v-else-if="!isInitializing" class="space-y-4">
-              <div class="grid gap-3 sm:grid-cols-2">
+              <div class="grid gap-3 sm:grid-cols-3">
                 <div
                   v-for="item in securityCards"
                   :key="item.label"

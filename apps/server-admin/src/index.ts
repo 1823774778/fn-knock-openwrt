@@ -32,6 +32,7 @@ import {
 } from "./routes/cloudflared";
 import { ddnsRoutes } from "./routes/ddns";
 import { gatewayLogsRoutes } from "./routes/gateway-logs";
+import { wafRoutes } from "./routes/waf";
 import { registerAcmeRenewCron } from "./cron/acme-renew";
 import {
   registerTrafficCleanupCron,
@@ -54,6 +55,11 @@ import {
   syncReverseProxyTrustedIPsNow,
 } from "./lib/reverse-proxy-trusted-ips";
 import { syncGatewayLoggingToGateway } from "./lib/gateway-logging";
+import {
+  startWAFManifestAutoRefresh,
+  syncWAFToGatewayOnBoot,
+} from "./lib/waf/service";
+import { wafCollector } from "./lib/waf/collector";
 import { syncSSLDeploymentToGateway } from "./lib/ssl-gateway";
 import { syncSmartConnectOnBoot } from "./lib/smart-connect";
 import { terminalRoutes } from "./routes/terminal";
@@ -545,6 +551,23 @@ const normalizeAuthPath = (path: string) => {
   return path;
 };
 
+const AUTH_VIEW_ROUTES = new Set(["/", "/index.html", "/login", "/login/"]);
+
+const isKnownAuthViewPath = (path: string) =>
+  AUTH_VIEW_ROUTES.has(normalizeAuthPath(path));
+
+const serveAuthNotFoundHtml = () =>
+  new Response(
+    `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>404</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:ui-sans-serif,system-ui,sans-serif;color:#111;background:#fff}.wrap{text-align:center}h1{margin:0;font-size:3rem;line-height:1;font-weight:600}p{margin:.75rem 0 0;color:#666;font-size:.875rem}</style></head><body><main class="wrap"><h1>404</h1><p>Page not found</p></main></body></html>`,
+    {
+      status: 404,
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-cache",
+      },
+    },
+  );
+
 authApp.use(cors());
 authApp.use(hmacMiddleware);
 authApp.use(authRoutes);
@@ -609,6 +632,7 @@ app.use(cloudflaredRoutes);
 app.use(scannerRoutes);
 app.use(ddnsRoutes);
 app.use(gatewayLogsRoutes);
+app.use(wafRoutes);
 app.use(ipLocationRoutes);
 app.use(updateRoutes);
 app.use(terminalRoutes);
@@ -730,7 +754,8 @@ authApp.use(
 authApp.get("*", ({ path }) => {
   const normalizedPath = normalizeAuthPath(path);
   if (normalizedPath.startsWith("/api")) return;
-  return serveIndexHtml(AUTH_STATIC_PATH, true);
+  if (isKnownAuthViewPath(path)) return serveIndexHtml(AUTH_STATIC_PATH, true);
+  return serveAuthNotFoundHtml();
 });
 
 let { applied: reverseProxyThrottlePatchApplied, config } =
@@ -803,6 +828,16 @@ syncGatewayLoggingToGateway(config.gateway_logging).catch((error) => {
     error,
   );
 });
+syncWAFToGatewayOnBoot()
+  .then(() => {
+    startWAFManifestAutoRefresh();
+    wafCollector.start();
+  })
+  .catch((error) => {
+    console.error("[waf] failed to sync WAF config on boot:", error);
+    startWAFManifestAutoRefresh();
+    wafCollector.start();
+  });
 syncSSLDeploymentToGateway(config).catch((error) => {
   console.error("[SSL] failed to sync gateway deployment on boot:", error);
 });

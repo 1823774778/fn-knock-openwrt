@@ -53,6 +53,8 @@ import {
   buildHostMappingsBookmarksDocument,
 } from "../lib/host-mapping-bookmarks";
 import { getGatewayLoggingConfigForResponse } from "../lib/gateway-logging";
+import { syncWAFConfigToGateway } from "../lib/waf/service";
+import { wafLogStore } from "../lib/waf/log-store";
 import {
   buildGatewayHostResponseSummary,
   compileGatewayHostResponseState,
@@ -1671,7 +1673,7 @@ export const adminRoutes = new Elysia({
       const settings = await configManager.getIpLocationApiSettings();
       return { success: true, data: settings };
     },
-    routeDoc("获取 IP 归属地 API 配置"),
+    routeDoc("获取 IP 属地 API 配置"),
   )
   .post(
     "/config/ip_location_api",
@@ -1710,7 +1712,7 @@ export const adminRoutes = new Elysia({
       });
       return { success: true, data: next };
     },
-    withRouteDoc("更新 IP 归属地 API 配置", {
+    withRouteDoc("更新 IP 属地 API 配置", {
       body: t.Object({
         ip_lookup_mode: t.Union([t.Literal("online"), t.Literal("custom")]),
         ip_lookup_url: t.String(),
@@ -2543,6 +2545,18 @@ export const adminRoutes = new Elysia({
           };
         }
 
+        let syncedWAF = true;
+        try {
+          await syncWAFConfigToGateway(config.waf ?? null);
+        } catch (error) {
+          syncedWAF = false;
+          set.status = 502;
+          return {
+            success: false,
+            message: `同步部分失败: gateway_logging=${loggingResult.success}, waf=${syncedWAF}`,
+          };
+        }
+
         const syncedRules =
           config.run_type === 1 && !isReverseProxySubdomainMode(config)
             ? config.proxy_mappings.length
@@ -2562,8 +2576,10 @@ export const adminRoutes = new Elysia({
             synced_host_rules: syncedHostRules,
             synced_stream_rules: syncedStreamRules,
             synced_gateway_logging: true,
+            synced_waf: syncedWAF,
+            waf_bundle_id: config.waf?.active_bundle_id || "",
           },
-          message: `已按当前运行模式同步 ${syncedRules} 条路径路由、${syncedHostRules} 条 Host 路由、${syncedStreamRules} 条 协议映射与请求日志配置`,
+          message: `已按当前运行模式同步 ${syncedRules} 条路径路由、${syncedHostRules} 条 Host 路由、${syncedStreamRules} 条 协议映射、请求日志配置与 WAF 配置`,
         };
       } catch (e: any) {
         set.status = 500;
@@ -2718,6 +2734,10 @@ export const adminRoutes = new Elysia({
         toMs: nowMs,
         types: [FN_EVENT_AUTH_LOGIN_FAILURE, FN_EVENT_SECURITY_SCANNER_BLOCKED],
       });
+      const wafTimestamps = await wafLogStore.listTimestampsByRange({
+        fromMs,
+        toMs: nowMs,
+      });
       const failedTimestamps = events
         .filter((item) => item.event.type === FN_EVENT_AUTH_LOGIN_FAILURE)
         .map((item) => item.timestamp);
@@ -2732,6 +2752,7 @@ export const adminRoutes = new Elysia({
           totals: {
             failedLogins: failedTimestamps.length,
             blockedScanners: blockedTimestamps.length,
+            wafEvents: wafTimestamps.length,
           },
           series: {
             failedLogins: buildCountSeries(
@@ -2742,6 +2763,12 @@ export const adminRoutes = new Elysia({
             ),
             blockedScanners: buildCountSeries(
               blockedTimestamps,
+              fromMs,
+              nowMs,
+              bucketCount,
+            ),
+            wafEvents: buildCountSeries(
+              wafTimestamps,
               fromMs,
               nowMs,
               bucketCount,

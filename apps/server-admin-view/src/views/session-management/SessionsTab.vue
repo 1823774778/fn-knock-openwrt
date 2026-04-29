@@ -179,18 +179,18 @@ watch(
       />
     </div>
 
-    <div class="overflow-hidden rounded-md border">
+    <div class="overflow-x-auto rounded-md border">
       <TooltipProvider>
-        <Table>
+        <Table class="min-w-[1120px] table-fixed">
           <TableHeader>
             <TableRow>
               <TableHead class="w-[150px]">会话 ID</TableHead>
-              <TableHead>凭证</TableHead>
-              <TableHead>备注</TableHead>
-              <TableHead>当前 IP</TableHead>
-              <TableHead>登录时间</TableHead>
-              <TableHead>过期时间</TableHead>
-              <TableHead class="w-[210px] text-right">操作</TableHead>
+              <TableHead class="w-[190px]">凭证</TableHead>
+              <TableHead class="w-[220px]">备注</TableHead>
+              <TableHead class="w-[260px]">当前 IP</TableHead>
+              <TableHead class="w-[120px]">登录时间</TableHead>
+              <TableHead class="w-[120px]">过期时间</TableHead>
+              <TableHead class="w-[260px] text-right">操作</TableHead>
             </TableRow>
           </TableHeader>
 
@@ -209,9 +209,11 @@ watch(
                 </Tooltip>
               </TableCell>
 
-              <TableCell>
-                <div class="flex items-center gap-2">
-                  <div class="text-sm">{{ session.credentialName }}</div>
+              <TableCell class="whitespace-normal">
+                <div class="flex min-w-0 items-center gap-2">
+                  <div class="min-w-0 truncate text-sm">
+                    {{ session.credentialName }}
+                  </div>
                   <FnosAttachmentIndicator
                     v-if="session.fnosAttachments?.length"
                     :attachments="session.fnosAttachments"
@@ -236,10 +238,12 @@ watch(
                 />
               </TableCell>
 
-              <TableCell>
+              <TableCell class="whitespace-normal">
                 <Tooltip>
                   <TooltipTrigger as-child>
-                    <div class="cursor-help font-mono text-sm">
+                    <div
+                      class="cursor-help break-all font-mono text-sm leading-5"
+                    >
                       {{ middleEllipsis(session.ip, 24) }}
                     </div>
                   </TooltipTrigger>
@@ -249,7 +253,7 @@ watch(
                 </Tooltip>
                 <div
                   v-if="session.ipLocation"
-                  class="line-clamp-1 text-xs text-muted-foreground"
+                  class="line-clamp-2 whitespace-normal text-xs leading-5 text-muted-foreground"
                 >
                   {{ session.ipLocation }}
                 </div>
@@ -315,7 +319,7 @@ watch(
           <TableBody v-else>
             <TableRow>
               <TableCell
-                colspan="8"
+                colspan="7"
                 class="py-6 text-center text-muted-foreground"
               >
                 暂无会话

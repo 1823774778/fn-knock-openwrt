@@ -6,6 +6,7 @@ import {
   FN_EVENT_AUTH_SESSION_IP_DRIFT,
   FN_EVENT_DDNS_UPDATE_COMPLETED,
   FN_EVENT_GATEWAY_THROTTLE_BLOCKED,
+  FN_EVENT_WAF_BLOCKED,
   FN_EVENT_SSH_IP_BLOCKED,
   FN_EVENT_SSH_LOGIN_FAILURE,
   FN_EVENT_SSH_LOGIN_SUCCESS,
@@ -46,6 +47,8 @@ export const isSystemEventTypeEnabled = (
       return config.rules.ddns_update.enabled;
     case FN_EVENT_GATEWAY_THROTTLE_BLOCKED:
       return config.rules.gateway_throttle_block.enabled;
+    case FN_EVENT_WAF_BLOCKED:
+      return config.rules.waf_blocked.enabled;
     case FN_EVENT_SSH_LOGIN_SUCCESS:
       return config.rules.ssh_login_success.enabled;
     case FN_EVENT_SSH_LOGIN_FAILURE:
@@ -92,6 +95,7 @@ export const getDefaultSystemEventLevel = (
     case FN_EVENT_AUTH_SESSION_IP_DRIFT:
     case FN_EVENT_SECURITY_SCANNER_BLOCKED:
     case FN_EVENT_GATEWAY_THROTTLE_BLOCKED:
+    case FN_EVENT_WAF_BLOCKED:
     case FN_EVENT_SSH_LOGIN_FAILURE:
     case FN_EVENT_SSH_IP_BLOCKED:
     case FN_EVENT_TUNNEL_FRP_DISCONNECTED:

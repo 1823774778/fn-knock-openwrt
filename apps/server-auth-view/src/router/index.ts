@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 
 import Login from '../views/Login.vue'
 import Home from '../views/Home.vue' // We will create this
+import NotFound from '../views/NotFound.vue'
 
 const detectAuthBasePrefix = () => {
   if (typeof window === 'undefined') return '/'
@@ -69,6 +70,11 @@ const router = createRouter({
       path: '/login',
       name: 'Login',
       component: Login
+    },
+    {
+      path: '/:pathMatch(.*)*',
+      name: 'NotFound',
+      component: NotFound
     }
   ]
 })

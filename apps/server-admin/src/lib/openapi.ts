@@ -92,6 +92,10 @@ export const adminOpenApiTags = [
     description: "网关请求日志配置与查询接口。",
   },
   {
+    name: "WAF",
+    description: "WAF 配置、网关运行状态、事件拉取与日志查询接口。",
+  },
+  {
     name: "Notifications",
     description: "通知提供商、规则、触发器与投递记录接口。",
   },

@@ -38,6 +38,13 @@ import type {
   GatewayLogDeletePayload,
   GatewayLogEntriesPayload,
   GatewayLoggingConfig,
+  WAFConfig,
+  WAFDetails,
+  WAFDrainResult,
+  WAFLogDeletePayload,
+  WAFLogEntriesPayload,
+  WAFRuleFileContent,
+  WAFStatus,
   DashboardDisplayConfig,
   IpLocationBatchPayload,
   IpLocationSnapshot,
@@ -729,6 +736,7 @@ export const GatewayLogsAPI = {
     search?: string;
     status?: string;
     logged_in?: string;
+    waf_status?: string;
     page?: number;
   }): Promise<GatewayLogEntriesPayload> {
     const res = await apiClient.get("/gateway-logs/entries", {
@@ -738,6 +746,93 @@ export const GatewayLogsAPI = {
   },
   async deleteDate(date: string): Promise<GatewayLogDeletePayload> {
     const res = await apiClient.delete("/gateway-logs/entries", {
+      data: { date },
+    });
+    return res.data.data;
+  },
+};
+
+export const WAFAPI = {
+  async getDetails(): Promise<WAFDetails> {
+    const res = await apiClient.get("/waf/details");
+    return res.data.data;
+  },
+  async getStatus(): Promise<WAFStatus> {
+    const res = await apiClient.get("/waf/status");
+    return res.data.data;
+  },
+  async updateConfig(
+    payload: Partial<
+      Pick<WAFConfig, "enabled" | "paranoia_level" | "executing_paranoia_level">
+    >,
+  ): Promise<WAFDetails> {
+    const res = await apiClient.post("/waf/config", payload);
+    return res.data.data;
+  },
+  async refreshManifest(): Promise<WAFDetails> {
+    const res = await apiClient.post("/waf/manifest/refresh");
+    return res.data.data;
+  },
+  async syncSystemRules(): Promise<WAFDetails> {
+    const res = await apiClient.post("/waf/system/sync");
+    return res.data.data;
+  },
+  async setRulesEnabled(payload: {
+    source: "system" | "custom";
+    filenames?: string[];
+    enabled: boolean;
+  }): Promise<WAFDetails> {
+    const res = await apiClient.post("/waf/rules/enabled", payload);
+    return res.data.data;
+  },
+  async getRuleFile(
+    source: "system" | "custom",
+    filename: string,
+  ): Promise<WAFRuleFileContent> {
+    const res = await apiClient.get(
+      `/waf/rules/${source}/${encodeURIComponent(filename)}`,
+    );
+    return res.data.data;
+  },
+  async uploadCustomRules(payload: {
+    files: Array<{ filename: string; content_base64: string }>;
+  }): Promise<WAFDetails> {
+    const res = await apiClient.post("/waf/custom/upload", payload);
+    return res.data.data;
+  },
+  async deleteCustomRule(filename: string): Promise<WAFDetails> {
+    const res = await apiClient.delete(
+      `/waf/custom/${encodeURIComponent(filename)}`,
+    );
+    return res.data.data;
+  },
+  async drainEvents(): Promise<WAFDrainResult> {
+    const res = await apiClient.post("/waf/events/drain");
+    return res.data.data;
+  },
+  async getLogs(params: {
+    date?: string;
+    trace_id?: string;
+    search?: string;
+    host?: string;
+    client_ip?: string;
+    rule_id?: string;
+    route_type?: string;
+    mode?: string;
+    cursor?: string;
+    limit?: string;
+  }): Promise<WAFLogEntriesPayload> {
+    const res = await apiClient.get("/waf/logs", { params });
+    return res.data.data;
+  },
+  async getLog(
+    traceId: string,
+  ): Promise<WAFLogEntriesPayload["items"][number]> {
+    const res = await apiClient.get(`/waf/logs/${encodeURIComponent(traceId)}`);
+    return res.data.data;
+  },
+  async deleteLogs(date: string): Promise<WAFLogDeletePayload> {
+    const res = await apiClient.delete("/waf/logs", {
       data: { date },
     });
     return res.data.data;
@@ -1171,16 +1266,24 @@ export const IpLocationSettingsAPI = {
     const res = await apiClient.get("/config/ip_location_api");
     return res.data.data;
   },
-  async updateSettings(payload: IpLocationApiConfig): Promise<IpLocationApiConfig> {
+  async updateSettings(
+    payload: IpLocationApiConfig,
+  ): Promise<IpLocationApiConfig> {
     const res = await apiClient.post("/config/ip_location_api", payload);
     return res.data.data;
   },
-  async testIpLookup(url: string): Promise<{ success: boolean; message: string }> {
-    const res = await apiClient.post("/config/ip_location_api/test-ip-lookup", { url });
+  async testIpLookup(
+    url: string,
+  ): Promise<{ success: boolean; message: string }> {
+    const res = await apiClient.post("/config/ip_location_api/test-ip-lookup", {
+      url,
+    });
     return res.data;
   },
   async testCidr(url: string): Promise<{ success: boolean; message: string }> {
-    const res = await apiClient.post("/config/ip_location_api/test-cidr", { url });
+    const res = await apiClient.post("/config/ip_location_api/test-cidr", {
+      url,
+    });
     return res.data;
   },
 };

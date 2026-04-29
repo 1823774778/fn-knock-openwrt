@@ -7,6 +7,7 @@ import {
 } from "node:crypto";
 import { homedir } from "node:os";
 import { spawn } from "node:child_process";
+import { join } from "node:path";
 import { dataPath } from "./AppDirManager";
 import { ACME_EXECUTABLE_PATH, ACME_HOME_DIR } from "./acme-paths";
 import {
@@ -191,6 +192,28 @@ export interface GatewayLoggingSettings {
   max_days: number;
 }
 
+export type WAFMode = "off" | "detection" | "blocking";
+
+export interface WAFConfig {
+  enabled: boolean;
+  mode: WAFMode;
+  active_bundle_id: string;
+  rules_dir: string;
+  paranoia_level: 1 | 2 | 3 | 4;
+  executing_paranoia_level: 1 | 2 | 3 | 4;
+  inbound_anomaly_threshold: number;
+  outbound_anomaly_threshold: number;
+  request_body_access: boolean;
+  request_body_limit_bytes: number;
+  request_body_in_memory_limit_bytes: number;
+  response_body_access: boolean;
+  disabled_hosts: string[];
+  disabled_path_prefixes: string[];
+  log_retention_days: number;
+  drain_interval_seconds: number;
+  updated_at: string | null;
+}
+
 export interface ReverseProxyThrottleConfig {
   enabled: boolean;
   requests_per_second: number;
@@ -219,6 +242,7 @@ export interface EventSystemConfig {
     scanner_blocked: EventSystemSimpleRuleConfig;
     ddns_update: EventSystemSimpleRuleConfig;
     gateway_throttle_block: EventSystemSimpleRuleConfig;
+    waf_blocked: EventSystemSimpleRuleConfig;
     app_update_available: EventSystemSimpleRuleConfig;
     frp_tunnel: EventSystemSimpleRuleConfig;
     cloudflared_tunnel: EventSystemSimpleRuleConfig;
@@ -456,6 +480,7 @@ export interface AppConfig {
   default_tunnel?: "frp" | "cloudflared";
   fnos_share_bypass?: FnosShareBypassConfig;
   gateway_logging?: GatewayLoggingSettings;
+  waf?: WAFConfig;
   reverse_proxy_throttle?: ReverseProxyThrottleConfig;
   gateway_visibility?: GatewayVisibilityConfig;
   gateway_proxy_headers?: GatewayProxyHeadersConfig;
@@ -497,6 +522,31 @@ export const DEFAULT_AUTH_CREDENTIAL_SETTINGS: AuthCredentialSettings = {
 const DEFAULT_GATEWAY_LOGGING_SETTINGS: GatewayLoggingSettings = {
   enabled: false,
   max_days: 7,
+};
+
+const DEFAULT_GATEWAY_CONFIG_DIR =
+  process.env.FN_KNOCK_GATEWAY_CONFIG_DIR?.trim() ||
+  process.env.GATEWAY_CONFIG_DIR?.trim() ||
+  dataPath;
+
+export const DEFAULT_WAF_CONFIG: WAFConfig = {
+  enabled: false,
+  mode: "blocking",
+  active_bundle_id: "local",
+  rules_dir: join(DEFAULT_GATEWAY_CONFIG_DIR, "waf"),
+  paranoia_level: 1,
+  executing_paranoia_level: 1,
+  inbound_anomaly_threshold: 5,
+  outbound_anomaly_threshold: 4,
+  request_body_access: true,
+  request_body_limit_bytes: 131072,
+  request_body_in_memory_limit_bytes: 65536,
+  response_body_access: false,
+  disabled_hosts: [],
+  disabled_path_prefixes: [],
+  log_retention_days: 30,
+  drain_interval_seconds: 2,
+  updated_at: null,
 };
 
 export const DEFAULT_GATEWAY_VISIBILITY_CONFIG: GatewayVisibilityConfig = {
@@ -575,6 +625,9 @@ export const DEFAULT_EVENT_SYSTEM_CONFIG: EventSystemConfig = {
       enabled: true,
     },
     gateway_throttle_block: {
+      enabled: true,
+    },
+    waf_blocked: {
       enabled: true,
     },
     app_update_available: {
@@ -733,6 +786,11 @@ const DEFAULT_CONFIG: AppConfig = {
   gateway_logging: {
     ...DEFAULT_GATEWAY_LOGGING_SETTINGS,
   },
+  waf: {
+    ...DEFAULT_WAF_CONFIG,
+    disabled_hosts: [],
+    disabled_path_prefixes: [],
+  },
   reverse_proxy_throttle: {
     ...DEFAULT_REVERSE_PROXY_THROTTLE_CONFIG,
   },
@@ -778,6 +836,9 @@ const DEFAULT_CONFIG: AppConfig = {
       },
       gateway_throttle_block: {
         ...DEFAULT_EVENT_SYSTEM_CONFIG.rules.gateway_throttle_block,
+      },
+      waf_blocked: {
+        ...DEFAULT_EVENT_SYSTEM_CONFIG.rules.waf_blocked,
       },
       app_update_available: {
         ...DEFAULT_EVENT_SYSTEM_CONFIG.rules.app_update_available,
@@ -841,6 +902,104 @@ const normalizeGatewayLoggingSettings = (
       raw.max_days,
       DEFAULT_GATEWAY_LOGGING_SETTINGS.max_days,
     ),
+  };
+};
+
+const normalizeWAFMode = (value: unknown): WAFMode => {
+  if (value === "off" || value === "detection" || value === "blocking") {
+    return value;
+  }
+  return DEFAULT_WAF_CONFIG.mode;
+};
+
+const normalizeParanoiaLevel = (value: unknown, fallback: 1 | 2 | 3 | 4) =>
+  normalizeBoundedInt(value, fallback, { min: 1, max: 4 }) as 1 | 2 | 3 | 4;
+
+const normalizePathPrefixList = (value: unknown): string[] => {
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (const item of normalizeStringList(value)) {
+    let prefix = item.trim();
+    if (!prefix) continue;
+    if (!prefix.startsWith("/")) prefix = `/${prefix}`;
+    prefix = prefix.replace(/\/{2,}/g, "/");
+    if (prefix.length > 1) prefix = prefix.replace(/\/+$/, "");
+    if (!prefix || seen.has(prefix)) continue;
+    seen.add(prefix);
+    normalized.push(prefix);
+  }
+  return normalized;
+};
+
+export const normalizeWAFConfig = (
+  value?: Partial<WAFConfig> | null,
+): WAFConfig => {
+  const raw = value ?? {};
+  const paranoiaLevel = normalizeParanoiaLevel(
+    raw.paranoia_level,
+    DEFAULT_WAF_CONFIG.paranoia_level,
+  );
+  const executingParanoiaLevel = Math.max(
+    paranoiaLevel,
+    normalizeParanoiaLevel(
+      raw.executing_paranoia_level,
+      raw.paranoia_level
+        ? paranoiaLevel
+        : DEFAULT_WAF_CONFIG.executing_paranoia_level,
+    ),
+  ) as 1 | 2 | 3 | 4;
+  const requestBodyLimit = normalizePositiveInt(
+    raw.request_body_limit_bytes,
+    DEFAULT_WAF_CONFIG.request_body_limit_bytes,
+    { min: 1024, max: 128 * 1024 * 1024 },
+  );
+  const requestBodyMemoryLimit = normalizePositiveInt(
+    raw.request_body_in_memory_limit_bytes,
+    Math.min(
+      DEFAULT_WAF_CONFIG.request_body_in_memory_limit_bytes,
+      requestBodyLimit,
+    ),
+    { min: 1024, max: requestBodyLimit },
+  );
+  return {
+    enabled: raw.enabled === true,
+    mode: normalizeWAFMode(raw.mode),
+    active_bundle_id: "local",
+    rules_dir: DEFAULT_WAF_CONFIG.rules_dir,
+    paranoia_level: paranoiaLevel,
+    executing_paranoia_level: executingParanoiaLevel,
+    inbound_anomaly_threshold: normalizePositiveInt(
+      raw.inbound_anomaly_threshold,
+      DEFAULT_WAF_CONFIG.inbound_anomaly_threshold,
+      { min: 1, max: 1000000 },
+    ),
+    outbound_anomaly_threshold: normalizePositiveInt(
+      raw.outbound_anomaly_threshold,
+      DEFAULT_WAF_CONFIG.outbound_anomaly_threshold,
+      { min: 1, max: 1000000 },
+    ),
+    request_body_access:
+      typeof raw.request_body_access === "boolean"
+        ? raw.request_body_access
+        : DEFAULT_WAF_CONFIG.request_body_access,
+    request_body_limit_bytes: requestBodyLimit,
+    request_body_in_memory_limit_bytes: requestBodyMemoryLimit,
+    response_body_access: false,
+    disabled_hosts: normalizeStringList(raw.disabled_hosts).map((host) =>
+      host.toLowerCase(),
+    ),
+    disabled_path_prefixes: normalizePathPrefixList(raw.disabled_path_prefixes),
+    log_retention_days: normalizePositiveInt(
+      raw.log_retention_days,
+      DEFAULT_WAF_CONFIG.log_retention_days,
+      { min: 1, max: 365 },
+    ),
+    drain_interval_seconds: normalizePositiveInt(
+      raw.drain_interval_seconds,
+      DEFAULT_WAF_CONFIG.drain_interval_seconds,
+      { min: 1, max: 60 },
+    ),
+    updated_at: normalizeOptionalString(raw.updated_at) ?? null,
   };
 };
 
@@ -972,6 +1131,10 @@ const normalizeEventSystemConfig = (
       gateway_throttle_block: normalizeEventSystemSimpleRuleConfig(
         rawRules.gateway_throttle_block,
         DEFAULT_EVENT_SYSTEM_CONFIG.rules.gateway_throttle_block,
+      ),
+      waf_blocked: normalizeEventSystemSimpleRuleConfig(
+        rawRules.waf_blocked,
+        DEFAULT_EVENT_SYSTEM_CONFIG.rules.waf_blocked,
       ),
       app_update_available: normalizeEventSystemSimpleRuleConfig(
         rawRules.app_update_available,
@@ -2347,6 +2510,7 @@ return actual
         parsed.gateway_logging = normalizeGatewayLoggingSettings(
           parsed.gateway_logging,
         );
+        parsed.waf = normalizeWAFConfig(parsed.waf);
         parsed.reverse_proxy_throttle = normalizeReverseProxyThrottleConfig(
           parsed.reverse_proxy_throttle,
         );
@@ -2391,6 +2555,11 @@ return actual
       ssl: normalizeSSLConfig(DEFAULT_CONFIG.ssl),
       fnos_share_bypass: { ...DEFAULT_FNOS_SHARE_BYPASS_CONFIG },
       gateway_logging: { ...DEFAULT_GATEWAY_LOGGING_SETTINGS },
+      waf: {
+        ...DEFAULT_WAF_CONFIG,
+        disabled_hosts: [],
+        disabled_path_prefixes: [],
+      },
       reverse_proxy_throttle: { ...DEFAULT_REVERSE_PROXY_THROTTLE_CONFIG },
       gateway_visibility: {
         ...DEFAULT_GATEWAY_VISIBILITY_CONFIG,
@@ -4213,6 +4382,11 @@ return actual
     return normalizeGatewayLoggingSettings(config.gateway_logging);
   }
 
+  async getWAFConfig(): Promise<WAFConfig> {
+    const config = await this.getConfig();
+    return normalizeWAFConfig(config.waf);
+  }
+
   async getReverseProxyThrottleConfig(): Promise<ReverseProxyThrottleConfig> {
     const config = await this.getConfig();
     return normalizeReverseProxyThrottleConfig(config.reverse_proxy_throttle);
@@ -4381,6 +4555,18 @@ return actual
       ...patch,
     });
     config.gateway_logging = next;
+    await this.saveConfig(config);
+    return next;
+  }
+
+  async updateWAFConfig(patch: Partial<WAFConfig>): Promise<WAFConfig> {
+    const config = await this.getConfig();
+    const next = normalizeWAFConfig({
+      ...config.waf,
+      ...patch,
+      updated_at: new Date().toISOString(),
+    });
+    config.waf = next;
     await this.saveConfig(config);
     return next;
   }

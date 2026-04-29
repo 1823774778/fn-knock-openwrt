@@ -9,6 +9,7 @@ import {
   FN_EVENT_LEVEL_INFO,
   FN_EVENT_LEVEL_WARN,
   FN_EVENT_SECURITY_SCANNER_BLOCKED,
+  FN_EVENT_WAF_BLOCKED,
   FN_EVENT_SSH_IP_BLOCKED,
   FN_EVENT_SSH_LOGIN_FAILURE,
   FN_EVENT_SSH_LOGIN_SUCCESS,
@@ -277,6 +278,50 @@ export const emitDDNSUpdateCompletedEvent = async (payload: {
       previous_ipv6: payload.previousIpv6 ?? null,
       next_ipv4: payload.nextIpv4 ?? null,
       next_ipv6: payload.nextIpv6 ?? null,
+    },
+  });
+
+export const emitWAFBlockedEvent = async (payload: {
+  ip: string;
+  traceId: string;
+  blockedAt: string;
+  mode: string;
+  action: string;
+  status?: number;
+  host?: string;
+  path?: string;
+  requestUri?: string;
+  routeType?: string;
+  routeKey?: string;
+  bundleId?: string;
+  ruleIds?: number[];
+}) =>
+  systemEventManager.publishSafely({
+    type: FN_EVENT_WAF_BLOCKED,
+    source: SYSTEM_EVENT_SOURCE_SERVER_ADMIN,
+    level: FN_EVENT_LEVEL_WARN,
+    subject: {
+      kind: SYSTEM_EVENT_SUBJECT_KIND_IP,
+      id: payload.ip,
+    },
+    dedupe_key: `waf:${payload.traceId}`,
+    dedupe_ttl_seconds: 24 * 60 * 60,
+    happened_at: payload.blockedAt,
+    tags: ["waf", "gateway"],
+    payload: {
+      ip: payload.ip,
+      trace_id: payload.traceId,
+      blocked_at: payload.blockedAt,
+      mode: payload.mode,
+      action: payload.action,
+      ...(payload.status ? { status: payload.status } : {}),
+      ...(payload.host ? { host: payload.host } : {}),
+      ...(payload.path ? { path: payload.path } : {}),
+      ...(payload.requestUri ? { request_uri: payload.requestUri } : {}),
+      ...(payload.routeType ? { route_type: payload.routeType } : {}),
+      ...(payload.routeKey ? { route_key: payload.routeKey } : {}),
+      ...(payload.bundleId ? { bundle_id: payload.bundleId } : {}),
+      rule_ids: payload.ruleIds || [],
     },
   });
 

@@ -163,7 +163,7 @@ const detailFieldDefinitions = [
   { key: "remember_me", label: "记住我" },
   { key: "session_id", label: "会话 ID" },
   { key: "ip", label: "IP 地址" },
-  { key: "ip_location", label: "IP 归属地" },
+  { key: "ip_location", label: "IP 属地" },
   { key: "user_agent", label: "User-Agent" },
   { key: "expires_at", label: "过期时间" },
   { key: "login_time", label: "登录时间" },
@@ -175,9 +175,9 @@ const detailFieldDefinitions = [
   { key: "method", label: "失败方式" },
   { key: "drift_source", label: "漂移来源" },
   { key: "from_ip", label: "原 IP" },
-  { key: "from_ip_location", label: "原 IP 归属地" },
+  { key: "from_ip_location", label: "原 IP 属地" },
   { key: "to_ip", label: "当前 IP" },
-  { key: "to_ip_location", label: "当前 IP 归属地" },
+  { key: "to_ip_location", label: "当前 IP 属地" },
   { key: "blocked_at", label: "拦截时间" },
   { key: "window_minutes", label: "统计窗口（分钟）" },
   { key: "hit_count", label: "命中次数" },
@@ -192,7 +192,7 @@ const detailFieldDefinitions = [
   { key: "release_notes", label: "更新说明" },
   { key: "check_reason", label: "检查方式" },
   { key: "tunnel", label: "隧道类型" },
-  { key: "status", label: "连接状态" },
+  { key: "status", label: "状态" },
   { key: "pid", label: "进程 PID" },
   { key: "previous_ipv4", label: "原 IPv4" },
   { key: "next_ipv4", label: "当前 IPv4" },
@@ -201,7 +201,14 @@ const detailFieldDefinitions = [
   { key: "block_seconds", label: "封锁时长（秒）" },
   { key: "requests_per_second", label: "每秒请求数" },
   { key: "burst", label: "突发容量" },
+  { key: "trace_id", label: "Trace ID" },
+  { key: "mode", label: "WAF 模式" },
+  { key: "action", label: "WAF 动作" },
+  { key: "request_uri", label: "请求地址" },
+  { key: "bundle_id", label: "规则包" },
+  { key: "rule_ids", label: "规则 ID" },
   { key: "route_type", label: "路由类型" },
+  { key: "route_key", label: "路由键" },
   { key: "host", label: "Host" },
   { key: "path", label: "路径" },
   { key: "is_auth_route", label: "鉴权路由" },
@@ -282,6 +289,19 @@ const TUNNEL_LABELS: Record<string, string> = {
 const TUNNEL_STATUS_LABELS: Record<string, string> = {
   connected: "已连上",
   disconnected: "已断开",
+};
+
+const WAF_MODE_LABELS: Record<string, string> = {
+  detection: "检测",
+  blocking: "阻断",
+  off: "关闭",
+};
+
+const WAF_ACTION_LABELS: Record<string, string> = {
+  block: "阻断",
+  deny: "拒绝",
+  log: "记录",
+  pass: "放行",
 };
 
 const formatSubject = (
@@ -392,6 +412,11 @@ const detailItems = computed(() => {
         return CHECK_REASON_LABELS[String(value)] || String(value);
       if (key === "tunnel")
         return TUNNEL_LABELS[String(value)] || String(value);
+      if (key === "mode")
+        return WAF_MODE_LABELS[String(value)] || String(value);
+      if (key === "action")
+        return WAF_ACTION_LABELS[String(value)] || String(value);
+      if (key === "rule_ids" && Array.isArray(value)) return value.join(", ");
       if (key === "status")
         return TUNNEL_STATUS_LABELS[String(value)] || String(value);
       if (key === "remember_me" || key === "is_auth_route")
@@ -412,6 +437,7 @@ const detailItems = computed(() => {
         return formatPercentage(value);
       }
       if (value === undefined || value === null || value === "") return "-";
+      if (Array.isArray(value)) return value.join(", ");
       return String(value);
     },
   });
@@ -543,6 +569,10 @@ const describeEvent = (event: SystemEventRecord) => {
       return `${formatIpDisplay(payload.ip)} 触发节流封锁 ${String(
         payload.block_seconds || "-",
       )} 秒`;
+    case "FN_EVENT_WAF_BLOCKED":
+      return `${formatIpDisplay(payload.ip)} 的请求被 WAF 拦截${
+        payload.rule_ids ? `，规则 ${String(payload.rule_ids)}` : ""
+      }`;
     case "FN_EVENT_SSH_LOGIN_SUCCESS":
       return `SSH 用户 ${String(payload.username || "-")} 从 ${formatIpDisplay(
         payload.ip,

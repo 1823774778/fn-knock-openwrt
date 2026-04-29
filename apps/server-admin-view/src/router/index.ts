@@ -96,6 +96,11 @@ const router = createRouter({
           component: () => import("../views/GatewayRequestLogs.vue"),
         },
         {
+          path: "waf-logs",
+          name: "WAFLogs",
+          component: () => import("../views/WAFLogs.vue"),
+        },
+        {
           path: "system",
           name: "SystemSettings",
           component: () => import("../views/SystemSettings.vue"),

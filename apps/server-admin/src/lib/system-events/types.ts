@@ -12,6 +12,7 @@ import {
   FN_EVENT_AUTH_SESSION_IP_DRIFT,
   FN_EVENT_DDNS_UPDATE_COMPLETED,
   FN_EVENT_GATEWAY_THROTTLE_BLOCKED,
+  FN_EVENT_WAF_BLOCKED,
   FN_EVENT_SSH_IP_BLOCKED,
   FN_EVENT_SSH_LOGIN_FAILURE,
   FN_EVENT_SSH_LOGIN_SUCCESS,
@@ -139,6 +140,22 @@ export type SystemEventGatewayThrottleBlockedPayload = {
   is_auth_route: boolean;
 };
 
+export type SystemEventWAFBlockedPayload = {
+  ip: string;
+  trace_id: string;
+  blocked_at: string;
+  mode: string;
+  action: string;
+  status?: number;
+  host?: string;
+  path?: string;
+  request_uri?: string;
+  route_type?: string;
+  route_key?: string;
+  bundle_id?: string;
+  rule_ids: number[];
+};
+
 export type SystemEventSSHLoginSuccessPayload = {
   ip: string;
   ip_location?: string;
@@ -208,6 +225,7 @@ export type SystemEventPayloadMap = {
   [FN_EVENT_SECURITY_SCANNER_BLOCKED]: SystemEventScannerBlockedPayload;
   [FN_EVENT_DDNS_UPDATE_COMPLETED]: SystemEventDDNSUpdateCompletedPayload;
   [FN_EVENT_GATEWAY_THROTTLE_BLOCKED]: SystemEventGatewayThrottleBlockedPayload;
+  [FN_EVENT_WAF_BLOCKED]: SystemEventWAFBlockedPayload;
   [FN_EVENT_SSH_LOGIN_SUCCESS]: SystemEventSSHLoginSuccessPayload;
   [FN_EVENT_SSH_LOGIN_FAILURE]: SystemEventSSHLoginFailurePayload;
   [FN_EVENT_SSH_IP_BLOCKED]: SystemEventSSHIPBlockedPayload;

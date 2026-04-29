@@ -184,6 +184,12 @@ export interface GatewayLogEntry {
   eo_connecting_ip?: string;
   x_forwarded_for?: string;
   x_real_ip?: string;
+  waf_blocked?: boolean;
+  waf_trace_id?: string;
+  waf_mode?: string;
+  waf_rule_ids?: number[];
+  waf_action?: string;
+  waf_bundle?: string;
 }
 
 export interface GatewayLogEntriesResponse {
@@ -205,6 +211,107 @@ export interface GatewayLogDeleteResponse {
   logs_dir: string;
   deleted: boolean;
   available_dates: string[];
+}
+
+export type WAFMode = "off" | "detection" | "blocking";
+
+export interface WAFConfig {
+  enabled: boolean;
+  mode: WAFMode;
+  active_bundle_id: string;
+  rules_dir: string;
+  paranoia_level: number;
+  executing_paranoia_level: number;
+  inbound_anomaly_threshold: number;
+  outbound_anomaly_threshold: number;
+  request_body_access: boolean;
+  request_body_limit_bytes: number;
+  request_body_in_memory_limit_bytes: number;
+  response_body_access: boolean;
+  disabled_hosts: string[];
+  disabled_path_prefixes: string[];
+  log_retention_days: number;
+  drain_interval_seconds: number;
+  updated_at: string | null;
+}
+
+export interface WAFStatus {
+  enabled: boolean;
+  mode: WAFMode | string;
+  loaded: boolean;
+  bundle_id?: string;
+  bundle_hash?: string;
+  loaded_at?: string;
+  rules_dir?: string;
+  pending_events: number;
+  last_error?: string;
+}
+
+export interface WAFValidationResult {
+  ok: boolean;
+  bundle_id?: string;
+  bundle_path?: string;
+  bundle_hash?: string;
+  error?: string;
+}
+
+export interface WAFMatchedVariable {
+  variable?: string;
+  key?: string;
+  value_preview?: string;
+}
+
+export interface WAFRuleMatch {
+  id: number;
+  message?: string;
+  data?: string;
+  severity?: string;
+  phase?: number;
+  file?: string;
+  line?: number;
+  tags?: string[];
+  disruptive: boolean;
+  matched_variables?: WAFMatchedVariable[];
+}
+
+export interface WAFInterruptionInfo {
+  rule_id?: number;
+  action?: string;
+  status?: number;
+}
+
+export interface WAFEvent {
+  trace_id: string;
+  transaction_id?: string;
+  time: string;
+  mode: WAFMode | string;
+  action: string;
+  status?: number;
+  client_ip?: string;
+  remote_addr?: string;
+  method?: string;
+  scheme?: string;
+  host?: string;
+  path?: string;
+  query?: string;
+  request_uri?: string;
+  user_agent?: string;
+  referer?: string;
+  route_type?: string;
+  route_key?: string;
+  upstream?: string;
+  bundle_id?: string;
+  bundle_hash?: string;
+  rule_ids?: number[];
+  rules?: WAFRuleMatch[];
+  interruption?: WAFInterruptionInfo;
+  error?: string;
+}
+
+export interface WAFDrainResult {
+  events: WAFEvent[];
+  drained: number;
+  remaining: number;
 }
 
 export interface IptablesInitRequest {
@@ -555,6 +662,7 @@ export class GoBackendService {
     search?: string;
     status?: string;
     logged_in?: string;
+    waf_status?: string;
   }): Promise<GoResponse<GatewayLogEntriesResponse>> {
     const searchParams = new URLSearchParams();
     if (params.date) searchParams.set("date", params.date);
@@ -568,6 +676,7 @@ export class GoBackendService {
     if (params.search) searchParams.set("search", params.search);
     if (params.status) searchParams.set("status", params.status);
     if (params.logged_in) searchParams.set("logged_in", params.logged_in);
+    if (params.waf_status) searchParams.set("waf_status", params.waf_status);
     const query = searchParams.toString();
     return this.request<GatewayLogEntriesResponse>(
       `/api/logging/entries${query ? `?${query}` : ""}`,
@@ -582,6 +691,24 @@ export class GoBackendService {
       "DELETE",
       { date },
     );
+  }
+
+  async getWAFStatus(): Promise<GoResponse<WAFStatus>> {
+    return this.request<WAFStatus>("/api/waf/status");
+  }
+
+  async setWAFConfig(config: WAFConfig): Promise<GoResponse<WAFStatus>> {
+    return this.request<WAFStatus>("/api/waf/config", "POST", config);
+  }
+
+  async reloadWAFRules(config: WAFConfig): Promise<GoResponse<WAFStatus>> {
+    return this.request<WAFStatus>("/api/waf/reload", "POST", { config });
+  }
+
+  async drainWAFEvents(limit: number): Promise<GoResponse<WAFDrainResult>> {
+    return this.request<WAFDrainResult>("/api/waf/events/drain", "POST", {
+      limit,
+    });
   }
 
   async getRules(): Promise<GoResponse<Rule[]>> {

@@ -8,7 +8,7 @@ const MAX_POLL_FAILURES = 3;
 const isPendingStatus = (status?: IpLocationLookupStatus) =>
   status === "queued" || status === "processing";
 
-const normalizeIpKey = (ip: string) => {
+export const normalizeIpKey = (ip: string) => {
   let candidate = String(ip || "").trim();
   if (!candidate) return "";
 

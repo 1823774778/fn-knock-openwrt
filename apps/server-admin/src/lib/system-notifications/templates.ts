@@ -15,6 +15,7 @@ const EVENT_LABELS: Record<SystemEventEnvelope["type"], string> = {
   FN_EVENT_SECURITY_SCANNER_BLOCKED: "扫描器拦截",
   FN_EVENT_DDNS_UPDATE_COMPLETED: "DDNS 更新",
   FN_EVENT_GATEWAY_THROTTLE_BLOCKED: "网关节流封锁",
+  FN_EVENT_WAF_BLOCKED: "WAF 拦截",
   FN_EVENT_SSH_LOGIN_SUCCESS: "SSH 登录成功",
   FN_EVENT_SSH_LOGIN_FAILURE: "SSH 登录失败",
   FN_EVENT_SSH_IP_BLOCKED: "SSH IP 封锁",
@@ -515,6 +516,34 @@ const buildNotificationDetails = (args: {
       );
       break;
     }
+    case "FN_EVENT_WAF_BLOCKED": {
+      const ip = readPayloadValue(event, "ip") || "未知 IP";
+      const host = readPayloadValue(event, "host");
+      const path =
+        readPayloadValue(event, "request_uri") ||
+        readPayloadValue(event, "path");
+      const ruleIds = readPayloadValue(event, "rule_ids");
+      const traceId = readPayloadValue(event, "trace_id");
+
+      summary = `${ip} 的请求被 WAF 拦截`;
+      overview = `WAF 已拦截来源 ${ip}${host ? ` 访问 ${host}` : ""}${path ? ` ${path}` : ""}。${ruleIds ? `命中规则：${ruleIds}。` : ""}`;
+      advice =
+        "请在 WAF 日志中按 Trace ID 查看命中详情；如确认为误报，可生成排除草稿并先在检测模式观察。";
+
+      pushFact(facts, "来源 IP", ip);
+      pushFact(facts, "Trace ID", traceId);
+      pushFact(facts, "Host", host);
+      pushFact(facts, "请求地址", path);
+      pushFact(facts, "规则 ID", ruleIds);
+      pushFact(facts, "规则包", readPayloadValue(event, "bundle_id"));
+      pushFact(facts, "状态码", readPayloadValue(event, "status"));
+      pushFact(
+        facts,
+        "拦截时间",
+        formatDateTime(readPayloadValue(event, "blocked_at")),
+      );
+      break;
+    }
     case "FN_EVENT_SSH_LOGIN_SUCCESS": {
       const ip = readPayloadValue(event, "ip") || "未知 IP";
       const ipLocation = readPayloadValue(event, "ip_location");
@@ -784,6 +813,14 @@ const formatEventSummary = (event: SystemEventEnvelope) => {
         readPayloadValue(event, "block_seconds")
           ? `封锁${readPayloadValue(event, "block_seconds")}s`
           : "触发封锁",
+      );
+    case "FN_EVENT_WAF_BLOCKED":
+      return joinCompactParts(
+        readPayloadValue(event, "ip"),
+        readPayloadValue(event, "host"),
+        readPayloadValue(event, "rule_ids")
+          ? `规则 ${readPayloadValue(event, "rule_ids")}`
+          : "WAF 拦截",
       );
     case "FN_EVENT_SSH_LOGIN_SUCCESS":
       return joinCompactParts(

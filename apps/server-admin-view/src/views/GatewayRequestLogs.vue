@@ -16,6 +16,9 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
+  ShieldAlert,
+  ShieldCheck,
+  ShieldX,
 } from "lucide-vue-next";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -85,6 +88,11 @@ const LOGIN_FILTER_OPTIONS = [
   { value: "true", label: "已登录" },
   { value: "false", label: "未登录" },
 ] as const;
+const WAF_FILTER_OPTIONS = [
+  { value: "all", label: "全部WAF" },
+  { value: "has_waf", label: "有 WAF" },
+  { value: "none", label: "无 WAF" },
+] as const;
 
 const entries = ref<GatewayLogEntry[]>([]);
 const logsDir = ref("");
@@ -94,6 +102,8 @@ const selectedStatus =
   ref<(typeof STATUS_FILTER_OPTIONS)[number]["value"]>("all");
 const selectedLoggedIn =
   ref<(typeof LOGIN_FILTER_OPTIONS)[number]["value"]>("all");
+const selectedWAFStatus =
+  ref<(typeof WAF_FILTER_OPTIONS)[number]["value"]>("all");
 const limit = ref("20");
 const searchQuery = ref("");
 const loading = ref(false);
@@ -121,6 +131,9 @@ const normalizedStatusQuery = computed(() =>
 const normalizedLoggedInQuery = computed(() =>
   selectedLoggedIn.value === "all" ? "" : selectedLoggedIn.value,
 );
+const normalizedWAFStatusQuery = computed(() =>
+  selectedWAFStatus.value === "all" ? "" : selectedWAFStatus.value,
+);
 const activeStatusLabel = computed(
   () =>
     STATUS_FILTER_OPTIONS.find((item) => item.value === selectedStatus.value)
@@ -130,6 +143,11 @@ const activeLoggedInLabel = computed(
   () =>
     LOGIN_FILTER_OPTIONS.find((item) => item.value === selectedLoggedIn.value)
       ?.label || "全部登录状态",
+);
+const activeWAFStatusLabel = computed(
+  () =>
+    WAF_FILTER_OPTIONS.find((item) => item.value === selectedWAFStatus.value)
+      ?.label || "全部 WAF",
 );
 const hasHorizontalOverflow = computed(
   () => tableContentWidth.value > tableViewportWidth.value + 1,
@@ -196,6 +214,7 @@ const fetchEntries = async () => {
       search: searchQuery.value || undefined,
       status: normalizedStatusQuery.value || undefined,
       logged_in: normalizedLoggedInQuery.value || undefined,
+      waf_status: normalizedWAFStatusQuery.value || undefined,
     });
     logsDir.value = data.logs_dir || "";
     entries.value = data.items || [];
@@ -306,6 +325,15 @@ const handleLoggedInChange = async (value: unknown) => {
   await fetchEntries();
 };
 
+const handleWAFStatusChange = async (value: unknown) => {
+  if (!value) return;
+  selectedWAFStatus.value = String(
+    value,
+  ) as (typeof WAF_FILTER_OPTIONS)[number]["value"];
+  resetCursorPagination();
+  await fetchEntries();
+};
+
 const handleLimitChange = async (value: unknown) => {
   if (!value) return;
   limit.value = String(value);
@@ -351,6 +379,7 @@ const deleteSelectedDate = async () => {
       searchQuery.value = "";
       selectedStatus.value = "all";
       selectedLoggedIn.value = "all";
+      selectedWAFStatus.value = "all";
       resetCursorPagination();
       const nextPreferred =
         data.available_dates.find((item) => item !== selectedDate.value) ||
@@ -363,6 +392,79 @@ const deleteSelectedDate = async () => {
 
 const goToSettings = () => {
   router.push({ path: "/system", query: { tab: "gateway-logging" } });
+};
+
+const goToWAFTrace = (traceId?: string) => {
+  if (!traceId) return;
+  router.push({ path: "/waf-logs", query: { trace_id: traceId } });
+};
+
+const wafActionLabel = (value?: string) => {
+  switch (value) {
+    case "block":
+    case "deny":
+      return "阻断";
+    case "log":
+    case "detect":
+      return "记录";
+    case "pass":
+      return "放行";
+    default:
+      return value || "-";
+  }
+};
+
+const formatRuleIds = (value?: number[]) =>
+  value && value.length > 0 ? value.join(", ") : "-";
+
+const hasWAFSignal = (entry: GatewayLogEntry) =>
+  Boolean(entry.waf_trace_id) ||
+  Boolean(entry.waf_bundle) ||
+  Boolean(entry.waf_action) ||
+  entry.waf_blocked === true ||
+  (Array.isArray(entry.waf_rule_ids) && entry.waf_rule_ids.length > 0);
+
+const getWAFAction = (entry: GatewayLogEntry) =>
+  String(entry.waf_action || "").toLowerCase();
+
+const isWAFBlocked = (entry: GatewayLogEntry) =>
+  entry.waf_blocked === true ||
+  getWAFAction(entry) === "block" ||
+  getWAFAction(entry) === "deny";
+
+const wafBadgeLabel = (entry: GatewayLogEntry) => {
+  if (isWAFBlocked(entry)) return "WAF 阻断";
+  const action = getWAFAction(entry);
+  if (action === "pass") return "WAF 放行";
+  if (action === "log" || action === "detect") return "WAF 记录";
+  return "WAF 命中";
+};
+
+const wafBadgeClass = (entry: GatewayLogEntry) => {
+  if (isWAFBlocked(entry)) {
+    return "border-red-500/20 bg-transparent text-red-600/80 hover:bg-red-500/[0.04] dark:text-red-300/80";
+  }
+  if (getWAFAction(entry) === "pass") {
+    return "border-emerald-500/20 bg-transparent text-emerald-600/80 hover:bg-emerald-500/[0.04] dark:text-emerald-300/80";
+  }
+  return "border-muted-foreground/20 bg-transparent text-muted-foreground hover:bg-muted/30";
+};
+
+const wafBadgeMeta = (entry: GatewayLogEntry) => {
+  if (entry.waf_rule_ids?.length) {
+    return entry.waf_rule_ids.map((id) => `#${id}`).join(" ");
+  }
+  return entry.waf_trace_id || wafActionLabel(entry.waf_action);
+};
+
+const wafBadgeTitle = (entry: GatewayLogEntry) => {
+  const parts = [wafBadgeLabel(entry)];
+  if (entry.waf_trace_id) parts.push(`Trace: ${entry.waf_trace_id}`);
+  if (entry.waf_rule_ids?.length) {
+    parts.push(`规则: ${entry.waf_rule_ids.join(", ")}`);
+  }
+  if (entry.waf_bundle) parts.push(`规则包: ${entry.waf_bundle}`);
+  return parts.join(" · ");
 };
 
 const statusTextClass = (status: number) => {
@@ -444,11 +546,11 @@ const getEntryIpLocationText = (entry: GatewayLogEntry) => {
   if (location) return location;
 
   if (snapshot?.status === "queued" || snapshot?.status === "processing") {
-    return "归属地解析中...";
+    return "属地解析中...";
   }
 
   if (snapshot?.status === "failed") {
-    return "归属地暂未获取";
+    return "属地暂未获取";
   }
 
   return "";
@@ -501,7 +603,7 @@ const detailFields = [
   { key: "status", label: "状态码" },
   { key: "duration_ms", label: "耗时" },
   { key: "remote_ip", label: "客户端 IP" },
-  { key: "ipLocation", label: "归属地" },
+  { key: "ipLocation", label: "属地" },
   { key: "remote_addr", label: "远端地址" },
   { key: "user_agent", label: "User-Agent" },
   { key: "referer", label: "Referer" },
@@ -521,6 +623,12 @@ const detailFields = [
   { key: "ali_real_client_ip", label: "Ali-Real-Client-IP" },
   { key: "x_forwarded_for", label: "X-Forwarded-For" },
   { key: "x_real_ip", label: "X-Real-IP" },
+  { key: "waf_blocked", label: "WAF 已阻断" },
+  { key: "waf_trace_id", label: "WAF Trace ID" },
+  { key: "waf_mode", label: "WAF 模式" },
+  { key: "waf_action", label: "WAF 动作" },
+  { key: "waf_rule_ids", label: "WAF 规则 ID" },
+  { key: "waf_bundle", label: "WAF 规则包" },
 ] as const;
 
 const detailItems = computed(() =>
@@ -533,13 +641,16 @@ const detailItems = computed(() =>
         key === "auth_required" ||
         key === "matched" ||
         key === "tls" ||
-        key === "websocket"
+        key === "websocket" ||
+        key === "waf_blocked"
       ) {
         return formatBoolean(Boolean(value));
       }
       if (key === "route_type") return routeTypeLabel(String(value || ""));
       if (key === "auth_decision")
         return authDecisionLabel(String(value || ""));
+      if (key === "waf_action") return wafActionLabel(String(value || ""));
+      if (key === "waf_rule_ids") return formatRuleIds(value as number[]);
       if (value === undefined || value === null || value === "") return "-";
       return value;
     },
@@ -637,7 +748,7 @@ onBeforeUnmount(() => {
           <SearchInput
             v-model="searchQuery"
             placeholder="搜索 IP、Host、路径、状态码、UA、上游目标..."
-            class="w-full xl:max-w-[420px]"
+            class="w-full xl:w-[320px] xl:max-w-[320px]"
             @search="handleSearch"
           />
 
@@ -701,6 +812,26 @@ onBeforeUnmount(() => {
                 </SelectItem>
               </SelectContent>
             </Select>
+
+            <Select
+              :model-value="selectedWAFStatus"
+              @update:model-value="handleWAFStatusChange"
+            >
+              <div class="w-[148px]">
+                <SelectTrigger>
+                  <SelectValue placeholder="WAF 状态" />
+                </SelectTrigger>
+              </div>
+              <SelectContent>
+                <SelectItem
+                  v-for="option in WAF_FILTER_OPTIONS"
+                  :key="option.value"
+                  :value="option.value"
+                >
+                  {{ option.label }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </div>
 
@@ -710,6 +841,7 @@ onBeforeUnmount(() => {
           <span>{{ cursorPageLabel }} · {{ entries.length }} 条</span>
           <span>{{ activeStatusLabel }}</span>
           <span>{{ activeLoggedInLabel }}</span>
+          <span>{{ activeWAFStatusLabel }}</span>
           <span v-if="searchQuery.trim()"
             >关键词：{{ searchQuery.trim() }}</span
           >
@@ -749,14 +881,14 @@ onBeforeUnmount(() => {
         >
           <Table
             v-if="!(loading && entries.length === 0)"
-            class="min-w-[860px]"
+            class="min-w-[980px]"
           >
             <TableHeader
               class="sticky top-0 z-10 bg-background/95 backdrop-blur"
             >
               <TableRow>
                 <TableHead
-                  class="h-10 w-[320px] min-w-[320px] text-[11px] font-medium text-muted-foreground"
+                  class="h-10 w-[320px] min-w-[320px] max-w-[320px] text-[11px] font-medium text-muted-foreground"
                   >请求</TableHead
                 >
                 <TableHead
@@ -808,7 +940,7 @@ onBeforeUnmount(() => {
                 :key="`${entry.time}-${entry.request_uri}-${entry.remote_ip}`"
                 class="align-top"
               >
-                <TableCell class="w-[320px] min-w-[320px] max-w-[320px] py-2.5">
+                <TableCell class="w-[320px] min-w-[320px] max-w-[320px] whitespace-normal py-2.5">
                   <div class="space-y-1.5">
                     <div class="flex items-start gap-2">
                       <div
@@ -842,6 +974,29 @@ onBeforeUnmount(() => {
                     >
                       {{ entry.upstream }}
                     </div>
+                    <button
+                      v-if="hasWAFSignal(entry)"
+                      type="button"
+                      class="inline-flex max-w-full items-center gap-1 rounded-full border px-1.5 py-px text-[10px] font-normal leading-4 transition-colors disabled:cursor-default disabled:opacity-70"
+                      :class="wafBadgeClass(entry)"
+                      :title="wafBadgeTitle(entry)"
+                      :disabled="!entry.waf_trace_id"
+                      @click.stop="goToWAFTrace(entry.waf_trace_id)"
+                    >
+                      <ShieldX
+                        v-if="isWAFBlocked(entry)"
+                        class="h-2.5 w-2.5 shrink-0"
+                      />
+                      <ShieldCheck
+                        v-else-if="getWAFAction(entry) === 'pass'"
+                        class="h-2.5 w-2.5 shrink-0"
+                      />
+                      <ShieldAlert v-else class="h-2.5 w-2.5 shrink-0" />
+                      <span class="shrink-0">{{ wafBadgeLabel(entry) }}</span>
+                      <span class="truncate font-mono">{{
+                        wafBadgeMeta(entry)
+                      }}</span>
+                    </button>
                   </div>
                 </TableCell>
                 <TableCell class="py-2.5">

@@ -1414,12 +1414,15 @@ onUnmounted(() => {
 
       <CardContent>
         <div
-          class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between md:gap-6"
+          class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center lg:gap-6"
         >
           <div
-            class="flex min-w-0 flex-col gap-4 md:flex-1 md:flex-row md:items-center md:gap-6"
+            class="flex min-w-0 flex-col gap-4 md:flex-row md:items-center md:gap-6"
           >
-            <div v-if="showIPv4Status" class="flex items-center gap-4 shrink-0">
+            <div
+              v-if="showIPv4Status"
+              class="flex min-w-0 items-center gap-4 md:shrink-0"
+            >
               <div class="p-2.5 rounded-xl">
                 <Wifi class="h-5 w-5" />
               </div>
@@ -1442,13 +1445,13 @@ onUnmounted(() => {
 
             <div
               v-if="showIPv6Status"
-              class="flex min-w-0 items-center gap-4"
+              class="flex min-w-0 flex-1 items-center gap-4"
               :class="showIPv4Status ? 'md:border-l md:pl-6' : ''"
             >
               <div class="p-2.5 rounded-xl shrink-0">
                 <Globe class="h-5 w-5" />
               </div>
-              <div class="space-y-1 overflow-hidden w-full">
+              <div class="min-w-0 flex-1 space-y-1 overflow-hidden">
                 <p
                   class="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground"
                 >
@@ -1456,7 +1459,7 @@ onUnmounted(() => {
                 </p>
                 <button
                   type="button"
-                  class="block min-w-0 max-w-full rounded-sm text-left transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:text-foreground"
+                  class="block w-full min-w-0 rounded-sm text-left transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:text-foreground"
                   :disabled="!lastIP.ipv6"
                   @click="copyIpAddress('IPv6', lastIP.ipv6)"
                 >
@@ -1471,15 +1474,17 @@ onUnmounted(() => {
           </div>
 
           <div
-            class="flex flex-wrap items-center gap-4 md:ml-auto md:flex-nowrap md:gap-6 md:border-l md:pl-6"
+            class="flex min-w-0 flex-wrap items-center gap-4 lg:ml-auto lg:min-w-max lg:flex-nowrap lg:gap-5 lg:border-l lg:pl-6"
           >
-            <div class="flex items-center gap-4 shrink-0">
+            <div
+              class="flex min-w-[7.5rem] flex-[1_1_7.5rem] items-center gap-4 lg:flex-none"
+            >
               <div class="p-2.5 rounded-xl">
                 <Clock class="h-5 w-5" />
               </div>
               <div class="space-y-1">
                 <p
-                  class="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground"
+                  class="whitespace-nowrap text-[10px] uppercase tracking-wider font-semibold text-muted-foreground"
                 >
                   最后检查
                 </p>
@@ -1493,41 +1498,51 @@ onUnmounted(() => {
               </div>
             </div>
 
-            <div class="flex items-center gap-4 shrink-0">
+            <div
+              class="flex min-w-[8.5rem] flex-[1_1_8.5rem] items-center gap-4 lg:flex-none"
+            >
               <div class="p-2.5 rounded-xl">
                 <RouteIcon class="h-5 w-5" />
               </div>
               <div class="space-y-1">
                 <p
-                  class="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground"
+                  class="whitespace-nowrap text-[10px] uppercase tracking-wider font-semibold text-muted-foreground"
                 >
                   更新范围
                 </p>
-                <p class="text-sm font-medium">{{ currentUpdateScopeLabel }}</p>
+                <p class="whitespace-nowrap text-sm font-medium">
+                  {{ currentUpdateScopeLabel }}
+                </p>
               </div>
             </div>
 
-            <div class="flex items-center gap-4 shrink-0">
+            <div
+              class="flex min-w-[8.5rem] flex-[1_1_8.5rem] items-center gap-4 lg:flex-none"
+            >
               <div class="p-2.5 rounded-xl">
                 <Network class="h-5 w-5" />
               </div>
               <div class="space-y-1">
                 <p
-                  class="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground"
+                  class="whitespace-nowrap text-[10px] uppercase tracking-wider font-semibold text-muted-foreground"
                 >
                   获取方式
                 </p>
-                <p class="text-sm font-medium">{{ currentIpSourceLabel }}</p>
+                <p class="whitespace-nowrap text-sm font-medium">
+                  {{ currentIpSourceLabel }}
+                </p>
               </div>
             </div>
 
-            <div class="flex items-center gap-4 shrink-0">
+            <div
+              class="flex min-w-[9rem] flex-[1_1_10rem] items-center gap-4 lg:flex-none"
+            >
               <div class="p-2.5 rounded-xl">
                 <Cable class="h-5 w-5" />
               </div>
-              <div class="space-y-1 max-w-[240px]">
+              <div class="min-w-0 max-w-[180px] space-y-1">
                 <p
-                  class="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground"
+                  class="whitespace-nowrap text-[10px] uppercase tracking-wider font-semibold text-muted-foreground"
                 >
                   出站网卡
                 </p>

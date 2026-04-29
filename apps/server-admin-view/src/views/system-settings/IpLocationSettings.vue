@@ -118,7 +118,7 @@ const validateCustomUrls = (payload: IpLocationApiConfig) => {
 const { isPending: isLoading, run: runLoadSettings } = useAsyncAction({
   onError: (error) => {
     toast.error("加载失败", {
-      description: extractErrorMessage(error, "无法获取归属地设置"),
+      description: extractErrorMessage(error, "无法获取属地设置"),
     });
   },
 });
@@ -127,7 +127,7 @@ const showLoadingSkeleton = useDelayedLoading(isLoading);
 const { isPending: isSaving, run: runSaveSettings } = useAsyncAction({
   onError: (error) => {
     toast.error("保存失败", {
-      description: extractErrorMessage(error, "归属地设置保存失败"),
+      description: extractErrorMessage(error, "属地设置保存失败"),
     });
   },
 });
@@ -241,7 +241,7 @@ const saveSettings = async () => {
   await runSaveSettings(() => IpLocationSettingsAPI.updateSettings(payload), {
     onSuccess: (data) => {
       applyFromSettings(data);
-      toast.success("归属地设置已更新");
+      toast.success("属地设置已更新");
     },
   });
 };

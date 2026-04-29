@@ -1098,7 +1098,7 @@ onMounted(async () => {
         <div class="flex flex-wrap items-center gap-2">
           <SearchInput
             v-model="blockSearch"
-            placeholder="搜索 IP、用户、归属地..."
+            placeholder="搜索 IP、用户、属地..."
             class="w-full max-w-xs"
             @search="handleBlockSearch"
           />
