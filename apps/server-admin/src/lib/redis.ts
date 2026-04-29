@@ -544,7 +544,7 @@ export const DEFAULT_WAF_CONFIG: WAFConfig = {
   response_body_access: false,
   disabled_hosts: [],
   disabled_path_prefixes: [],
-  log_retention_days: 30,
+  log_retention_days: 7,
   drain_interval_seconds: 2,
   updated_at: null,
 };
