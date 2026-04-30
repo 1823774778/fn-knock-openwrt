@@ -58,11 +58,11 @@
         </div>
         <div class="flex-1 space-y-2">
           <div class="flex items-center gap-2">
-            <p class="text-base font-semibold leading-none">直连模式</p>
+            <p class="text-base font-semibold leading-none">直连模式（不推荐）</p>
             <span
               class="inline-flex items-center rounded-md border border-zinc-300 bg-white px-2 py-0.5 text-xs font-medium text-zinc-700"
             >
-              适合有公网 IP
+              端口放行
             </span>
           </div>
           <p class="text-sm text-muted-foreground">
