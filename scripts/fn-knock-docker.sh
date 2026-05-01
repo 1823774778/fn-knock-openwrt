@@ -29,6 +29,7 @@ BUILD_HTTPS_PROXY=""
 BUILD_ALL_PROXY=""
 BUILD_NO_PROXY=""
 BUILD_PROXY_ENABLED=0
+DOCKER_ARCHES=(amd64 arm64 arm32)
 
 cleanup_temp_files() {
   if [ "${#TEMP_FILES[@]}" -gt 0 ]; then
@@ -235,8 +236,28 @@ normalize_arch() {
     arm64 | aarch64)
       echo "arm64"
       ;;
+    arm32 | armv8l | armv7 | armv7l | armhf | arm)
+      echo "arm32"
+      ;;
     *)
       fail "unsupported architecture: $1"
+      ;;
+  esac
+}
+
+docker_platform_for_arch() {
+  case "$1" in
+    amd64)
+      echo "linux/amd64"
+      ;;
+    arm64)
+      echo "linux/arm64"
+      ;;
+    arm32)
+      echo "linux/arm/v7"
+      ;;
+    *)
+      fail "unsupported docker architecture: $1"
       ;;
   esac
 }
@@ -279,6 +300,9 @@ normalize_tag_base() {
       ;;
     *-arm64)
       echo "${tag_base%-arm64}"
+      ;;
+    *-arm32)
+      echo "${tag_base%-arm32}"
       ;;
     *)
       echo "${tag_base}"
@@ -431,11 +455,13 @@ run_buildx_image() {
   local cache_scope="${4:-${arch}}"
   local cache_dir="${CACHE_ROOT}/${cache_scope}"
   local cache_next="${cache_dir}-next"
+  local platform
   local build_args=()
   local cache_export_enabled=1
 
+  platform="$(docker_platform_for_arch "${arch}")"
   configure_build_proxy
-  log "Building image ${image_ref} for linux/${arch} (${output_mode})"
+  log "Building image ${image_ref} for ${platform} (${output_mode})"
   ensure_buildx_builder
 
   mkdir -p "${CACHE_ROOT}"
@@ -480,7 +506,7 @@ run_buildx_image() {
   esac
 
   build_args+=(
-    --platform "linux/${arch}" \
+    --platform "${platform}" \
     -f "${DOCKER_DIR}/Dockerfile" \
     -t "${image_ref}" \
     .
@@ -545,8 +571,10 @@ verify_manifest_platforms() {
     fail "manifest ${target_ref} is missing linux/amd64"
   printf '%s\n' "${inspect_output}" | grep -q 'linux/arm64' || \
     fail "manifest ${target_ref} is missing linux/arm64"
+  printf '%s\n' "${inspect_output}" | grep -q 'linux/arm/v7' || \
+    fail "manifest ${target_ref} is missing linux/arm/v7"
 
-  log "Verified manifest ${target_ref} includes linux/amd64 and linux/arm64"
+  log "Verified manifest ${target_ref} includes linux/amd64, linux/arm64, and linux/arm/v7"
 }
 
 upload_remote_bundle() {
@@ -707,10 +735,10 @@ cmd_local_deploy() {
 
   log "Using env file ${ENV_FILE}"
   log "Remote host ${REMOTE_HOST} detected as ${remote_arch}"
-  log "Deploy image set ${image_repo}:${tag_base}-amd64 and ${image_repo}:${tag_base}-arm64"
+  log "Deploy image set ${image_repo}:${tag_base}-amd64, ${image_repo}:${tag_base}-arm64, and ${image_repo}:${tag_base}-arm32"
   log "Remote runtime image ${runtime_image_ref}"
 
-  for arch in amd64 arm64; do
+  for arch in "${DOCKER_ARCHES[@]}"; do
     image_ref="$(build_arch_image_ref "${image_repo}" "${tag_base}" "${arch}")"
     build_remote_image "${arch}" "${image_ref}"
     stream_image_to_remote "${image_ref}"
@@ -753,7 +781,7 @@ cmd_publish_hub() {
   log "Version tag ${manifest_ref}"
   log "Additional tag ${latest_ref}"
 
-  for arch in amd64 arm64; do
+  for arch in "${DOCKER_ARCHES[@]}"; do
     image_ref="$(build_arch_image_ref "${image_repo}" "${tag_base}" "${arch}")"
     arch_refs+=("${image_ref}")
     pushx_image "${arch}" "${image_ref}"
@@ -776,8 +804,8 @@ Commands:
   down-local    Stop the local Docker stack
   logs-local    Tail local fn-knock container logs
   reset-panel-password-local   Clear Docker admin panel password for the local compose stack
-  local-deploy  Build amd64 and arm64 images, upload both via SSH, and restart remote compose
-  publish-hub   Push amd64 and arm64 images to a registry and create a multi-arch manifest tag
+  local-deploy  Build amd64, arm64, and arm32 images, upload them via SSH, and restart remote compose
+  publish-hub   Push amd64, arm64, and arm32 images to a registry and create a multi-arch manifest tag
   remote-ps     Show remote compose status
   remote-logs   Tail remote fn-knock container logs
   reset-panel-password-remote  Clear Docker admin panel password on the remote compose stack
@@ -786,7 +814,7 @@ Optional env overrides:
   FN_KNOCK_DOCKER_ENV_FILE        (default: deploy/docker/.env, fallback: deploy/docker/.env.example)
   FN_KNOCK_DOCKER_IMAGE           (override local build image)
   FN_KNOCK_DOCKER_IMAGE_REPO      (default: fn-knock; publish-hub requires namespace/repo)
-  FN_KNOCK_DOCKER_IMAGE_TAG       (base tag; final publish tags append -amd64 and -arm64)
+  FN_KNOCK_DOCKER_IMAGE_TAG       (base tag; final publish tags append -amd64, -arm64, and -arm32)
   FN_KNOCK_DOCKER_LOCAL_ARCH      (override local build arch; default: host arch)
   FN_KNOCK_DOCKER_CACHE_DIR       (default: $HOME/.cache/fn-knock-buildx)
   FN_KNOCK_DOCKER_BUILDER         (optional docker buildx builder name)

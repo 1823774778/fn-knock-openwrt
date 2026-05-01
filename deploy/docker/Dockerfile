@@ -69,12 +69,13 @@ COPY --from=server-builder /workspace/apps/server-admin/dist/ /opt/fn-knock/serv
 COPY --from=server-builder /workspace/apps/server-admin/resources/acmesh.zip /opt/fn-knock/server/server-admin/resources/acmesh.zip
 COPY apps/fn-knock/app/server/go-reauth-proxy-linux-amd64 /opt/fn-knock/server/go-reauth-proxy-linux-amd64
 COPY apps/fn-knock/app/server/go-reauth-proxy-linux-arm64 /opt/fn-knock/server/go-reauth-proxy-linux-arm64
+COPY apps/fn-knock/app/server/go-reauth-proxy-linux-arm /opt/fn-knock/server/go-reauth-proxy-linux-arm
 COPY deploy/docker/entrypoint.sh /usr/local/bin/fn-knock-entrypoint
 COPY deploy/docker/reset-panel-password.sh /usr/local/bin/fn-knock-reset-panel-password
 
 RUN chmod +x /usr/local/bin/fn-knock-entrypoint \
   && chmod +x /usr/local/bin/fn-knock-reset-panel-password \
-  && chmod +x /opt/fn-knock/server/go-reauth-proxy-linux-amd64 /opt/fn-knock/server/go-reauth-proxy-linux-arm64 \
+  && chmod +x /opt/fn-knock/server/go-reauth-proxy-linux-amd64 /opt/fn-knock/server/go-reauth-proxy-linux-arm64 /opt/fn-knock/server/go-reauth-proxy-linux-arm \
   && install -D "/opt/fn-knock/server/go-reauth-proxy-linux-${TARGETARCH}" /opt/fn-knock/bin/go-reauth-proxy \
   && chmod +x /opt/fn-knock/bin/go-reauth-proxy
 

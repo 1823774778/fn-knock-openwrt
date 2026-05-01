@@ -199,7 +199,7 @@ npm run fn-knock:docker:logs
 # 忘记管理面板密码时重置
 npm run fn-knock:docker:reset-panel-password
 
-# 发布到 Docker Hub（推 amd64 / arm64 + manifest）
+# 发布到 Docker Hub（推 amd64 / arm64 / arm32 + manifest）
 npm run fn-knock:docker:hub-publish
 
 # 停止环境
@@ -325,9 +325,9 @@ npm run fn-knock:docker:local-deploy
 发布脚本会自动完成以下事情：
 
 1. SSH 检测远端主机架构
-2. 同时使用 `docker buildx build` 本地构建 `linux/amd64` 和 `linux/arm64`
+2. 同时使用 `docker buildx build` 本地构建 `linux/amd64`、`linux/arm64` 和 `linux/arm/v7`
 3. 生成一组镜像 tag
-4. 用 `docker save | ssh ... docker load` 把两套镜像都传到远端
+4. 用 `docker save | ssh ... docker load` 把三套镜像都传到远端
 5. 上传 `compose.remote.yaml` 和远端 `.env`
 6. 远端根据主机架构自动选择对应 tag 启动
 7. 远端执行 `docker compose up -d --remove-orphans --force-recreate`
@@ -349,11 +349,12 @@ npm run fn-knock:docker:local-deploy
 <APP_LOCAL_VERSION>-<YYYYMMDDHHMMSS>
 ```
 
-然后自动产出两套镜像：
+然后自动产出三套镜像：
 
 ```text
 fn-knock:<base-tag>-amd64
 fn-knock:<base-tag>-arm64
+fn-knock:<base-tag>-arm32
 ```
 
 例如：
@@ -361,6 +362,7 @@ fn-knock:<base-tag>-arm64
 ```text
 fn-knock:1.4.1-20260409094530-amd64
 fn-knock:1.4.1-20260409094530-arm64
+fn-knock:1.4.1-20260409094530-arm32
 ```
 
 推荐发布新版本时先更新 `APP_LOCAL_VERSION`，再执行部署命令。
@@ -376,9 +378,10 @@ FN_KNOCK_DOCKER_IMAGE_TAG=1.4.2 npm run fn-knock:docker:local-deploy
 ```text
 fn-knock:1.4.2-amd64
 fn-knock:1.4.2-arm64
+fn-knock:1.4.2-arm32
 ```
 
-当前默认远端 `root@192.168.31.135` 已确认是 `x86_64`，因此实际运行的是 `-amd64` 镜像，但 `-arm64` 也会同步上传到远端 Docker。
+当前默认远端 `root@192.168.31.135` 已确认是 `x86_64`，因此实际运行的是 `-amd64` 镜像，但 `-arm64` 和 `-arm32` 也会同步上传到远端 Docker。
 
 ### 发布后排查
 
@@ -419,13 +422,14 @@ apps/server-admin/src/lib/app-version.ts -> APP_LOCAL_VERSION
 ```text
 kcilnk/fn-knock:1.4.3-amd64
 kcilnk/fn-knock:1.4.3-arm64
+kcilnk/fn-knock:1.4.3-arm32
 kcilnk/fn-knock:1.4.3
 kcilnk/fn-knock:latest
 ```
 
 其中：
 
-- `:1.4.3-amd64` 和 `:1.4.3-arm64` 是显式架构 tag
+- `:1.4.3-amd64`、`:1.4.3-arm64` 和 `:1.4.3-arm32` 是显式架构 tag
 - `:1.4.3` 是多架构 manifest tag，`docker pull` 时会自动选择合适的平台
 - `:latest` 也会同步更新为同一组多架构镜像，方便用户始终拉取最新版
 
@@ -450,11 +454,11 @@ npm run fn-knock:docker:hub-publish
 
 `fn-knock:docker:hub-publish` 会自动完成：
 
-1. 使用现有 `docker buildx` builder 分别构建 `linux/amd64` 和 `linux/arm64`
-2. 将两个架构镜像直接推送到 Docker Hub
+1. 使用现有 `docker buildx` builder 分别构建 `linux/amd64`、`linux/arm64` 和 `linux/arm/v7`
+2. 将三个架构镜像直接推送到 Docker Hub
 3. 创建版本号对应的多架构 manifest tag
 4. 同步更新 `latest` 多架构 manifest tag
-5. 校验 manifest 内同时包含 `linux/amd64` 和 `linux/arm64`
+5. 校验 manifest 内同时包含 `linux/amd64`、`linux/arm64` 和 `linux/arm/v7`
 
 ## 可配置环境变量
 
@@ -474,7 +478,7 @@ npm run fn-knock:docker:hub-publish
 ### 发布/远端部署
 
 - `FN_KNOCK_DOCKER_IMAGE_REPO`：镜像仓库名，默认 `fn-knock`
-- `FN_KNOCK_DOCKER_IMAGE_TAG`：手工指定发布基础 tag；远端部署时会自动扩展为 `-amd64` 和 `-arm64`
+- `FN_KNOCK_DOCKER_IMAGE_TAG`：手工指定发布基础 tag；远端部署时会自动扩展为 `-amd64`、`-arm64` 和 `-arm32`
 - `FN_KNOCK_DOCKER_REMOTE_HOST`：远端 SSH 地址，默认 `root@192.168.31.135`
 - `FN_KNOCK_DOCKER_REMOTE_DIR`：远端 compose 落地目录，默认 `/opt/fn-knock-docker`
 - `FN_KNOCK_DOCKER_WAIT_TIMEOUT`：远端健康检查等待秒数，默认 `180`

@@ -343,8 +343,8 @@ location.reload();
 默认流程：
 
 1. 通过 SSH 探测远端架构
-2. 本地同时构建 `amd64` 和 `arm64` 两套镜像
-3. 将两套镜像都通过 `docker save | ssh ... docker load` 传到远端
+2. 本地同时构建 `amd64`、`arm64` 和 `arm32` 三套镜像
+3. 将三套镜像都通过 `docker save | ssh ... docker load` 传到远端
 4. 上传远端专用 `compose.yaml` 和 `.env`
 5. 在远端按主机自身架构选择对应镜像启动
 6. 在远端执行 `docker compose up -d --remove-orphans --force-recreate`
@@ -376,6 +376,7 @@ npm run fn-knock:docker:local-deploy
 ```text
 fn-knock:<base-tag>-amd64
 fn-knock:<base-tag>-arm64
+fn-knock:<base-tag>-arm32
 ```
 
 例如：
@@ -383,9 +384,10 @@ fn-knock:<base-tag>-arm64
 ```text
 fn-knock:1.4.1-20260409094530-amd64
 fn-knock:1.4.1-20260409094530-arm64
+fn-knock:1.4.1-20260409094530-arm32
 ```
 
-当前远端 `root@192.168.31.135` 是 `x86_64`，所以部署后会运行 `-amd64` 这套镜像，但 `-arm64` 也会一并构建并上传，方便后续迁移或导出。
+当前远端 `root@192.168.31.135` 是 `x86_64`，所以部署后会运行 `-amd64` 这套镜像，但 `-arm64` 和 `-arm32` 也会一并构建并上传，方便后续迁移或导出。
 
 如果希望使用更可读的固定 tag，可以在发布时覆盖基础 tag：
 
@@ -398,6 +400,7 @@ FN_KNOCK_DOCKER_IMAGE_TAG=1.4.2 npm run fn-knock:docker:local-deploy
 ```text
 fn-knock:1.4.2-amd64
 fn-knock:1.4.2-arm64
+fn-knock:1.4.2-arm32
 ```
 
 发布完成后，可用以下命令查看远端状态和日志：
@@ -424,7 +427,7 @@ npm run fn-knock:docker:hub-publish
 
 这个命令会做三件事：
 
-1. 分别构建并推送 `linux/amd64` 和 `linux/arm64`
+1. 分别构建并推送 `linux/amd64`、`linux/arm64` 和 `linux/arm/v7`
 2. 生成并校验多架构 manifest
 3. 让 `docker pull kcilnk/fn-knock:<version>` 自动按拉取端架构选择镜像
 
@@ -439,6 +442,7 @@ apps/server-admin/src/lib/app-version.ts -> APP_LOCAL_VERSION
 ```text
 kcilnk/fn-knock:1.4.3-amd64
 kcilnk/fn-knock:1.4.3-arm64
+kcilnk/fn-knock:1.4.3-arm32
 kcilnk/fn-knock:1.4.3
 kcilnk/fn-knock:latest
 ```
@@ -458,7 +462,7 @@ Docker 发布脚本支持这些覆盖项：
 - `FN_KNOCK_DOCKER_ENV_FILE`，默认优先读取 `deploy/docker/.env`
 - `FN_KNOCK_DOCKER_IMAGE`，覆盖本地构建镜像名
 - `FN_KNOCK_DOCKER_IMAGE_REPO`，默认 `fn-knock`
-- `FN_KNOCK_DOCKER_IMAGE_TAG`，发布时自定义基础 tag；远端部署会追加 `-amd64` / `-arm64`，Docker Hub 会再生成同名 manifest tag
+- `FN_KNOCK_DOCKER_IMAGE_TAG`，发布时自定义基础 tag；远端部署会追加 `-amd64` / `-arm64` / `-arm32`，Docker Hub 会再生成同名 manifest tag
 - `FN_KNOCK_DOCKER_LOCAL_ARCH`，覆盖本地构建架构，默认使用当前主机架构
 - `TZ`，容器时区，默认 `Asia/Shanghai`
 - `FN_KNOCK_DOCKER_CACHE_DIR`，默认 `~/.cache/fn-knock-buildx`
