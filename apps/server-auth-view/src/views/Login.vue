@@ -16,6 +16,12 @@
           >
             {{ logoutNotice }}
           </div>
+          <div
+            v-if="oidcError"
+            class="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+          >
+            {{ oidcError }}
+          </div>
         </CardHeader>
 
         <CardContent>
@@ -131,6 +137,86 @@
               </Button>
             </div>
 
+            <div
+              v-if="
+                isPasskeySupported &&
+                isPasskeyAvailable &&
+                !isCaptchaVerified &&
+                oidcProviders.length > 0
+              "
+              class="flex w-full items-center gap-3 text-sm text-muted-foreground"
+              aria-hidden="true"
+            >
+              <div class="h-px flex-1 bg-border"></div>
+              <span class="shrink-0">OR</span>
+              <div class="h-px flex-1 bg-border"></div>
+            </div>
+
+            <div
+              v-if="!isCaptchaVerified && oidcProviders.length > 0"
+              class="w-full space-y-2"
+            >
+              <Button
+                v-for="provider in oidcProviders"
+                :key="provider.id"
+                type="button"
+                variant="outline"
+                class="w-full"
+                :disabled="isOidcLoading || isLoginCoolingDown"
+                @click="handleOidcLogin(provider.id)"
+              >
+                <span
+                  v-if="activeOidcProviderId === provider.id && isOidcLoading"
+                  class="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent"
+                ></span>
+                <Github
+                  v-else-if="providerIconKind(provider) === 'github'"
+                  class="size-4"
+                  aria-hidden="true"
+                />
+                <svg
+                  v-else-if="providerIconKind(provider) === 'google'"
+                  class="size-4"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <path
+                    fill="#4285F4"
+                    d="M23.77 12.28c0-.82-.07-1.63-.21-2.44H12.24v4.62h6.48a5.54 5.54 0 0 1-2.4 3.64v3.02h3.89c2.28-2.1 3.56-5.19 3.56-8.84Z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M12.24 24c3.24 0 5.97-1.06 7.95-2.88L16.3 18.1c-1.08.73-2.47 1.15-4.06 1.15-3.13 0-5.78-2.11-6.73-4.95H1.49v3.11A12 12 0 0 0 12.24 24Z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M5.51 14.3a7.19 7.19 0 0 1 0-4.6V6.59H1.49a12.01 12.01 0 0 0 0 10.82L5.51 14.3Z"
+                  />
+                  <path
+                    fill="#EA4335"
+                    d="M12.24 4.75a6.52 6.52 0 0 1 4.6 1.8l3.45-3.45A11.58 11.58 0 0 0 12.24 0 12 12 0 0 0 1.49 6.59L5.51 9.7c.95-2.84 3.6-4.95 6.73-4.95Z"
+                  />
+                </svg>
+                <span
+                  v-else-if="providerIconKind(provider) === 'microsoft'"
+                  class="grid size-4 grid-cols-2 gap-0.5"
+                  aria-hidden="true"
+                >
+                  <span class="bg-[#f25022]"></span>
+                  <span class="bg-[#7fba00]"></span>
+                  <span class="bg-[#00a4ef]"></span>
+                  <span class="bg-[#ffb900]"></span>
+                </span>
+                <Cloud
+                  v-else-if="providerIconKind(provider) === 'custom_oidc'"
+                  class="size-4"
+                  aria-hidden="true"
+                />
+                <CircleUserRound v-else class="size-4" aria-hidden="true" />
+                使用 {{ provider.name }} 登录
+              </Button>
+            </div>
+
             <div class="w-full flex justify-center" v-if="isCaptchaVerified">
               <InputOTP
                 inputmode="numeric"
@@ -149,24 +235,6 @@
                   <InputOTPSlot v-for="i in 6" :key="i - 1" :index="i - 1" />
                 </InputOTPGroup>
               </InputOTP>
-            </div>
-
-            <div class="w-full flex justify-center" v-if="isCaptchaVerified">
-              <div
-                class="flex items-center justify-center space-x-3 py-2 px-4 rounded-lg transition-colors hover:bg-muted/50 cursor-pointer group"
-              >
-                <Checkbox
-                  id="rememberMe"
-                  v-model="rememberMe"
-                  class="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
-                />
-                <label
-                  for="rememberMe"
-                  class="text-sm font-medium leading-none cursor-pointer select-none text-muted-foreground group-hover:text-foreground transition-colors"
-                >
-                  记住我
-                </label>
-              </div>
             </div>
 
             <Dialog
@@ -247,6 +315,27 @@
               ></span>
               {{ loginButtonLabel }}
             </Button>
+
+            <div
+              class="w-full flex justify-center"
+              v-if="isCaptchaVerified || oidcProviders.length > 0"
+            >
+              <div
+                class="flex items-center justify-center space-x-3 py-2 px-4 rounded-lg transition-colors hover:bg-muted/50 cursor-pointer group"
+              >
+                <Checkbox
+                  id="rememberMe"
+                  v-model="rememberMe"
+                  class="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
+                />
+                <label
+                  for="rememberMe"
+                  class="text-sm font-medium leading-none cursor-pointer select-none text-muted-foreground group-hover:text-foreground transition-colors"
+                >
+                  记住我
+                </label>
+              </div>
+            </div>
           </form>
         </CardContent>
       </Card>
@@ -263,6 +352,11 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
+import {
+  CircleUserRound,
+  Cloud,
+  Github,
+} from "lucide-vue-next";
 import {
   Card,
   CardHeader,
@@ -291,7 +385,10 @@ import {
   normalizeRequestOptions,
   serializeCredential,
 } from "@frontend-core/passkey/utils";
-import type { AuthGrantType } from "@frontend-core/auth/types";
+import type {
+  AuthGrantType,
+  AuthOidcProvider,
+} from "@frontend-core/auth/types";
 import type {
   CaptchaPublicSettings,
   CaptchaSubmission,
@@ -326,6 +423,10 @@ const loginCooldownSeconds = ref(0);
 const isPasskeySupported = ref(false);
 const isPasskeyAvailable = ref(false);
 const isPasskeyLoading = ref(false);
+const isOidcLoading = ref(false);
+const activeOidcProviderId = ref("");
+const oidcProviders = ref<AuthOidcProvider[]>([]);
+const oidcError = ref("");
 const showPasskeyBindDialog = ref(false);
 const isBindingPasskey = ref(false);
 const passkeyBindError = ref("");
@@ -413,6 +514,26 @@ const logoutNotice = computed(() => {
   }
 });
 
+type ProviderIconKind =
+  | "github"
+  | "google"
+  | "microsoft"
+  | "custom_oidc"
+  | "generic";
+
+function providerIconKind(provider: AuthOidcProvider): ProviderIconKind {
+  const token = `${provider.type || ""} ${provider.name || ""} ${
+    provider.protocol || ""
+  }`.toLowerCase();
+  if (token.includes("github")) return "github";
+  if (token.includes("google")) return "google";
+  if (token.includes("microsoft") || token.includes("azure")) {
+    return "microsoft";
+  }
+  if (token.includes("custom") || token.includes("oidc")) return "custom_oidc";
+  return "generic";
+}
+
 function onPowStateChange(ev: CustomEvent) {
   if (ev.detail.state === "verified") {
     isCaptchaVerified.value = true;
@@ -452,6 +573,8 @@ async function loadBootstrap() {
     startLocationPolling(bootstrap.client);
     captchaConfig.value = bootstrap.captcha;
     isPasskeyAvailable.value = !!bootstrap.passkey.available;
+    oidcProviders.value = bootstrap.oidc?.providers || [];
+    oidcError.value = bootstrap.oidc?.login_error || "";
     bootstrapGrantType.value = bootstrap.auth.grant_type;
     if (bootstrap.redirect_to && !suppressAutoRedirect) {
       window.location.replace(bootstrap.redirect_to);
@@ -868,6 +991,32 @@ async function handlePasskeyLogin() {
     showErrorDialog.value = true;
   } finally {
     isPasskeyLoading.value = false;
+  }
+}
+
+async function handleOidcLogin(providerId: string) {
+  if (isOidcLoading.value || isLoginCoolingDown.value) return;
+  isOidcLoading.value = true;
+  activeOidcProviderId.value = providerId;
+  errorMessage.value = "";
+  try {
+    const res = await apiClient.post("/oidc/start", {
+      provider_id: providerId,
+      mode: "login",
+      rememberMe: rememberMe.value,
+      redirect_uri: redirectUri || undefined,
+    });
+    const authorizationUrl = res.data?.data?.authorization_url;
+    if (!authorizationUrl) {
+      throw new Error(res.data?.message || "无法发起外部登录");
+    }
+    window.location.assign(authorizationUrl);
+  } catch (e: any) {
+    errorMessage.value =
+      e?.response?.data?.message || e?.message || "外部登录失败，请重试";
+    showErrorDialog.value = true;
+    isOidcLoading.value = false;
+    activeOidcProviderId.value = "";
   }
 }
 

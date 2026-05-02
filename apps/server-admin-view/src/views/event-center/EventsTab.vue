@@ -158,6 +158,7 @@ const detailFieldDefinitions = [
   { key: "session_comment", label: "会话备注" },
   { key: "credential_id", label: "凭证 ID" },
   { key: "auth_method", label: "认证方式" },
+  { key: "auth_provider_name", label: "登录提供商" },
   { key: "grant_type", label: "授权方式" },
   { key: "post_login_ip_grant_mode", label: "登录后 IP 放行" },
   { key: "remember_me", label: "记住我" },
@@ -243,6 +244,7 @@ const LOGOUT_SOURCE_LABELS: Record<string, string> = {
 const AUTH_METHOD_LABELS: Record<string, string> = {
   TOTP: "TOTP",
   PASSKEY: "Passkey",
+  OIDC: "外部账号",
 };
 
 const DRIFT_SOURCE_LABELS: Record<string, string> = {
@@ -300,6 +302,7 @@ const WAF_MODE_LABELS: Record<string, string> = {
 const WAF_ACTION_LABELS: Record<string, string> = {
   block: "阻断",
   deny: "拒绝",
+  detect: "检测",
   log: "记录",
   pass: "放行",
 };
@@ -358,6 +361,24 @@ const formatCredentialDisplay = (
 const formatSessionCommentInline = (value: unknown) => {
   const comment = String(value ?? "").trim();
   return comment ? `，备注「${comment}」` : "";
+};
+
+const isWAFBlockingAction = (action: unknown, mode: unknown) => {
+  const normalizedAction = String(action ?? "").toLowerCase();
+  if (normalizedAction === "block" || normalizedAction === "deny") return true;
+  if (
+    normalizedAction === "detect" ||
+    normalizedAction === "log" ||
+    normalizedAction === "pass"
+  ) {
+    return false;
+  }
+  return String(mode ?? "").toLowerCase() === "blocking";
+};
+
+const formatWAFOutcomeLabel = (action: unknown, mode: unknown) => {
+  if (isWAFBlockingAction(action, mode)) return "阻断";
+  return WAF_ACTION_LABELS[String(action)] || "记录";
 };
 
 const detailItems = computed(() => {
@@ -506,15 +527,21 @@ const describeEvent = (event: SystemEventRecord) => {
   const payload = event.payload ?? {};
 
   switch (event.type) {
-    case "FN_EVENT_AUTH_LOGIN_SUCCESS":
+    case "FN_EVENT_AUTH_LOGIN_SUCCESS": {
+      const authMethod = String(payload.auth_method || "");
+      const authProviderName = String(payload.auth_provider_name || "").trim();
+      const authMethodLabel =
+        authMethod === "OIDC" && authProviderName
+          ? `通过 ${authProviderName}`
+          : `通过 ${
+              AUTH_METHOD_LABELS[authMethod] || String(payload.auth_method || "-")
+            }`;
       return `${formatCredentialDisplay(
         payload.credential_name,
         payload.linked_totp_name,
         payload.auth_method,
-      )} 通过 ${
-        AUTH_METHOD_LABELS[String(payload.auth_method)] ||
-        String(payload.auth_method || "-")
-      } 登录，来源 IP ${formatIpDisplay(payload.ip)}${formatSessionCommentInline(payload.session_comment)}`;
+      )} ${authMethodLabel} 登录，来源 IP ${formatIpDisplay(payload.ip)}${formatSessionCommentInline(payload.session_comment)}`;
+    }
     case "FN_EVENT_AUTH_LOGOUT":
       return `${formatCredentialDisplay(
         payload.credential_name,
@@ -569,10 +596,12 @@ const describeEvent = (event: SystemEventRecord) => {
       return `${formatIpDisplay(payload.ip)} 触发节流封锁 ${String(
         payload.block_seconds || "-",
       )} 秒`;
-    case "FN_EVENT_WAF_BLOCKED":
-      return `${formatIpDisplay(payload.ip)} 的请求被 WAF 拦截${
+    case "FN_EVENT_WAF_BLOCKED": {
+      const outcomeLabel = formatWAFOutcomeLabel(payload.action, payload.mode);
+      return `${formatIpDisplay(payload.ip)} 的请求被 WAF ${outcomeLabel}${
         payload.rule_ids ? `，规则 ${String(payload.rule_ids)}` : ""
       }`;
+    }
     case "FN_EVENT_SSH_LOGIN_SUCCESS":
       return `SSH 用户 ${String(payload.username || "-")} 从 ${formatIpDisplay(
         payload.ip,

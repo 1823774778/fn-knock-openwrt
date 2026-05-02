@@ -73,6 +73,7 @@ import { internalSystemEventRoutes } from "./routes/internal-system-events";
 import { cleanupLegacyAuthLogStorage } from "./lib/cleanup-legacy-auth-logs";
 import { eventRoutes } from "./routes/events";
 import { notificationRoutes } from "./routes/notifications";
+import { oidcAdminRoutes } from "./routes/auth-oidc-admin";
 import { systemNotificationRuntime } from "./lib/system-notifications/runtime";
 import { systemClockManager } from "./lib/system-clock-manager";
 import { adminOpenApiTags, hideFromDocs } from "./lib/openapi";
@@ -551,7 +552,14 @@ const normalizeAuthPath = (path: string) => {
   return path;
 };
 
-const AUTH_VIEW_ROUTES = new Set(["/", "/index.html", "/login", "/login/"]);
+const AUTH_VIEW_ROUTES = new Set([
+  "/",
+  "/index.html",
+  "/login",
+  "/login/",
+  "/oidc/bind",
+  "/oidc/bind/",
+]);
 
 const isKnownAuthViewPath = (path: string) =>
   AUTH_VIEW_ROUTES.has(normalizeAuthPath(path));
@@ -567,6 +575,19 @@ const serveAuthNotFoundHtml = () =>
       },
     },
   );
+
+const redirectLegacyOidcBindRoute = (request: Request) => {
+  const requestUrl = new URL(request.url);
+  const basePrefix = requestUrl.pathname.startsWith(`${AUTH_LOCAL_PREFIX}/`)
+    ? AUTH_LOCAL_PREFIX
+    : requestUrl.pathname.startsWith(`${AUTH_PUBLIC_PREFIX}/`)
+      ? AUTH_PUBLIC_PREFIX
+      : "";
+  const location = `${basePrefix}/api/auth/oidc/bind${requestUrl.search}`;
+  const headers = new Headers({ Location: location });
+  applyNoStoreHeaders(headers);
+  return new Response("", { status: 302, headers });
+};
 
 authApp.use(cors());
 authApp.use(hmacMiddleware);
@@ -621,6 +642,7 @@ app.use(assetsRoutes);
 app.use(adminRoutes);
 app.use(eventRoutes);
 app.use(notificationRoutes);
+app.use(oidcAdminRoutes);
 app.use(sslRoutes);
 app.use(acmeRoutes);
 app.use(systemRoutes);
@@ -744,6 +766,20 @@ authApp.get("/auth/__fn-knock/runtime-hmac-secret", ({ set }) => {
 authApp.get("/__auth__/__fn-knock/runtime-hmac-secret", ({ set }) => {
   return buildRuntimeHmacSecretResponse(set);
 });
+authApp.get("/oidc/bind", ({ request }) => redirectLegacyOidcBindRoute(request));
+authApp.get("/oidc/bind/", ({ request }) => redirectLegacyOidcBindRoute(request));
+authApp.get("/auth/oidc/bind", ({ request }) =>
+  redirectLegacyOidcBindRoute(request),
+);
+authApp.get("/auth/oidc/bind/", ({ request }) =>
+  redirectLegacyOidcBindRoute(request),
+);
+authApp.get("/__auth__/oidc/bind", ({ request }) =>
+  redirectLegacyOidcBindRoute(request),
+);
+authApp.get("/__auth__/oidc/bind/", ({ request }) =>
+  redirectLegacyOidcBindRoute(request),
+);
 authApp.use(
   createStaticFilesPlugin({
     root: AUTH_STATIC_PATH,

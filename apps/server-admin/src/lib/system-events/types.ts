@@ -28,7 +28,7 @@ import {
   FN_EVENT_TUNNEL_FRP_DISCONNECTED,
 } from "./constants";
 
-export type AuthMethod = "TOTP" | "PASSKEY";
+export type AuthMethod = "TOTP" | "PASSKEY" | "OIDC";
 
 export type SystemEventSessionDriftSource =
   | "proxy-session"
@@ -44,6 +44,7 @@ export type SystemEventSubject = {
 export type SystemEventAuthLoginSuccessPayload = {
   session_id: string;
   auth_method: AuthMethod;
+  auth_provider_name?: string;
   credential_id: string;
   credential_name: string;
   linked_totp_name?: string;

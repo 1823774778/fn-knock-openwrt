@@ -9,27 +9,40 @@
       </div>
       <div class="flex items-center gap-2">
         <DocsLinkButton :href="docsUrls.guides.auth" />
+        <Button variant="outline" @click="goToOidcProviders"
+          >外部账号登录</Button
+        >
         <Button @click="openSetupDialog">绑定新令牌</Button>
       </div>
     </CardHeader>
     <CardContent v-if="isLoading && showLoadingSkeleton && !credentials.length">
       <div class="border rounded-md overflow-hidden">
-        <Table>
+        <Table class="table-fixed" container-class="overflow-hidden">
+          <colgroup>
+            <col class="w-[44%] sm:w-[36%]" />
+            <col class="hidden sm:table-column sm:w-[24%]" />
+            <col class="w-[32%] sm:w-[25%]" />
+            <col class="w-[72px] sm:w-[15%]" />
+          </colgroup>
           <TableHeader>
             <TableRow>
-              <TableHead>备注信息</TableHead>
-              <TableHead>绑定时间</TableHead>
-              <TableHead>设备关联</TableHead>
+              <TableHead class="whitespace-normal">备注信息</TableHead>
+              <TableHead class="hidden whitespace-normal sm:table-cell"
+                >绑定时间</TableHead
+              >
+              <TableHead class="whitespace-normal">设备关联</TableHead>
               <TableHead class="text-right">操作</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             <TableRow v-for="n in 4" :key="n">
-              <TableCell><Skeleton class="h-4 w-40" /></TableCell>
-              <TableCell><Skeleton class="h-4 w-36" /></TableCell>
-              <TableCell><Skeleton class="h-4 w-52" /></TableCell>
+              <TableCell><Skeleton class="h-4 w-40 max-w-full" /></TableCell>
+              <TableCell class="hidden sm:table-cell"
+                ><Skeleton class="h-4 w-36 max-w-full"
+              /></TableCell>
+              <TableCell><Skeleton class="h-4 w-52 max-w-full" /></TableCell>
               <TableCell class="text-right"
-                ><Skeleton class="h-8 w-24 rounded-md ml-auto"
+                ><Skeleton class="h-8 w-16 rounded-md ml-auto sm:w-24"
               /></TableCell>
             </TableRow>
           </TableBody>
@@ -37,18 +50,26 @@
       </div>
     </CardContent>
     <CardContent v-else-if="!isLoading || credentials.length">
-      <Table>
+      <Table class="table-fixed" container-class="overflow-hidden">
+        <colgroup>
+          <col class="w-[44%] sm:w-[36%]" />
+          <col class="hidden sm:table-column sm:w-[24%]" />
+          <col class="w-[32%] sm:w-[25%]" />
+          <col class="w-[72px] sm:w-[15%]" />
+        </colgroup>
         <TableHeader>
           <TableRow>
-            <TableHead>备注信息</TableHead>
-            <TableHead>绑定时间</TableHead>
-            <TableHead>设备关联</TableHead>
+            <TableHead class="whitespace-normal">备注信息</TableHead>
+            <TableHead class="hidden whitespace-normal sm:table-cell"
+              >绑定时间</TableHead
+            >
+            <TableHead class="whitespace-normal">设备关联</TableHead>
             <TableHead class="text-right">操作</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           <TableRow v-for="totp in credentials" :key="totp.id">
-            <TableCell>
+            <TableCell class="min-w-0 whitespace-normal">
               <InlineCommentEditor
                 :text="totp.comment"
                 :allow-empty="false"
@@ -56,21 +77,23 @@
                 :save="(value) => saveComment(totp.id, value)"
               />
             </TableCell>
-            <TableCell><HumanFriendlyTime :value="totp.createdAt" /></TableCell>
-            <TableCell>
+            <TableCell class="hidden sm:table-cell"
+              ><HumanFriendlyTime :value="totp.createdAt"
+            /></TableCell>
+            <TableCell class="whitespace-normal">
               <!-- 导航到该 TOTP 的 Passkey 管理子页面 -->
               <Button
                 variant="link"
-                class="p-0 h-auto"
+                class="h-auto whitespace-normal p-0 text-left"
                 @click="goToPasskeys(totp.id)"
               >
-                管理 Passkeys
+                管理快捷登录
               </Button>
             </TableCell>
             <TableCell class="text-right">
               <ConfirmDangerPopover
                 title="确认删除"
-                :description="`确定要删除「${totp.comment || '该令牌'}」吗？删除后将无法使用该令牌进行双重验证，且关联的 Passkey 也会被删除。`"
+                :description="`确定要删除「${totp.comment || '该令牌'}」吗？删除后将无法使用该令牌进行双重验证，且关联的 Passkey 与外部账号绑定也会被删除。`"
                 :loading="isDeleting"
                 :disabled="isDeleting"
                 :on-confirm="() => handleDelete(totp.id)"
@@ -457,5 +480,9 @@ async function handleDelete(totpId: string) {
 
 function goToPasskeys(totpId: string) {
   router.push(`/auth/passkeys/${encodeURIComponent(totpId)}`);
+}
+
+function goToOidcProviders() {
+  router.push("/auth/oidc-providers");
 }
 </script>

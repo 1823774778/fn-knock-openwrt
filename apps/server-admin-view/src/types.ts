@@ -733,9 +733,63 @@ export type PasskeyCredential = {
   lastUsedAt?: string;
 };
 
+export type ExternalAuthProviderType =
+  | "google"
+  | "microsoft"
+  | "github"
+  | "custom_oidc";
+
+export type ExternalAuthProtocol = "oidc" | "oauth2_profile";
+
+export type OIDCProviderCatalogItem = {
+  type: ExternalAuthProviderType;
+  protocol: ExternalAuthProtocol;
+  label: string;
+  description: string;
+  default_name: string;
+  default_scopes: string[];
+  required_fields: string[];
+  optional_fields: string[];
+  supports_pkce: boolean;
+  supports_discovery: boolean;
+};
+
+export type OIDCProviderView = {
+  id: string;
+  type: ExternalAuthProviderType;
+  protocol: ExternalAuthProtocol;
+  name: string;
+  enabled: boolean;
+  connection_config_masked: Record<string, unknown>;
+  callback_url?: string;
+  created_at: string;
+  updated_at: string;
+  last_test_at?: string;
+  last_test_status?: "idle" | "success" | "failed";
+  last_error?: string | null;
+};
+
+export type OIDCBinding = {
+  id: string;
+  provider_id: string;
+  provider_type: ExternalAuthProviderType;
+  provider_name?: string;
+  totp_id: string;
+  totp_name?: string;
+  issuer: string;
+  subject: string;
+  display_name?: string;
+  email?: string;
+  email_verified?: boolean;
+  avatar_url?: string;
+  created_at: string;
+  updated_at: string;
+  last_used_at?: string;
+};
+
 export type LoginSession = {
   totpId: string;
-  method: "TOTP" | "PASSKEY";
+  method: "TOTP" | "PASSKEY" | "OIDC";
   credentialId: string;
   credentialName: string;
   comment?: string;

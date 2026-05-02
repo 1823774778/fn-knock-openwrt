@@ -18,6 +18,8 @@ import {
 import { authMobilitySessionManager } from "../lib/auth-mobility-session";
 import { buildClientInfo, getClientIp } from "../lib/auth-request";
 import { passkeyRoutes } from "./auth/passkey";
+import { oidcRoutes } from "./auth/oidc";
+import { oidcAuthService } from "../lib/auth/oidc/service";
 import { whitelistManager } from "../lib/whitelist-manager";
 import { loginBackoffService } from "../lib/login-backoff";
 import { recentAuthIPsManager } from "../lib/recent-auth-ips";
@@ -32,6 +34,9 @@ import { scheduleSyncReverseProxyTrustedIPs } from "../lib/reverse-proxy-trusted
 import { emitLogoutEvent } from "../lib/system-events/helpers";
 import {
   buildFnosShareSessionClearCookie,
+  buildOidcLoginErrorClearCookie,
+  OIDC_LOGIN_ERROR_COOKIE_NAME,
+  readCookieValue,
   buildSessionClearCookie,
 } from "../lib/session-cookie";
 import { fnosShareBypassService } from "../lib/fnos-share-bypass";
@@ -71,6 +76,10 @@ const buildPasskeyStatus = async (request: Request) => {
     rp_id: rpInfo.rpID,
   };
 };
+
+const buildOidcStatus = async () => ({
+  providers: await oidcAuthService.listPublicProviders(),
+});
 
 const resolveAuthUiBasePrefix = (request: Request): string => {
   const resolveBasePrefixFromPathname = (pathname: string): string => {
@@ -112,6 +121,22 @@ const buildPostLogoutLocation = (request: Request): string => {
   return `${basePrefix}/login?${params.toString()}`;
 };
 
+const appendSetCookieHeader = (
+  set: { headers: Record<string, unknown> },
+  cookie: string,
+) => {
+  const current = set.headers["set-cookie"] ?? set.headers["Set-Cookie"];
+  delete set.headers["Set-Cookie"];
+  if (!current) {
+    set.headers["set-cookie"] = cookie;
+    return;
+  }
+
+  set.headers["set-cookie"] = Array.isArray(current)
+    ? [...current, cookie]
+    : [String(current), cookie];
+};
+
 export const authRoutes = new Elysia({ prefix: "/api/auth" })
   .onBeforeHandle(({ set }) => {
     applyNoStoreHeaders(set.headers);
@@ -122,16 +147,21 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
     ipLocationService.ensureEnqueued(clientIp).catch((error) => {
       console.error("[auth][bootstrap] failed to enqueue ip lookup:", error);
     });
-    const [auth, client, captcha, passkey] = await Promise.all([
+    const [auth, client, captcha, passkey, oidc] = await Promise.all([
       resolveAuthAccess(request, clientIp),
       Promise.resolve(buildClientInfo(clientIp)),
       captchaService.getPublicSettings(),
       buildPasskeyStatus(request),
+      buildOidcStatus(),
     ]);
 
     applyAuthResponseHeaders(set, auth);
     const requestedRedirectUri = new URL(request.url).searchParams.get(
       "redirect_uri",
+    );
+    const oidcLoginErrorTicket = readCookieValue(
+      request.headers.get("cookie"),
+      OIDC_LOGIN_ERROR_COOKIE_NAME,
     );
     const redirectTo = auth.authorized
       ? resolveSafeRedirectUri({
@@ -155,6 +185,19 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
       })
         ? null
         : redirectTo;
+    const oidcLoginError = await oidcAuthService.consumeLoginErrorNotice(
+      oidcLoginErrorTicket,
+    );
+
+    if (oidcLoginErrorTicket) {
+      appendSetCookieHeader(
+        set,
+        buildOidcLoginErrorClearCookie({
+          domain: resolveCookieDomain(config, request),
+          path: resolveAuthUiBasePrefix(request) || "/",
+        }),
+      );
+    }
 
     return {
       success: true,
@@ -167,6 +210,10 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
         client,
         captcha,
         passkey,
+        oidc: {
+          ...oidc,
+          ...(oidcLoginError ? { login_error: oidcLoginError } : {}),
+        },
         redirect_to: reachableRedirectTo || undefined,
       },
     };
@@ -184,9 +231,10 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
     ipLocationService.ensureEnqueued(clientIp).catch((error) => {
       console.error("[auth][session] failed to enqueue ip lookup:", error);
     });
-    const [client, passkey] = await Promise.all([
+    const [client, passkey, oidc] = await Promise.all([
       Promise.resolve(buildClientInfo(clientIp)),
       buildPasskeyStatus(request),
+      buildOidcStatus(),
     ]);
 
     return {
@@ -199,6 +247,7 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
         },
         client,
         passkey,
+        oidc,
       },
     };
   })
@@ -357,6 +406,7 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
     },
   )
   .use(passkeyRoutes)
+  .use(oidcRoutes)
   .get("/logout", async ({ request, set }) => {
     const config = await configManager.getConfig();
     const cookieDomain = resolveCookieDomain(config, request);

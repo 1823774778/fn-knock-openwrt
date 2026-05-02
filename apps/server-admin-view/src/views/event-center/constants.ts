@@ -17,7 +17,7 @@ export const SYSTEM_EVENT_TYPE_OPTIONS: Array<{
   { value: "FN_EVENT_SECURITY_SCANNER_BLOCKED", label: "扫描器拦截" },
   { value: "FN_EVENT_DDNS_UPDATE_COMPLETED", label: "DDNS 更新" },
   { value: "FN_EVENT_GATEWAY_THROTTLE_BLOCKED", label: "网关节流封锁" },
-  { value: "FN_EVENT_WAF_BLOCKED", label: "WAF 拦截" },
+  { value: "FN_EVENT_WAF_BLOCKED", label: "WAF 阻断" },
   { value: "FN_EVENT_SSH_LOGIN_SUCCESS", label: "SSH 登录成功" },
   { value: "FN_EVENT_SSH_LOGIN_FAILURE", label: "SSH 登录失败" },
   { value: "FN_EVENT_SSH_IP_BLOCKED", label: "SSH IP 封锁" },

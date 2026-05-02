@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 
 import Login from '../views/Login.vue'
 import Home from '../views/Home.vue' // We will create this
+import OidcBind from '../views/OidcBind.vue'
 import NotFound from '../views/NotFound.vue'
 
 const detectAuthBasePrefix = () => {
@@ -70,6 +71,11 @@ const router = createRouter({
       path: '/login',
       name: 'Login',
       component: Login
+    },
+    {
+      path: '/oidc/bind',
+      name: 'OidcBind',
+      component: OidcBind
     },
     {
       path: '/:pathMatch(.*)*',

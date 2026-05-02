@@ -43,6 +43,7 @@ const APP_UPDATE_EVENT_DEDUPE_TTL_SECONDS = 30 * 24 * 60 * 60;
 export const emitLoginSuccessEvent = async (payload: {
   sessionId: string;
   authMethod: AuthMethod;
+  authProviderName?: string;
   credentialId: string;
   credentialName: string;
   linkedTotpName?: string;
@@ -66,6 +67,9 @@ export const emitLoginSuccessEvent = async (payload: {
     payload: {
       session_id: payload.sessionId,
       auth_method: payload.authMethod,
+      ...(payload.authProviderName
+        ? { auth_provider_name: payload.authProviderName }
+        : {}),
       credential_id: payload.credentialId,
       credential_name: payload.credentialName,
       ...(payload.linkedTotpName

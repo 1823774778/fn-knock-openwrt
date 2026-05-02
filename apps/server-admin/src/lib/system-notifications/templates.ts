@@ -15,7 +15,7 @@ const EVENT_LABELS: Record<SystemEventEnvelope["type"], string> = {
   FN_EVENT_SECURITY_SCANNER_BLOCKED: "扫描器拦截",
   FN_EVENT_DDNS_UPDATE_COMPLETED: "DDNS 更新",
   FN_EVENT_GATEWAY_THROTTLE_BLOCKED: "网关节流封锁",
-  FN_EVENT_WAF_BLOCKED: "WAF 拦截",
+  FN_EVENT_WAF_BLOCKED: "WAF 阻断",
   FN_EVENT_SSH_LOGIN_SUCCESS: "SSH 登录成功",
   FN_EVENT_SSH_LOGIN_FAILURE: "SSH 登录失败",
   FN_EVENT_SSH_IP_BLOCKED: "SSH IP 封锁",
@@ -53,11 +53,26 @@ const EVENT_SOURCE_LABELS: Record<SystemEventEnvelope["source"], string> = {
 const AUTH_METHOD_LABELS = {
   TOTP: "TOTP",
   PASSKEY: "Passkey",
+  OIDC: "外部账号",
 } as const;
 
 const GRANT_TYPE_LABELS = {
   browser_session: "浏览器会话",
   login_ip_grant: "登录 IP 授权",
+} as const;
+
+const WAF_MODE_LABELS = {
+  detection: "检测",
+  blocking: "阻断",
+  off: "关闭",
+} as const;
+
+const WAF_ACTION_LABELS = {
+  block: "阻断",
+  deny: "拒绝",
+  detect: "检测",
+  log: "记录",
+  pass: "放行",
 } as const;
 
 const LOGOUT_SOURCE_LABELS = {
@@ -117,9 +132,13 @@ const joinCompactParts = (...parts: Array<string | undefined>) =>
 const formatCredentialContext = (event: SystemEventEnvelope, fallback = "") => {
   const credentialName = readPayloadValue(event, "credential_name");
   const linkedTotpName = readPayloadValue(event, "linked_totp_name");
+  const authMethod =
+    AUTH_METHOD_LABELS[
+      readPayloadValue(event, "auth_method") as keyof typeof AUTH_METHOD_LABELS
+    ] || readPayloadValue(event, "auth_method");
 
   if (linkedTotpName) {
-    return `Passkey「${credentialName || "未知凭证"}」关联 TOTP「${linkedTotpName}」`;
+    return `${authMethod || "凭证"}「${credentialName || "未知凭证"}」关联 TOTP「${linkedTotpName}」`;
   }
   if (credentialName) {
     return `凭证「${credentialName}」`;
@@ -167,6 +186,31 @@ const formatBoolean = (value: string) => {
 const formatIpTransition = (previousIp: string, nextIp: string) => {
   if (previousIp && nextIp) return `${previousIp} -> ${nextIp}`;
   return previousIp || nextIp;
+};
+
+const formatWAFActionLabel = (value: string) =>
+  WAF_ACTION_LABELS[value as keyof typeof WAF_ACTION_LABELS] || value;
+
+const formatWAFModeLabel = (value: string) =>
+  WAF_MODE_LABELS[value as keyof typeof WAF_MODE_LABELS] || value;
+
+const isWAFBlockingAction = (action: string, mode: string) => {
+  const normalizedAction = action.toLowerCase();
+  if (normalizedAction === "block" || normalizedAction === "deny") return true;
+  if (
+    normalizedAction === "detect" ||
+    normalizedAction === "log" ||
+    normalizedAction === "pass"
+  ) {
+    return false;
+  }
+  return mode.toLowerCase() === "blocking";
+};
+
+const formatWAFOutcomeLabel = (action: string, mode: string) => {
+  if (isWAFBlockingAction(action, mode)) return "阻断";
+  const actionLabel = formatWAFActionLabel(action);
+  return actionLabel || "记录";
 };
 
 const truncateText = (value: string, maxLength = 180) => {
@@ -251,13 +295,21 @@ const buildNotificationDetails = (args: {
       const sessionComment = readPayloadValue(event, "session_comment");
       const ip = readPayloadValue(event, "ip") || "未知 IP";
       const ipLocation = readPayloadValue(event, "ip_location");
+      const authMethodRaw = readPayloadValue(event, "auth_method");
+      const authProviderName = readPayloadValue(event, "auth_provider_name");
       const authMethod =
         AUTH_METHOD_LABELS[
-          readPayloadValue(
-            event,
-            "auth_method",
-          ) as keyof typeof AUTH_METHOD_LABELS
-        ] || readPayloadValue(event, "auth_method");
+          authMethodRaw as keyof typeof AUTH_METHOD_LABELS
+        ] || authMethodRaw;
+      const isOidcLogin = authMethodRaw === "OIDC";
+      const loginMethodText =
+        isOidcLogin && authProviderName
+          ? `通过 ${authProviderName} 登录`
+          : `使用 ${authMethod || "未知方式"}`;
+      const loginAuthText =
+        isOidcLogin && authProviderName
+          ? `通过 ${authProviderName}`
+          : `使用 ${authMethod || "未知方式"}`;
       const grantType =
         GRANT_TYPE_LABELS[
           readPayloadValue(
@@ -269,12 +321,14 @@ const buildNotificationDetails = (args: {
       const expiresAt = formatDateTime(readPayloadValue(event, "expires_at"));
 
       summary = appendSessionComment(
-        linkedTotpName
-          ? `Passkey「${credentialName}」关联 TOTP「${linkedTotpName}」从 ${ip} 登录成功`
+        isOidcLogin
+          ? `${credentialName} ${loginMethodText}成功，来源 IP ${ip}${linkedTotpName ? `，关联 TOTP「${linkedTotpName}」` : ""}`
+          : linkedTotpName
+          ? `${authMethod || "凭证"}「${credentialName}」关联 TOTP「${linkedTotpName}」从 ${ip} 登录成功`
           : `凭证「${credentialName}」从 ${ip} 登录成功`,
         sessionComment,
       );
-      overview = `本次登录使用 ${authMethod || "未知方式"} 完成认证，授权方式为 ${grantType || "未知"}${ipLocation ? `，登录位置为 ${ipLocation}` : ""}。${sessionComment ? `当前会话备注为「${sessionComment}」。` : ""}`;
+      overview = `本次登录${loginAuthText}完成认证，授权方式为 ${grantType || "未知"}${ipLocation ? `，登录位置为 ${ipLocation}` : ""}。${sessionComment ? `当前会话备注为「${sessionComment}」。` : ""}`;
       advice = "如该登录并非本人操作，建议尽快撤销会话并检查访问策略。";
 
       pushFact(facts, "凭证名称", credentialName);
@@ -283,6 +337,7 @@ const buildNotificationDetails = (args: {
       pushFact(facts, "登录 IP", ip);
       pushFact(facts, "IP 位置", ipLocation);
       pushFact(facts, "认证方式", authMethod);
+      pushFact(facts, "登录提供商", authProviderName);
       pushFact(facts, "授权方式", grantType);
       pushFact(facts, "记住登录", rememberMe);
       pushFact(facts, "会话到期", expiresAt);
@@ -296,6 +351,13 @@ const buildNotificationDetails = (args: {
       const sessionComment = readPayloadValue(event, "session_comment");
       const ip = readPayloadValue(event, "ip") || "未知 IP";
       const ipLocation = readPayloadValue(event, "ip_location");
+      const authMethod =
+        AUTH_METHOD_LABELS[
+          readPayloadValue(
+            event,
+            "auth_method",
+          ) as keyof typeof AUTH_METHOD_LABELS
+        ] || readPayloadValue(event, "auth_method");
       const logoutSource =
         LOGOUT_SOURCE_LABELS[
           readPayloadValue(
@@ -306,7 +368,7 @@ const buildNotificationDetails = (args: {
 
       summary = appendSessionComment(
         linkedTotpName
-          ? `Passkey「${credentialName}」关联 TOTP「${linkedTotpName}」已退出登录`
+          ? `${authMethod || "凭证"}「${credentialName}」关联 TOTP「${linkedTotpName}」已退出登录`
           : `凭证「${credentialName}」已退出登录`,
         sessionComment,
       );
@@ -524,16 +586,26 @@ const buildNotificationDetails = (args: {
         readPayloadValue(event, "path");
       const ruleIds = readPayloadValue(event, "rule_ids");
       const traceId = readPayloadValue(event, "trace_id");
+      const action = readPayloadValue(event, "action");
+      const mode = readPayloadValue(event, "mode");
+      const actionLabel = formatWAFActionLabel(action);
+      const modeLabel = formatWAFModeLabel(mode);
+      const outcomeLabel = formatWAFOutcomeLabel(action, mode);
 
-      summary = `${ip} 的请求被 WAF 拦截`;
-      overview = `WAF 已拦截来源 ${ip}${host ? ` 访问 ${host}` : ""}${path ? ` ${path}` : ""}。${ruleIds ? `命中规则：${ruleIds}。` : ""}`;
+      summary = `${ip} 的请求被 WAF ${outcomeLabel}`;
+      overview = `WAF 已${outcomeLabel}来源 ${ip}${host ? ` 访问 ${host}` : ""}${path ? ` ${path}` : ""}${actionLabel ? `，动作为${actionLabel}` : ""}${modeLabel ? `，当前模式为${modeLabel}` : ""}。${ruleIds ? `命中规则：${ruleIds}。` : ""}`;
       advice =
-        "请在 WAF 日志中按 Trace ID 查看命中详情；如确认为误报，可生成排除草稿并先在检测模式观察。";
+        outcomeLabel === "阻断"
+          ? "请在 WAF 日志中按 Trace ID 查看命中详情；如确认为误报，请及时向项目方反馈BUG。"
+          : "请在 WAF 日志中按 Trace ID 查看命中详情，并结合规则与请求上下文判断是否需要调整策略。";
 
       pushFact(facts, "来源 IP", ip);
       pushFact(facts, "Trace ID", traceId);
       pushFact(facts, "Host", host);
       pushFact(facts, "请求地址", path);
+      pushFact(facts, "处理结果", outcomeLabel);
+      pushFact(facts, "WAF 动作", actionLabel);
+      pushFact(facts, "WAF 模式", modeLabel);
       pushFact(facts, "规则 ID", ruleIds);
       pushFact(facts, "规则包", readPayloadValue(event, "bundle_id"));
       pushFact(facts, "状态码", readPayloadValue(event, "status"));
@@ -765,12 +837,23 @@ const buildNotificationDetails = (args: {
 
 const formatEventSummary = (event: SystemEventEnvelope) => {
   switch (event.type) {
-    case "FN_EVENT_AUTH_LOGIN_SUCCESS":
+    case "FN_EVENT_AUTH_LOGIN_SUCCESS": {
+      const authMethod = readPayloadValue(event, "auth_method");
+      const authProviderName = readPayloadValue(event, "auth_provider_name");
+      if (authMethod === "OIDC" && authProviderName) {
+        return joinCompactParts(
+          `通过 ${authProviderName} 登录`,
+          readPayloadValue(event, "credential_name") || "未知凭证",
+          formatSessionCommentCompact(readPayloadValue(event, "session_comment")),
+          readPayloadValue(event, "ip"),
+        );
+      }
       return joinCompactParts(
         readPayloadValue(event, "credential_name") || "未知凭证",
         formatSessionCommentCompact(readPayloadValue(event, "session_comment")),
         readPayloadValue(event, "ip"),
       );
+    }
     case "FN_EVENT_AUTH_LOGOUT":
       return joinCompactParts(
         readPayloadValue(event, "credential_name") || "未知凭证",
@@ -814,14 +897,20 @@ const formatEventSummary = (event: SystemEventEnvelope) => {
           ? `封锁${readPayloadValue(event, "block_seconds")}s`
           : "触发封锁",
       );
-    case "FN_EVENT_WAF_BLOCKED":
+    case "FN_EVENT_WAF_BLOCKED": {
+      const outcomeLabel = formatWAFOutcomeLabel(
+        readPayloadValue(event, "action"),
+        readPayloadValue(event, "mode"),
+      );
       return joinCompactParts(
         readPayloadValue(event, "ip"),
         readPayloadValue(event, "host"),
+        `WAF ${outcomeLabel}`,
         readPayloadValue(event, "rule_ids")
           ? `规则 ${readPayloadValue(event, "rule_ids")}`
-          : "WAF 拦截",
+          : "",
       );
+    }
     case "FN_EVENT_SSH_LOGIN_SUCCESS":
       return joinCompactParts(
         readPayloadValue(event, "username"),

@@ -23,14 +23,18 @@ export const resetAuthFailureTracking = async (
 export const registerAuthFailure = async (args: {
   clientIp: string | null | undefined;
   userAgent: string;
-  method: "TOTP" | "PASSKEY";
+  method: "TOTP" | "PASSKEY" | "OIDC";
   credentialName?: string;
   linkedTotpName?: string;
 }) => {
   const normalizedIp = normalizeAuthFailureTrackingIp(args.clientIp);
   const credentialName =
     args.credentialName?.trim() ||
-    (args.method === "PASSKEY" ? "Unknown Passkey" : "! Unknown TOTP");
+    (args.method === "PASSKEY"
+      ? "Unknown Passkey"
+      : args.method === "OIDC"
+        ? "Unknown OIDC"
+        : "! Unknown TOTP");
 
   const failure = await loginBackoffService.registerFailure(normalizedIp);
   const config = await configManager.getConfig();

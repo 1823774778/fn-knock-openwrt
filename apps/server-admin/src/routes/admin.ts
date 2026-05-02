@@ -111,6 +111,7 @@ import {
   autoHttpsRedirectManager,
   type AutoHttpsConfig,
 } from "../lib/auto-https-redirect";
+import { oidcAuthService } from "../lib/auth/oidc/service";
 
 const parseIntSafe = (value: string | undefined, fallback: number) => {
   const v = Number.parseInt(String(value ?? ""), 10);
@@ -2467,6 +2468,7 @@ export const adminRoutes = new Elysia({
         set.status = 404;
         return { success: false, message: "TOTP not found" };
       }
+      await oidcAuthService.deleteBindingsByTotp(params.id);
       return { success: true };
     },
     withRouteDoc("删除 TOTP 凭据", {

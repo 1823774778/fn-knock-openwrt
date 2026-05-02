@@ -53,6 +53,10 @@ const dockerAdminGateError = computed(
 const dockerAdminGateShowRetry = computed(() =>
   Boolean(dockerAdminAuthStore.bootstrapError),
 );
+const toastOptions = {
+  closeButton: true,
+  closeButtonPosition: "top-right" as const,
+};
 
 const loadWelcomeGuideStatus = async () => {
   try {
@@ -207,7 +211,13 @@ watch(
     :pending="isSavingWelcomeStatus"
     @start="handleWelcomeStart"
   />
-  <Toaster position="top-center" :duration="3000" />
+  <Toaster
+    position="top-center"
+    :duration="3000"
+    close-button
+    close-button-position="top-right"
+    :toast-options="toastOptions"
+  />
 </template>
 
 <style scoped>
@@ -219,5 +229,34 @@ watch(
     radial-gradient(circle at 18% 18%, rgba(118, 164, 255, 0.18), transparent 28%),
     radial-gradient(circle at 82% 24%, rgba(255, 159, 237, 0.14), transparent 24%),
     linear-gradient(180deg, rgba(8, 10, 18, 0.98), rgba(8, 10, 18, 0.92));
+}
+</style>
+
+<style>
+[data-sonner-toast][data-styled="true"] {
+  padding-right: 44px;
+}
+
+[data-sonner-toast][data-styled="true"] [data-close-button] {
+  left: auto;
+  right: 10px;
+  top: 10px;
+  bottom: auto;
+  width: 24px;
+  height: 24px;
+  transform: none;
+  opacity: 1;
+  background: var(--normal-bg);
+  border-color: var(--normal-border);
+  color: var(--normal-text);
+}
+
+[data-sonner-toast][data-styled="true"] [data-close-button]:hover {
+  background: var(--muted);
+}
+
+[data-sonner-toast][data-styled="true"] [data-close-button] svg {
+  width: 14px;
+  height: 14px;
 }
 </style>

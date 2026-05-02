@@ -73,6 +73,9 @@ import type {
   NotificationRuleListPayload,
   NotificationTriggerListPayload,
   NotificationTriggerStatus,
+  OIDCBinding,
+  OIDCProviderCatalogItem,
+  OIDCProviderView,
   SSHLoginLogListPayload,
   SSHSecurityBlockListPayload,
   SSHSecurityBlockRecord,
@@ -454,6 +457,65 @@ export const ConfigAPI = {
   },
   async deletePasskey(id: string): Promise<void> {
     await apiClient.delete(`/passkeys/${encodeURIComponent(id)}`);
+  },
+  async getOIDCProviderCatalog(): Promise<OIDCProviderCatalogItem[]> {
+    const res = await apiClient.get("/auth/oidc/catalog");
+    return res.data.data.providers;
+  },
+  async getOIDCProviders(): Promise<OIDCProviderView[]> {
+    const res = await apiClient.get("/auth/oidc/providers");
+    return res.data.data.providers;
+  },
+  async createOIDCProvider(payload: {
+    name?: string;
+    type: string;
+    enabled?: boolean;
+    connection_config?: Record<string, unknown>;
+  }): Promise<OIDCProviderView> {
+    const res = await apiClient.post("/auth/oidc/providers", payload);
+    return res.data.data;
+  },
+  async updateOIDCProvider(
+    id: string,
+    payload: {
+      name?: string;
+      enabled?: boolean;
+      connection_config?: Record<string, unknown>;
+    },
+  ): Promise<OIDCProviderView> {
+    const res = await apiClient.patch(
+      `/auth/oidc/providers/${encodeURIComponent(id)}`,
+      payload,
+    );
+    return res.data.data;
+  },
+  async deleteOIDCProvider(id: string): Promise<void> {
+    await apiClient.delete(`/auth/oidc/providers/${encodeURIComponent(id)}`);
+  },
+  async testOIDCProvider(
+    id: string,
+  ): Promise<{ success: boolean; message?: string }> {
+    const res = await apiClient.post(
+      `/auth/oidc/providers/${encodeURIComponent(id)}/test`,
+    );
+    return res.data;
+  },
+  async getOIDCBindings(totpId: string): Promise<OIDCBinding[]> {
+    const res = await apiClient.get(
+      `/auth/oidc/totp/${encodeURIComponent(totpId)}/bindings`,
+    );
+    return res.data.data.bindings;
+  },
+  async deleteOIDCBinding(id: string): Promise<void> {
+    await apiClient.delete(`/auth/oidc/bindings/${encodeURIComponent(id)}`);
+  },
+  async createOIDCInvite(payload: {
+    totp_id: string;
+    provider_id: string;
+    note?: string;
+  }): Promise<{ invite_url: string; expires_at: string }> {
+    const res = await apiClient.post("/auth/oidc/invitations", payload);
+    return res.data.data;
   },
   // 同步路由
   async syncRoutes(): Promise<{

@@ -451,7 +451,7 @@ export type AcmeClientSettings = {
 
 export type LoginSession = {
   totpId: string;
-  method: "TOTP" | "PASSKEY";
+  method: "TOTP" | "PASSKEY" | "OIDC";
   credentialId: string;
   credentialName: string;
   linkedTotpName?: string;

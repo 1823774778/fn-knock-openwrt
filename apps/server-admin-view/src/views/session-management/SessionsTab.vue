@@ -179,18 +179,35 @@ watch(
       />
     </div>
 
-    <div class="overflow-x-auto rounded-md border">
+    <div class="overflow-hidden rounded-md border">
       <TooltipProvider>
-        <Table class="min-w-[1120px] table-fixed">
+        <Table class="table-fixed" container-class="overflow-hidden">
+          <colgroup>
+            <col class="w-[30%] sm:w-[15%]" />
+            <col class="w-[34%] sm:w-[18%]" />
+            <col class="hidden sm:table-column sm:w-[18%]" />
+            <col class="hidden lg:table-column lg:w-[18%]" />
+            <col class="hidden 2xl:table-column 2xl:w-[10%]" />
+            <col class="hidden 2xl:table-column 2xl:w-[10%]" />
+            <col class="w-[132px] 2xl:w-[260px]" />
+          </colgroup>
           <TableHeader>
             <TableRow>
-              <TableHead class="w-[150px]">会话 ID</TableHead>
-              <TableHead class="w-[190px]">凭证</TableHead>
-              <TableHead class="w-[220px]">备注</TableHead>
-              <TableHead class="w-[260px]">当前 IP</TableHead>
-              <TableHead class="w-[120px]">登录时间</TableHead>
-              <TableHead class="w-[120px]">过期时间</TableHead>
-              <TableHead class="w-[260px] text-right">操作</TableHead>
+              <TableHead class="whitespace-normal">会话 ID</TableHead>
+              <TableHead class="whitespace-normal">凭证</TableHead>
+              <TableHead class="hidden whitespace-normal sm:table-cell"
+                >备注</TableHead
+              >
+              <TableHead class="hidden whitespace-normal lg:table-cell"
+                >当前 IP</TableHead
+              >
+              <TableHead class="hidden whitespace-normal 2xl:table-cell"
+                >登录时间</TableHead
+              >
+              <TableHead class="hidden whitespace-normal 2xl:table-cell"
+                >过期时间</TableHead
+              >
+              <TableHead class="text-right">操作</TableHead>
             </TableRow>
           </TableHeader>
 
@@ -231,14 +248,14 @@ watch(
                 </div>
               </TableCell>
 
-              <TableCell class="min-w-[180px]">
+              <TableCell class="hidden min-w-0 whitespace-normal sm:table-cell">
                 <InlineCommentEditor
                   :text="session.comment"
                   :save="(value) => updateComment(session.id, value)"
                 />
               </TableCell>
 
-              <TableCell class="whitespace-normal">
+              <TableCell class="hidden whitespace-normal lg:table-cell">
                 <Tooltip>
                   <TooltipTrigger as-child>
                     <div
@@ -259,37 +276,41 @@ watch(
                 </div>
               </TableCell>
 
-              <TableCell>
+              <TableCell class="hidden 2xl:table-cell">
                 <div class="text-sm">
                   <HumanFriendlyTime :value="session.loginTime" />
                 </div>
               </TableCell>
 
-              <TableCell>
+              <TableCell class="hidden 2xl:table-cell">
                 <div class="text-sm">
                   <HumanFriendlyTime :value="session.expiresAt" />
                 </div>
               </TableCell>
 
               <TableCell class="text-right">
-                <div class="flex justify-end gap-2">
+                <div class="flex flex-wrap justify-end gap-1.5 2xl:gap-2">
                   <Button
                     variant="outline"
                     size="sm"
-                    class="gap-1.5"
+                    class="gap-1.5 px-2 2xl:px-2.5"
+                    title="查看会话轨迹"
+                    aria-label="查看会话轨迹"
                     @click="openMobility(session)"
                   >
                     <GitBranch class="h-4 w-4" />
-                    轨迹
+                    <span class="hidden 2xl:inline">轨迹</span>
                   </Button>
                   <Button
                     variant="outline"
                     size="sm"
-                    class="gap-1.5"
+                    class="gap-1.5 px-2 2xl:px-2.5"
+                    title="查看会话详情"
+                    aria-label="查看会话详情"
                     @click="openDetail(session)"
                   >
                     <Eye class="h-4 w-4" />
-                    详情
+                    <span class="hidden 2xl:inline">详情</span>
                   </Button>
                   <ConfirmDangerPopover
                     title="确认踢出会话？"
@@ -304,10 +325,12 @@ watch(
                         variant="destructive"
                         size="sm"
                         :disabled="isKicking"
-                        class="gap-1.5"
+                        class="gap-1.5 px-2 2xl:px-2.5"
+                        title="踢出会话"
+                        aria-label="踢出会话"
                       >
                         <Trash2 class="h-4 w-4" />
-                        踢出
+                        <span class="hidden 2xl:inline">踢出</span>
                       </Button>
                     </template>
                   </ConfirmDangerPopover>

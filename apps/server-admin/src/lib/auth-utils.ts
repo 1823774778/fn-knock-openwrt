@@ -251,6 +251,7 @@ export const handleLoginSuccess = async ({
   clientIp,
   userAgent,
   authMethod,
+  authProviderName,
   credentialId,
   credentialName,
   rememberMe,
@@ -264,7 +265,8 @@ export const handleLoginSuccess = async ({
   request: Request;
   clientIp: string | null;
   userAgent: string;
-  authMethod: "TOTP" | "PASSKEY";
+  authMethod: "TOTP" | "PASSKEY" | "OIDC";
+  authProviderName?: string;
   credentialId: string;
   credentialName: string;
   rememberMe: boolean;
@@ -292,7 +294,7 @@ export const handleLoginSuccess = async ({
   const autoWhitelistComment = "登录后自动授权";
   const postLoginIpGrantMode = credentialSettings.post_login_ip_grant_mode;
   const resolvedLinkedTotpName =
-    authMethod === "PASSKEY"
+    authMethod !== "TOTP"
       ? linkedTotpName || (await resolveTotpCredentialName(totpId))
       : undefined;
 
@@ -385,6 +387,7 @@ export const handleLoginSuccess = async ({
   await emitLoginSuccessEvent({
     sessionId,
     authMethod,
+    ...(authProviderName ? { authProviderName } : {}),
     credentialId,
     credentialName,
     ...(resolvedLinkedTotpName

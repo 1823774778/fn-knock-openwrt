@@ -4,6 +4,8 @@ type SameSitePolicy = "Strict" | "Lax" | "None";
 
 export const FNOS_SHARE_SESSION_COOKIE_NAME = "fn-knock-fnos-share-session";
 export const ADMIN_PANEL_SESSION_COOKIE_NAME = "fn-knock-admin-panel-session";
+export const OIDC_LOGIN_ERROR_COOKIE_NAME = "fn-knock-oidc-login-error";
+export const OIDC_FLOW_COOKIE_NAME = "fn-knock-oidc-flow";
 
 const resolveSameSite = (): SameSitePolicy => {
   const raw = process.env.SESSION_COOKIE_SAMESITE?.trim().toLowerCase();
@@ -29,6 +31,7 @@ const buildCookie = ({
   domain,
   httpOnly = true,
   secure,
+  sameSite,
 }: {
   name: string;
   value: string;
@@ -37,18 +40,45 @@ const buildCookie = ({
   domain?: string;
   httpOnly?: boolean;
   secure?: boolean;
+  sameSite?: SameSitePolicy;
 }): string => {
-  const sameSite = resolveSameSite();
+  const resolvedSameSite = sameSite || resolveSameSite();
   const parts = [
     `${name}=${value}`,
     `Path=${path}`,
-    `SameSite=${sameSite}`,
+    `SameSite=${resolvedSameSite}`,
     `Max-Age=${maxAge}`,
   ];
   if (domain) parts.splice(2, 0, `Domain=${domain}`);
   if (httpOnly) parts.splice(2, 0, "HttpOnly");
   appendSecure(parts, secure);
   return parts.join("; ");
+};
+
+export const readCookieValue = (
+  cookieHeader: string | null | undefined,
+  name: string,
+): string | null => {
+  const source = String(cookieHeader ?? "");
+  if (!source || !name) return null;
+
+  for (const segment of source.split(";")) {
+    const trimmed = segment.trim();
+    const separatorIndex = trimmed.indexOf("=");
+    if (separatorIndex <= 0) continue;
+
+    const key = trimmed.slice(0, separatorIndex).trim();
+    if (key !== name) continue;
+
+    const rawValue = trimmed.slice(separatorIndex + 1);
+    try {
+      return decodeURIComponent(rawValue);
+    } catch {
+      return rawValue;
+    }
+  }
+
+  return null;
 };
 
 export const buildSessionCookie = (
@@ -120,4 +150,56 @@ export const buildAdminPanelSessionClearCookie = (opts?: {
     maxAge: 0,
     path: "/",
     secure: opts?.secure,
+  });
+
+export const buildOidcLoginErrorCookie = (
+  token: string,
+  maxAge: number,
+  opts?: { domain?: string; path?: string },
+): string =>
+  buildCookie({
+    name: OIDC_LOGIN_ERROR_COOKIE_NAME,
+    value: encodeURIComponent(token),
+    maxAge,
+    path: opts?.path || "/",
+    domain: opts?.domain,
+  });
+
+export const buildOidcLoginErrorClearCookie = (opts?: {
+  domain?: string;
+  path?: string;
+}): string =>
+  buildCookie({
+    name: OIDC_LOGIN_ERROR_COOKIE_NAME,
+    value: "",
+    maxAge: 0,
+    path: opts?.path || "/",
+    domain: opts?.domain,
+  });
+
+export const buildOidcFlowCookie = (
+  token: string,
+  maxAge: number,
+  opts?: { domain?: string; path?: string },
+): string =>
+  buildCookie({
+    name: OIDC_FLOW_COOKIE_NAME,
+    value: encodeURIComponent(token),
+    maxAge,
+    path: opts?.path || "/",
+    domain: opts?.domain,
+    sameSite: "Lax",
+  });
+
+export const buildOidcFlowClearCookie = (opts?: {
+  domain?: string;
+  path?: string;
+}): string =>
+  buildCookie({
+    name: OIDC_FLOW_COOKIE_NAME,
+    value: "",
+    maxAge: 0,
+    path: opts?.path || "/",
+    domain: opts?.domain,
+    sameSite: "Lax",
   });

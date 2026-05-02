@@ -1414,10 +1414,10 @@ onUnmounted(() => {
 
       <CardContent>
         <div
-          class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center lg:gap-6"
+          class="grid gap-4 xl:grid-cols-[minmax(10rem,1fr)_auto] xl:items-center xl:gap-6"
         >
           <div
-            class="flex min-w-0 flex-col gap-4 md:flex-row md:items-center md:gap-6"
+            class="flex min-w-0 flex-col gap-4 md:min-w-[min(100%,10rem)] md:flex-row md:items-center md:gap-6"
           >
             <div
               v-if="showIPv4Status"
@@ -1474,7 +1474,7 @@ onUnmounted(() => {
           </div>
 
           <div
-            class="flex min-w-0 flex-wrap items-center gap-4 lg:ml-auto lg:min-w-max lg:flex-nowrap lg:gap-5 lg:border-l lg:pl-6"
+            class="flex min-w-0 flex-wrap items-center gap-4 xl:ml-auto xl:min-w-max xl:flex-nowrap xl:border-l xl:pl-6 2xl:gap-5"
           >
             <div
               class="flex min-w-[7.5rem] flex-[1_1_7.5rem] items-center gap-4 lg:flex-none"

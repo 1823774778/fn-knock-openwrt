@@ -329,7 +329,7 @@ const threatOption = computed<EChartsOption>(() => {
     },
     series: [
       {
-        name: "登录失败事件",
+        name: "登录失败",
         type: "line",
         smooth: true,
         symbol: "none",
@@ -338,7 +338,7 @@ const threatOption = computed<EChartsOption>(() => {
         data: failedSeries,
       },
       {
-        name: "拦截扫描器",
+        name: "扫描器",
         type: "line",
         smooth: true,
         symbol: "none",
@@ -347,7 +347,7 @@ const threatOption = computed<EChartsOption>(() => {
         data: blockedSeries,
       },
       {
-        name: "WAF 命中",
+        name: "WAF",
         type: "line",
         smooth: true,
         symbol: "none",
@@ -558,19 +558,19 @@ const liveMetricCards = computed(() => [
 
 const securityCards = computed(() => [
   {
-    label: "登录失败事件",
+    label: "登录失败",
     value: formatNumber(threatOverview.value?.totals?.failedLogins),
     hint: "每次登录失败都会记录",
     icon: ShieldAlert,
   },
   {
-    label: "拦截扫描器",
+    label: "扫描器",
     value: formatNumber(threatOverview.value?.totals?.blockedScanners),
     hint: "已被加入黑名单",
     icon: Ban,
   },
   {
-    label: "WAF 命中",
+    label: "WAF",
     value: formatNumber(threatOverview.value?.totals?.wafEvents),
     hint: "检测与拦截事件",
     icon: TriangleAlert,

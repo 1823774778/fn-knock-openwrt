@@ -42,11 +42,24 @@ export type AuthPasskeyState = {
   rp_id?: string;
 };
 
+export type AuthOidcProvider = {
+  id: string;
+  type: string;
+  name: string;
+  protocol?: string;
+};
+
+export type AuthOidcState = {
+  providers: AuthOidcProvider[];
+  login_error?: string;
+};
+
 export type AuthBootstrapData = {
   auth: AuthAccessState;
   client: AuthClientInfo;
   captcha: CaptchaPublicSettings;
   passkey: AuthPasskeyState;
+  oidc?: AuthOidcState;
   redirect_to?: string;
 };
 
@@ -54,4 +67,5 @@ export type AuthSessionData = {
   auth: AuthAccessState;
   client: AuthClientInfo;
   passkey: AuthPasskeyState;
+  oidc?: AuthOidcState;
 };

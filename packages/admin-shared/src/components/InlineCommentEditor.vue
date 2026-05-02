@@ -1,13 +1,17 @@
 <template>
-  <div class="group relative flex min-h-[24px] min-w-[100px] items-center">
-    <span v-if="!isEditing" class="text-sm">
+  <div class="group relative flex min-h-[24px] min-w-0 max-w-full items-center">
+    <span
+      v-if="!isEditing"
+      class="min-w-0 flex-1 truncate pr-7 text-sm"
+      :title="displayText"
+    >
       {{ displayText }}
     </span>
     <Input
       v-else
       ref="inputRef"
       v-model="draft"
-      class="h-7 w-[180px] px-2 py-1 text-sm"
+      class="h-7 min-w-0 flex-1 px-2 py-1 text-sm"
       :disabled="isSaving"
       :placeholder="placeholder"
       autofocus
@@ -17,13 +21,20 @@
 
     <div
       v-if="!isEditing"
-      class="absolute right-0 opacity-0 transition-opacity group-hover:opacity-100"
+      class="absolute right-0 top-1/2 -translate-y-1/2 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
     >
-      <Button variant="ghost" size="icon" class="h-6 w-6" @click="startEdit">
+      <Button
+        variant="ghost"
+        size="icon"
+        class="h-6 w-6"
+        title="编辑备注"
+        aria-label="编辑备注"
+        @click="startEdit"
+      >
         <Pencil class="h-3 w-3" />
       </Button>
     </div>
-    <div v-else class="ml-1 flex gap-1">
+    <div v-else class="ml-1 flex shrink-0 gap-1">
       <Button
         variant="ghost"
         size="icon"

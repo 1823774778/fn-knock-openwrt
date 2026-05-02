@@ -11,8 +11,12 @@ const IGNORED_PATHS = new Set([
   "/api/auth/verify",
   "/api/auth/logout",
   "/api/auth/preflight",
+  "/api/auth/oidc/bind",
+  "/api/auth/oidc/bind/",
   "/api/internal/system-events",
 ]);
+
+const IGNORED_PATH_PREFIXES = ["/api/auth/oidc/callback/"];
 
 export const hmacMiddleware = new Elysia({
   name: "hmac-middleware",
@@ -22,7 +26,11 @@ export const hmacMiddleware = new Elysia({
     : path.startsWith("/__auth__/api")
       ? path.slice("/__auth__".length)
       : path;
-  if (!normalizedPath.startsWith("/api") || IGNORED_PATHS.has(normalizedPath)) {
+  if (
+    !normalizedPath.startsWith("/api") ||
+    IGNORED_PATHS.has(normalizedPath) ||
+    IGNORED_PATH_PREFIXES.some((prefix) => normalizedPath.startsWith(prefix))
+  ) {
     return;
   }
   const timestampStr = request.headers.get("x-timestamp");

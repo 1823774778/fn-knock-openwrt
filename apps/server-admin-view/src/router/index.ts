@@ -77,6 +77,11 @@ const router = createRouter({
           component: () => import("../views/PasskeySettings.vue"),
         },
         {
+          path: "auth/oidc-providers",
+          name: "OIDCProviderSettings",
+          component: () => import("../views/OIDCProviderSettings.vue"),
+        },
+        {
           path: "events",
           name: "EventCenter",
           component: () => import("../views/EventCenter.vue"),
