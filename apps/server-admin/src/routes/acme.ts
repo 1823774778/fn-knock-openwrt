@@ -14,245 +14,15 @@ import {
   runReservedAcmeApplicationJob,
   startAcmeApplicationJob,
 } from "../lib/acme-job-runner";
+import {
+  dnsProviders,
+  filterAcmeCredentialsForProvider,
+  formatCredentialRequirements,
+  getProviderLabel,
+  getSatisfiedCredentialScheme,
+  normalizeAcmeDnsType,
+} from "../lib/acme-dns-providers";
 import { routeDoc, withRouteDoc } from "../lib/openapi";
-
-type DnsProvider = {
-  dnsType: string;
-  label: string;
-  group: string;
-  credentialSchemes: DnsCredentialScheme[];
-};
-
-type DnsCredentialField = {
-  key: string;
-  label?: string;
-  description?: string;
-  required?: boolean;
-};
-
-type DnsCredentialScheme = {
-  id: string;
-  label: string;
-  description?: string;
-  fields: DnsCredentialField[];
-};
-
-const createCredentialScheme = (
-  id: string,
-  label: string,
-  fieldKeys: string[],
-  options?: {
-    description?: string;
-    optionalKeys?: string[];
-    fields?: Partial<Record<string, Omit<DnsCredentialField, "key">>>;
-  },
-): DnsCredentialScheme => {
-  const optionalKeys = new Set(options?.optionalKeys || []);
-
-  return {
-    id,
-    label,
-    description: options?.description,
-    fields: fieldKeys.map((key) => ({
-      key,
-      required: !optionalKeys.has(key),
-      ...(options?.fields?.[key] || {}),
-    })),
-  };
-};
-
-const createSingleSchemeProvider = (
-  dnsType: string,
-  label: string,
-  group: string,
-  envKeys: string[],
-): DnsProvider => ({
-  dnsType,
-  label,
-  group,
-  credentialSchemes: [createCredentialScheme("default", "默认凭据", envKeys)],
-});
-
-const getProviderAllCredentialKeys = (provider: DnsProvider) => {
-  const keys: string[] = [];
-  const seen = new Set<string>();
-  for (const scheme of provider.credentialSchemes) {
-    for (const field of scheme.fields) {
-      if (seen.has(field.key)) continue;
-      seen.add(field.key);
-      keys.push(field.key);
-    }
-  }
-  return keys;
-};
-
-const getSatisfiedCredentialScheme = (
-  provider: DnsProvider,
-  credentials: Record<string, string>,
-) => {
-  return (
-    provider.credentialSchemes.find((scheme) =>
-      scheme.fields
-        .filter((field) => field.required !== false)
-        .every((field) => Boolean(credentials[field.key])),
-    ) || null
-  );
-};
-
-const formatCredentialRequirements = (provider: DnsProvider) => {
-  if (provider.credentialSchemes.length === 1) {
-    const requiredKeys = provider.credentialSchemes[0]!.fields.filter(
-      (field) => field.required !== false,
-    ).map((field) => field.key);
-    return requiredKeys.join(", ");
-  }
-
-  return provider.credentialSchemes
-    .map((scheme) => {
-      const requiredKeys = scheme.fields
-        .filter((field) => field.required !== false)
-        .map((field) => field.key)
-        .join(", ");
-      const optionalKeys = scheme.fields
-        .filter((field) => field.required === false)
-        .map((field) => field.key);
-      const suffix = optionalKeys.length
-        ? `；可选 ${optionalKeys.join(", ")}`
-        : "";
-      return `${scheme.label}: ${requiredKeys}${suffix}`;
-    })
-    .join("；或 ");
-};
-
-const dnsProviders: DnsProvider[] = [
-  {
-    dnsType: "dns_cf",
-    label: "Cloudflare",
-    group: "常用",
-    credentialSchemes: [
-      createCredentialScheme(
-        "global-key",
-        "Global API Key",
-        ["CF_Key", "CF_Email"],
-        {
-          description: "兼容 Cloudflare 旧版 Global API Key 方式。",
-          fields: {
-            CF_Key: { label: "Global API Key" },
-            CF_Email: { label: "账户邮箱" },
-          },
-        },
-      ),
-      createCredentialScheme(
-        "api-token",
-        "API Token",
-        ["CF_Token", "CF_Zone_ID", "CF_Account_ID"],
-        {
-          description:
-            "推荐。仅需填写 Token；如已知 Zone ID 或 Account ID，可一并填写以减少自动探测。",
-          optionalKeys: ["CF_Zone_ID", "CF_Account_ID"],
-          fields: {
-            CF_Token: { label: "API Token" },
-            CF_Zone_ID: { label: "Zone ID" },
-            CF_Account_ID: { label: "Account ID" },
-          },
-        },
-      ),
-    ],
-  },
-  createSingleSchemeProvider("dns_ali", "阿里云 DNS", "常用", [
-    "Ali_Key",
-    "Ali_Secret",
-  ]),
-  createSingleSchemeProvider("dns_dp", "DNSPod", "常用", ["DP_Id", "DP_Key"]),
-  createSingleSchemeProvider(
-    "dns_tencent",
-    "腾讯云 DNSPod (TencentCloud)",
-    "常用",
-    ["Tencent_SecretId", "Tencent_SecretKey"],
-  ),
-  createSingleSchemeProvider("dns_gd", "GoDaddy", "常用", [
-    "GD_Key",
-    "GD_Secret",
-  ]),
-  createSingleSchemeProvider("dns_dgon", "DigitalOcean", "常用", [
-    "DO_API_KEY",
-  ]),
-  createSingleSchemeProvider("dns_netlify", "Netlify", "常用", [
-    "NETLIFY_TOKEN",
-  ]),
-  createSingleSchemeProvider("dns_vercel", "Vercel", "常用", [
-    "VERCEL_TOKEN",
-    "VERCEL_TEAM_ID",
-  ]),
-  createSingleSchemeProvider("dns_aws", "AWS Route53", "常用", [
-    "AWS_ACCESS_KEY_ID",
-    "AWS_SECRET_ACCESS_KEY",
-    "AWS_REGION",
-  ]),
-  createSingleSchemeProvider("dns_google", "Google Cloud DNS", "常用", [
-    "GCE_PROJECT",
-    "GCE_SERVICE_ACCOUNT_FILE",
-  ]),
-  createSingleSchemeProvider("dns_azure", "Azure DNS", "常用", [
-    "AZUREDNS_SUBSCRIPTIONID",
-    "AZUREDNS_TENANTID",
-    "AZUREDNS_APPID",
-    "AZUREDNS_CLIENTSECRET",
-  ]),
-  createSingleSchemeProvider("dns_linode_v4", "Linode", "国际", [
-    "LINODE_V4_API_KEY",
-  ]),
-  createSingleSchemeProvider("dns_vultr", "Vultr", "国际", ["VULTR_API_KEY"]),
-  createSingleSchemeProvider("dns_ovh", "OVH", "国际", [
-    "OVH_AK",
-    "OVH_AS",
-    "OVH_CK",
-  ]),
-  createSingleSchemeProvider("dns_hetzner", "Hetzner", "国际", [
-    "HETZNER_Token",
-  ]),
-  createSingleSchemeProvider("dns_namecheap", "Namecheap", "国际", [
-    "NAMECHEAP_API_KEY",
-    "NAMECHEAP_USERNAME",
-    "NAMECHEAP_SOURCEIP",
-  ]),
-  createSingleSchemeProvider("dns_porkbun", "Porkbun", "国际", [
-    "PORKBUN_API_KEY",
-    "PORKBUN_SECRET_API_KEY",
-  ]),
-  createSingleSchemeProvider("dns_dynv6", "dynv6", "国际", ["DYNV6_TOKEN"]),
-  createSingleSchemeProvider("dns_cloudns", "ClouDNS", "国际", [
-    "CLOUDNS_AUTH_ID",
-    "CLOUDNS_AUTH_PASSWORD",
-  ]),
-  createSingleSchemeProvider("dns_gandi_livedns", "Gandi LiveDNS", "国际", [
-    "GANDI_LIVEDNS_KEY",
-  ]),
-  createSingleSchemeProvider("dns_nsone", "NS1", "国际", ["NS1_Key"]),
-  createSingleSchemeProvider("dns_dnsimple", "DNSimple", "国际", [
-    "DNSimple_OAUTH_TOKEN",
-    "DNSimple_ACCOUNT_ID",
-  ]),
-  createSingleSchemeProvider("dns_he", "Hurricane Electric", "国际", [
-    "HE_Username",
-    "HE_Password",
-  ]),
-  createSingleSchemeProvider("dns_transip", "TransIP", "国际", [
-    "TRANSIP_Username",
-    "TRANSIP_Key_File",
-  ]),
-];
-
-const normalizeDnsType = (value: string | undefined | null) => {
-  if (!value) return null;
-  const v = value.trim();
-  if (!v) return null;
-  if (v === "aliyun") return "dns_ali";
-  if (v === "cloudflare") return "dns_cf";
-  if (v === "dnspod") return "dns_dp";
-  if (/^dns_[a-z0-9_]+$/i.test(v)) return v;
-  return null;
-};
 
 const normalizeDomains = (domains: string[]) => {
   const out: string[] = [];
@@ -281,18 +51,6 @@ const isValidDomain = (value: string) => {
   return /^(\*\.)?([a-z0-9-]+\.)+[a-z0-9-]+$/i.test(v);
 };
 
-const normalizeCredentials = (value: unknown) => {
-  const out: Record<string, string> = {};
-  if (!value || typeof value !== "object") return out;
-  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-    const kk = String(k ?? "").trim();
-    const vv = String(v ?? "").trim();
-    if (!kk || !vv) continue;
-    out[kk] = vv;
-  }
-  return out;
-};
-
 const validateAndNormalizeAcmeRequest = (input: {
   domains: string[];
   dnsType?: string;
@@ -302,16 +60,14 @@ const validateAndNormalizeAcmeRequest = (input: {
   const domains = normalizeDomains(input.domains);
   if (domains.length === 0) throw new Error("域名列表不能为空或格式无效");
 
-  const dnsType = normalizeDnsType(input.dnsType ?? input.provider);
+  const dnsType = normalizeAcmeDnsType(input.dnsType ?? input.provider);
   if (!dnsType) throw new Error("dnsType required");
   const provider = dnsProviders.find((p) => p.dnsType === dnsType) || null;
   if (!provider) throw new Error("不支持的 DNS 服务商");
 
-  const allowedCredentialKeys = new Set(getProviderAllCredentialKeys(provider));
-  const credentials = Object.fromEntries(
-    Object.entries(normalizeCredentials(input.credentials)).filter(([key]) =>
-      allowedCredentialKeys.has(key),
-    ),
+  const credentials = filterAcmeCredentialsForProvider(
+    provider,
+    input.credentials,
   );
   const matchedScheme = getSatisfiedCredentialScheme(provider, credentials);
   if (!matchedScheme) {
@@ -559,15 +315,6 @@ const analyzeAcmeLogs = (
   }
 
   return null;
-};
-
-const getProviderLabel = (dnsType: string | null | undefined) => {
-  const normalized = String(dnsType || "").trim();
-  if (!normalized) return "-";
-  return (
-    dnsProviders.find((provider) => provider.dnsType === normalized)?.label ||
-    normalized
-  );
 };
 
 const ensureInstalledForRequest = async (acme: {

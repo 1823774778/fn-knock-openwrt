@@ -7,6 +7,7 @@ import {
   type AcmeJobTrigger,
   type AcmeRuntimeLock,
 } from "./redis";
+import { normalizeAcmeDnsType } from "./acme-dns-providers";
 import { syncSSLDeploymentToGateway } from "./ssl-gateway";
 
 export const isAcmeJobTerminalStatus = (
@@ -21,7 +22,7 @@ const buildQueuedJob = (
   applicationId: application.id,
   domains: application.domains,
   method: "dns",
-  provider: application.dnsType,
+  provider: normalizeAcmeDnsType(application.dnsType) || application.dnsType,
   trigger,
   createdAt: new Date().toISOString(),
   status: "queued",
@@ -144,7 +145,9 @@ export const runReservedAcmeApplicationJob = async (options: {
   await configManager.updateAcmeJob(options.job.id, {
     applicationId: options.application.id,
     domains: options.application.domains,
-    provider: options.application.dnsType,
+    provider:
+      normalizeAcmeDnsType(options.application.dnsType) ||
+      options.application.dnsType,
     trigger: options.trigger,
   });
 

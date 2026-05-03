@@ -148,6 +148,14 @@ const dnsCredentialBridgeDefinitions: DnsCredentialBridgeDefinition[] = [
     acmeToDdns: [{ from: "DYNV6_TOKEN", to: "token" }],
     ddnsToAcme: [{ from: "token", to: "DYNV6_TOKEN" }],
   },
+  {
+    id: "duckdns",
+    label: "DuckDNS",
+    acmeDnsType: "dns_duckdns",
+    ddnsProvider: "duckdns",
+    acmeToDdns: [{ from: "DuckDNS_Token", to: "token" }],
+    ddnsToAcme: [{ from: "token", to: "DuckDNS_Token" }],
+  },
 ];
 
 const normalizeValue = (value: string | null | undefined) =>

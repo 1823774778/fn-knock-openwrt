@@ -8,6 +8,10 @@ import {
   DEFAULT_ACME_CERTIFICATE_AUTHORITY,
   type AcmeCertificateAuthority,
 } from "../../lib/acme-certificate-authority";
+import {
+  normalizeAcmeDnsType,
+  normalizeAcmeEnvVars,
+} from "../../lib/acme-dns-providers";
 import { collectStreamOutput, fileExists, waitForProcessExit } from "../../lib/runtime";
 
 export type AcmeStatus = "uninstalled" | "installing" | "installed" | "error";
@@ -393,20 +397,21 @@ export class AcmeService {
       args.push("--force");
     }
     if (method === "dns") {
-      if (!dnsType) throw new Error("缺少 DNS 验证类型");
-      args.push("--dns", dnsType);
+      const normalizedDnsType = normalizeAcmeDnsType(dnsType);
+      if (!normalizedDnsType) throw new Error("缺少 DNS 验证类型");
+      args.push("--dns", normalizedDnsType);
     }
 
     args.push("--debug");
-    
+
     // 循环添加所有的域名
     for (const d of domains) {
       args.push("-d", d);
     }
-    
+
     const issueProc = spawn(args[0]!, args.slice(1), {
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, ...(envVars || {}) }
+      env: { ...process.env, ...normalizeAcmeEnvVars(dnsType, envVars) },
     });
     const issueExitPromise = waitForProcessExit(issueProc);
 
@@ -423,7 +428,7 @@ export class AcmeService {
         `证书签发失败（退出码: ${exitCode}）${brief ? `: ${brief}` : ""}`,
       );
     }
-    
+
     return true;
   }
 
