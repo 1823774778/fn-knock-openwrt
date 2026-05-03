@@ -157,8 +157,8 @@ npm run fn-knock:deploy
 
 远端双架构打包时会自动做差异化处理：
 
-- `amd64` 包保留 `go-reauth-proxy-linux-amd64`，删除 `go-reauth-proxy-linux-arm64`
-- `arm64` 包保留 `go-reauth-proxy-linux-arm64`，删除 `go-reauth-proxy-linux-amd64`
+- `amd64` 包只保留 `go-reauth-proxy-linux-amd64`，删除 `arm64` / `arm32` 的网关二进制
+- `arm64` 包只保留 `go-reauth-proxy-linux-arm64`，删除 `amd64` / `arm32` 的网关二进制
 - `amd64` 包会把 `manifest` 中的 `platform` 改成 `x86`
 - `arm64` 包会把 `manifest` 中的 `platform` 改成 `arm`
 - `arm64` 包会把 `manifest` 中的 `install_dep_apps` 改成 `nodejs_v20`

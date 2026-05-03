@@ -62,6 +62,8 @@ fi
 echo "[fn-knock] Copying bundled acme resource"
 cp "${ACME_RESOURCE_SRC}" "${SERVER_ADMIN_RES_DIR}/acmesh.zip"
 
+rm -f "${SERVER_DIR}"/go-reauth-proxy-linux-*
+
 for arch in amd64 arm64; do
   src="${GO_BINARY_SRC_DIR}/go-reauth-proxy-linux-${arch}"
   dst="${SERVER_DIR}/go-reauth-proxy-linux-${arch}"

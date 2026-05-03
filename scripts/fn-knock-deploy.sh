@@ -91,16 +91,20 @@ output_path="$3"
 app_name="$4"
 arch="$5"
 
+gateway_bins=(
+  "go-reauth-proxy-linux-amd64"
+  "go-reauth-proxy-linux-arm64"
+  "go-reauth-proxy-linux-arm"
+)
+
 case "${arch}" in
   amd64)
     keep_bin="go-reauth-proxy-linux-amd64"
-    remove_bin="go-reauth-proxy-linux-arm64"
     install_dep_apps="nodejs_v20:redis"
     manifest_platform="x86"
     ;;
   arm64)
     keep_bin="go-reauth-proxy-linux-arm64"
-    remove_bin="go-reauth-proxy-linux-amd64"
     install_dep_apps="nodejs_v20"
     manifest_platform="arm"
     ;;
@@ -114,7 +118,12 @@ rm -rf "${build_dir}"
 mkdir -p "${build_dir}"
 rsync -a --delete "${source_dir}/" "${build_dir}/"
 
-rm -f "${build_dir}/app/server/${remove_bin}"
+for bin in "${gateway_bins[@]}"; do
+  if [ "${bin}" != "${keep_bin}" ]; then
+    rm -f "${build_dir}/app/server/${bin}"
+  fi
+done
+
 chmod +x "${build_dir}/app/server/${keep_bin}" 2>/dev/null || true
 
 manifest_file="${build_dir}/manifest"
@@ -147,6 +156,36 @@ echo "[remote-fn-knock] built ${arch} package -> ${output_path}"
 EOF
 }
 
+verify_fpk_gateway_bins() {
+  local fpk_path="$1"
+  local keep_bin="$2"
+  local app_listing
+  local normalized_listing
+  local bin
+
+  if ! app_listing="$(tar -xOzf "${fpk_path}" app.tgz | tar -tzf -)"; then
+    echo "ERROR: failed to inspect FPK app payload: ${fpk_path}" >&2
+    exit 1
+  fi
+
+  normalized_listing="$(printf '%s\n' "${app_listing}" | sed 's#^\./##')"
+  if ! printf '%s\n' "${normalized_listing}" | grep -Fxq "server/${keep_bin}"; then
+    echo "ERROR: FPK ${fpk_path} is missing expected gateway binary: ${keep_bin}" >&2
+    exit 1
+  fi
+
+  for bin in \
+    go-reauth-proxy-linux-amd64 \
+    go-reauth-proxy-linux-arm64 \
+    go-reauth-proxy-linux-arm
+  do
+    if [ "${bin}" != "${keep_bin}" ] && printf '%s\n' "${normalized_listing}" | grep -Fxq "server/${bin}"; then
+      echo "ERROR: FPK ${fpk_path} contains non-target gateway binary: ${bin}" >&2
+      exit 1
+    fi
+  done
+}
+
 run_remote_pack() {
   log "Step 2/4: Upload app sources to remote fnpack directory"
   ssh "${REMOTE_HOST}" "mkdir -p '${REMOTE_DIR}' '${REMOTE_SOURCE_DIR}'"
@@ -159,6 +198,8 @@ run_remote_pack() {
   mkdir -p "$(dirname "${LOCAL_FPK_AMD64_PATH}")"
   scp "${REMOTE_HOST}:${REMOTE_FPK_AMD64_PATH}" "${LOCAL_FPK_AMD64_PATH}"
   scp "${REMOTE_HOST}:${REMOTE_FPK_ARM64_PATH}" "${LOCAL_FPK_ARM64_PATH}"
+  verify_fpk_gateway_bins "${LOCAL_FPK_AMD64_PATH}" "go-reauth-proxy-linux-amd64"
+  verify_fpk_gateway_bins "${LOCAL_FPK_ARM64_PATH}" "go-reauth-proxy-linux-arm64"
 }
 
 run_remote_install() {
