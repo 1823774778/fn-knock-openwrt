@@ -825,7 +825,13 @@ export const WAFAPI = {
   },
   async updateConfig(
     payload: Partial<
-      Pick<WAFConfig, "enabled" | "paranoia_level" | "executing_paranoia_level">
+      Pick<
+        WAFConfig,
+        | "enabled"
+        | "system_rules_auto_update_enabled"
+        | "paranoia_level"
+        | "executing_paranoia_level"
+      >
     >,
   ): Promise<WAFDetails> {
     const res = await apiClient.post("/waf/config", payload);

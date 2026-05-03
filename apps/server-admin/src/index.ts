@@ -56,7 +56,7 @@ import {
 } from "./lib/reverse-proxy-trusted-ips";
 import { syncGatewayLoggingToGateway } from "./lib/gateway-logging";
 import {
-  startWAFManifestAutoRefresh,
+  startWAFSystemRulesAutoUpdate,
   syncWAFToGatewayOnBoot,
 } from "./lib/waf/service";
 import { wafCollector } from "./lib/waf/collector";
@@ -866,12 +866,12 @@ syncGatewayLoggingToGateway(config.gateway_logging).catch((error) => {
 });
 syncWAFToGatewayOnBoot()
   .then(() => {
-    startWAFManifestAutoRefresh();
+    startWAFSystemRulesAutoUpdate();
     wafCollector.start();
   })
   .catch((error) => {
     console.error("[waf] failed to sync WAF config on boot:", error);
-    startWAFManifestAutoRefresh();
+    startWAFSystemRulesAutoUpdate();
     wafCollector.start();
   });
 syncSSLDeploymentToGateway(config).catch((error) => {

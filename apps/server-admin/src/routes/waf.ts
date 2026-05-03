@@ -61,9 +61,10 @@ export const wafRoutes = new Elysia({
         return toFailure(set, error?.message || "WAF 设置保存或加载失败", 400);
       }
     },
-    withRouteDoc("保存 WAF 开关、防护强度并按需加载当前规则", {
+    withRouteDoc("保存 WAF 开关、防护强度、规则自动更新并按需加载当前规则", {
       body: t.Object({
         enabled: t.Optional(t.Boolean()),
+        system_rules_auto_update_enabled: t.Optional(t.Boolean()),
         paranoia_level: t.Optional(t.Number()),
         executing_paranoia_level: t.Optional(t.Number()),
       }),

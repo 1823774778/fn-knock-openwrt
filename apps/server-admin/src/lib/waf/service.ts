@@ -12,7 +12,11 @@ import {
 import type { Dirent } from "node:fs";
 import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { inflateRawSync } from "node:zlib";
-import { goBackend, type WAFStatus } from "../go-backend";
+import {
+  goBackend,
+  type WAFConfig as GatewayWAFConfig,
+  type WAFStatus,
+} from "../go-backend";
 import {
   configManager,
   DEFAULT_WAF_CONFIG,
@@ -23,6 +27,8 @@ import { wafCollector } from "./collector";
 
 const MANIFEST_URL = "https://fn-knock.cdn.wxlnk.com/waf/manifest.json";
 const MANIFEST_REFRESH_MS = 24 * 60 * 60 * 1000;
+const SYSTEM_RULES_AUTO_UPDATE_MS = 10 * 60 * 1000;
+const SYSTEM_RULES_AUTO_UPDATE_LOCK_TTL_SECONDS = 10 * 60;
 const MAX_RULE_FILE_BYTES = 1024 * 1024;
 const MAX_ZIP_BYTES = 20 * 1024 * 1024;
 const MAX_UNPACKED_ZIP_BYTES = 60 * 1024 * 1024;
@@ -104,6 +110,20 @@ export interface WAFDetails {
   };
 }
 
+export type WAFSystemRulesAutoUpdateSkipReason =
+  | "disabled"
+  | "locked"
+  | "running"
+  | "up_to_date";
+
+export interface WAFSystemRulesAutoUpdateResult {
+  checked_at: string;
+  updated: boolean;
+  manifest_zip_hash?: string;
+  synced_zip_hash?: string | null;
+  skipped_reason?: WAFSystemRulesAutoUpdateSkipReason;
+}
+
 export interface WAFRuleToggleInput {
   source: WAFRuleSource;
   filenames?: string[];
@@ -120,7 +140,13 @@ export interface WAFUploadInput {
 }
 
 export type WAFConfigPatch = Partial<
-  Pick<WAFConfig, "enabled" | "paranoia_level" | "executing_paranoia_level">
+  Pick<
+    WAFConfig,
+    | "enabled"
+    | "system_rules_auto_update_enabled"
+    | "paranoia_level"
+    | "executing_paranoia_level"
+  >
 >;
 
 interface WAFRulesState {
@@ -133,7 +159,8 @@ interface ArchiveEntry {
   content: Buffer;
 }
 
-let manifestRefreshTimer: ReturnType<typeof setInterval> | null = null;
+let systemRulesAutoUpdateTimer: ReturnType<typeof setInterval> | null = null;
+let systemRulesAutoUpdateRunning = false;
 
 const nowISO = () => new Date().toISOString();
 
@@ -390,6 +417,24 @@ const listRuleFiles = async (
   );
 };
 
+const hasSystemRuleFiles = async (): Promise<boolean> => {
+  try {
+    const entries = await readdir(SYSTEM_DIR, {
+      withFileTypes: true,
+      encoding: "utf8",
+    });
+    return entries.some(
+      (entry) =>
+        entry.isFile() &&
+        CONF_EXT_RE.test(entry.name) &&
+        entry.name !== SYSTEM_INITIALIZATION_RULE_FILENAME,
+    );
+  } catch (error: any) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
+};
+
 const normalizeFixedWAFConfig = (
   value?: Partial<WAFConfig> | null,
 ): WAFConfig =>
@@ -408,6 +453,26 @@ const normalizeFixedWAFConfig = (
     disabled_hosts: [],
     disabled_path_prefixes: [],
   });
+
+const toGatewayWAFConfig = (config: WAFConfig): GatewayWAFConfig => ({
+  enabled: config.enabled,
+  mode: config.mode,
+  active_bundle_id: config.active_bundle_id,
+  rules_dir: config.rules_dir,
+  paranoia_level: config.paranoia_level,
+  executing_paranoia_level: config.executing_paranoia_level,
+  inbound_anomaly_threshold: config.inbound_anomaly_threshold,
+  outbound_anomaly_threshold: config.outbound_anomaly_threshold,
+  request_body_access: config.request_body_access,
+  request_body_limit_bytes: config.request_body_limit_bytes,
+  request_body_in_memory_limit_bytes: config.request_body_in_memory_limit_bytes,
+  response_body_access: config.response_body_access,
+  disabled_hosts: config.disabled_hosts,
+  disabled_path_prefixes: config.disabled_path_prefixes,
+  log_retention_days: config.log_retention_days,
+  drain_interval_seconds: config.drain_interval_seconds,
+  updated_at: config.updated_at,
+});
 
 const hasAnyEnabledRules = (details: Pick<WAFDetails, "system" | "custom">) =>
   [...details.system.rules, ...details.custom.rules].some(
@@ -444,7 +509,7 @@ const applyWAFConfigToGateway = async (
   if (!hasAnyEnabledRules(details)) {
     throw new Error(emptyRulesMessage);
   }
-  const response = await goBackend.reloadWAFRules(next);
+  const response = await goBackend.reloadWAFRules(toGatewayWAFConfig(next));
   if (!response.success || !response.data) {
     throw new Error(response.message || "WAF 规则加载失败");
   }
@@ -465,7 +530,7 @@ export const syncWAFConfigToGateway = async (
   const next = normalizeFixedWAFConfig(
     config ?? (await configManager.getWAFConfig()),
   );
-  const response = await goBackend.setWAFConfig(next);
+  const response = await goBackend.setWAFConfig(toGatewayWAFConfig(next));
   if (!response.success || !response.data) {
     throw new Error(response.message || "同步 WAF 配置到网关失败");
   }
@@ -641,11 +706,9 @@ const downloadSystemZip = async (
   return buffer;
 };
 
-export const syncSystemWAFRules = async (): Promise<WAFDetails> => {
-  const cache = await refreshSystemManifestCache();
-  const manifest = cache.manifest;
-  if (!manifest) throw new Error("系统规则清单为空");
-
+const syncSystemWAFRulesFromManifest = async (
+  manifest: WAFRemoteManifest,
+): Promise<WAFDetails> => {
   const zipBuffer = await downloadSystemZip(manifest);
   const entries = parseZipEntries(zipBuffer);
   if (entries.length === 0) {
@@ -718,6 +781,66 @@ export const syncSystemWAFRules = async (): Promise<WAFDetails> => {
   await applyStoredWAFConfigToGateway();
   return getWAFDetails();
 };
+
+export const syncSystemWAFRules = async (): Promise<WAFDetails> => {
+  const cache = await refreshSystemManifestCache();
+  const manifest = cache.manifest;
+  if (!manifest) throw new Error("系统规则清单为空");
+  return syncSystemWAFRulesFromManifest(manifest);
+};
+
+export const checkAndSyncSystemWAFRulesIfNeeded =
+  async (): Promise<WAFSystemRulesAutoUpdateResult> => {
+    await ensureWAFDirectories();
+    const checkedAt = nowISO();
+    const config = normalizeFixedWAFConfig(await configManager.getWAFConfig());
+    if (!config.system_rules_auto_update_enabled) {
+      return {
+        checked_at: checkedAt,
+        updated: false,
+        skipped_reason: "disabled",
+      };
+    }
+
+    const locked = await configManager.setLockIfNotExists(
+      "waf-system-rules-auto-update",
+      SYSTEM_RULES_AUTO_UPDATE_LOCK_TTL_SECONDS,
+    );
+    if (!locked) {
+      return {
+        checked_at: checkedAt,
+        updated: false,
+        skipped_reason: "locked",
+      };
+    }
+
+    const cache = await refreshSystemManifestCache();
+    const manifest = cache.manifest;
+    if (!manifest) throw new Error("系统规则清单为空");
+
+    const [synced, hasLocalRules] = await Promise.all([
+      readSystemSyncState(),
+      hasSystemRuleFiles(),
+    ]);
+    const updateAvailable = manifest.zipHash !== synced?.zip_hash;
+    if (!updateAvailable && hasLocalRules) {
+      return {
+        checked_at: checkedAt,
+        updated: false,
+        manifest_zip_hash: manifest.zipHash,
+        synced_zip_hash: synced?.zip_hash ?? null,
+        skipped_reason: "up_to_date",
+      };
+    }
+
+    await syncSystemWAFRulesFromManifest(manifest);
+    return {
+      checked_at: checkedAt,
+      updated: true,
+      manifest_zip_hash: manifest.zipHash,
+      synced_zip_hash: synced?.zip_hash ?? null,
+    };
+  };
 
 export const setWAFRuleEnabled = async (
   input: WAFRuleToggleInput,
@@ -827,39 +950,71 @@ export const applyWAFConfig = async (
     ...patch,
   });
   const saved = await configManager.updateWAFConfig(next);
-  await applyWAFConfigToGateway(saved);
+  const shouldApplyToGateway =
+    Object.prototype.hasOwnProperty.call(patch, "enabled") ||
+    Object.prototype.hasOwnProperty.call(patch, "paranoia_level") ||
+    Object.prototype.hasOwnProperty.call(patch, "executing_paranoia_level");
+  if (shouldApplyToGateway) {
+    await applyWAFConfigToGateway(saved);
+  }
   return getWAFDetails();
 };
 
 export const syncWAFToGatewayOnBoot = async (): Promise<void> => {
   await ensureWAFDirectories();
-  try {
-    const cache = await readManifestCache();
-    if (!cache.manifest || isManifestStale(cache)) {
-      await refreshSystemManifestCache();
+  const config = normalizeFixedWAFConfig(await configManager.getWAFConfig());
+  if (config.system_rules_auto_update_enabled) {
+    try {
+      const cache = await readManifestCache();
+      if (!cache.manifest || isManifestStale(cache)) {
+        await refreshSystemManifestCache();
+      }
+    } catch (error) {
+      console.error("[waf] failed to refresh system manifest:", error);
     }
-  } catch (error) {
-    console.error("[waf] failed to refresh system manifest:", error);
   }
 
-  const config = normalizeFixedWAFConfig(await configManager.getWAFConfig());
   await syncWAFConfigToGateway(config);
   if (config.enabled) {
-    const response = await goBackend.reloadWAFRules(config);
+    const response = await goBackend.reloadWAFRules(toGatewayWAFConfig(config));
     if (!response.success) {
       throw new Error(response.message || "重新加载 WAF 规则失败");
     }
   }
 };
 
-export const startWAFManifestAutoRefresh = (): void => {
-  if (manifestRefreshTimer) return;
-  manifestRefreshTimer = setInterval(() => {
-    refreshSystemManifestCache().catch((error) => {
-      console.error("[waf] failed to auto refresh system manifest:", error);
-    });
-  }, MANIFEST_REFRESH_MS);
-  manifestRefreshTimer.unref?.();
+const runWAFSystemRulesAutoUpdate = async () => {
+  if (systemRulesAutoUpdateRunning) {
+    return {
+      checked_at: nowISO(),
+      updated: false,
+      skipped_reason: "running",
+    } satisfies WAFSystemRulesAutoUpdateResult;
+  }
+  systemRulesAutoUpdateRunning = true;
+  try {
+    return await checkAndSyncSystemWAFRulesIfNeeded();
+  } finally {
+    systemRulesAutoUpdateRunning = false;
+  }
+};
+
+export const startWAFSystemRulesAutoUpdate = (): void => {
+  if (systemRulesAutoUpdateTimer) return;
+  systemRulesAutoUpdateTimer = setInterval(() => {
+    runWAFSystemRulesAutoUpdate()
+      .then((result) => {
+        if (result.updated) {
+          console.log(
+            `[waf] system rules auto updated: ${result.synced_zip_hash || "none"} -> ${result.manifest_zip_hash || "unknown"}`,
+          );
+        }
+      })
+      .catch((error) => {
+        console.error("[waf] failed to auto update system rules:", error);
+      });
+  }, SYSTEM_RULES_AUTO_UPDATE_MS);
+  systemRulesAutoUpdateTimer.unref?.();
 };
 
 export const drainWAFEventsNow = async () => wafCollector.drainOnce();

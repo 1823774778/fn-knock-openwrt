@@ -88,6 +88,7 @@ const isRulePreviewOpen = ref(false);
 const activeRulePreview = ref<WAFRuleFileContent | null>(null);
 const form = reactive({
   enabled: false,
+  system_rules_auto_update_enabled: true,
   paranoia_level: 1,
   executing_paranoia_level: 1,
 });
@@ -103,7 +104,7 @@ const showLoadingSkeleton = useDelayedLoading(isLoading);
 const { isPending: isSaving, run: runSaveSettings } = useAsyncAction({
   onError: (error) => {
     toast.error("保存失败", {
-      description: extractErrorMessage(error, "WAF 规则加载失败"),
+      description: extractErrorMessage(error, "WAF 设置保存失败"),
     });
   },
 });
@@ -206,6 +207,8 @@ const ruleActionsClass = (rule: Pick<WAFRuleFile, "source" | "filename">) =>
 const applyFromDetails = (data: WAFDetails) => {
   details.value = data;
   form.enabled = data.config.enabled === true;
+  form.system_rules_auto_update_enabled =
+    data.config.system_rules_auto_update_enabled !== false;
   const level = clampLevel(data.config.paranoia_level, 1);
   form.paranoia_level = level;
   form.executing_paranoia_level = level;
@@ -231,6 +234,7 @@ const saveSettings = async (successMessage = "WAF 设置已更新") => {
     () =>
       WAFAPI.updateConfig({
         enabled: form.enabled,
+        system_rules_auto_update_enabled: form.system_rules_auto_update_enabled,
         paranoia_level: form.paranoia_level,
         executing_paranoia_level: form.executing_paranoia_level,
       }),
@@ -266,6 +270,7 @@ const handleEnabledChange = async (enabled: boolean) => {
       }
       return WAFAPI.updateConfig({
         enabled,
+        system_rules_auto_update_enabled: form.system_rules_auto_update_enabled,
         paranoia_level: form.paranoia_level,
         executing_paranoia_level: form.executing_paranoia_level,
       });
@@ -282,6 +287,32 @@ const handleEnabledChange = async (enabled: boolean) => {
       },
       onError: () => {
         form.enabled = previousEnabled;
+        if (details.value) applyFromDetails(details.value);
+      },
+    },
+  );
+};
+
+const handleAutoUpdateChange = async (enabled: boolean) => {
+  if (form.system_rules_auto_update_enabled === enabled || isBusy.value) return;
+  const previousEnabled = form.system_rules_auto_update_enabled;
+  form.system_rules_auto_update_enabled = enabled;
+  await runSaveSettings(
+    () =>
+      WAFAPI.updateConfig({
+        system_rules_auto_update_enabled: enabled,
+      }),
+    {
+      onSuccess: (data) => {
+        applyFromDetails(data);
+        toast.success(enabled ? "自动更新已开启" : "自动更新已关闭", {
+          description: enabled
+            ? "后端会每 10 分钟检查一次系统规则，有更新才下载同步。"
+            : "后端不会再自动检查 WAF 系统规则更新。",
+        });
+      },
+      onError: () => {
+        form.system_rules_auto_update_enabled = previousEnabled;
         if (details.value) applyFromDetails(details.value);
       },
     },
@@ -466,469 +497,494 @@ onMounted(fetchDetails);
 
 <template>
   <TooltipProvider>
-  <Card>
-    <CardHeader>
-      <div class="space-y-1.5">
-        <CardTitle class="text-md">Web 防护</CardTitle>
-        <CardDescription>
-          使用系统规则和上传规则保护网关请求；开关、强度和规则操作会即时同步到
-          Go 网关。
-        </CardDescription>
-      </div>
-    </CardHeader>
-
-    <CardContent v-if="isLoading && showLoadingSkeleton" class="border-t p-0">
-      <div class="space-y-4 p-6">
-        <Skeleton class="h-6 w-1/3" />
-        <Skeleton class="h-4 w-2/3" />
-        <Skeleton class="h-24 w-full" />
-      </div>
-    </CardContent>
-
-    <CardContent v-else class="border-t p-0 divide-y">
-      <section
-        class="flex flex-col gap-4 bg-muted/10 p-6 sm:flex-row sm:items-center sm:justify-between"
-      >
-        <div class="space-y-1 pr-6">
-          <Label
-            class="cursor-pointer text-base font-medium"
-            @click="handleEnabledChange(!form.enabled)"
-          >
-            启用WAF
-          </Label>
-          <div class="text-sm text-muted-foreground">
-            默认关闭。开启时会先更新系统规则，再按当前强度加载到 Go
-            网关；关闭后网关会立即跳过 WAF 检查。
-          </div>
+    <Card>
+      <CardHeader>
+        <div class="space-y-1.5">
+          <CardTitle class="text-md">Web 防护</CardTitle>
+          <CardDescription>
+            使用系统规则和上传规则保护网关请求；开关、强度和规则操作会即时同步到
+            Go 网关。
+          </CardDescription>
         </div>
-        <Switch
-          :model-value="form.enabled"
-          :disabled="isBusy"
-          @update:model-value="(value) => handleEnabledChange(value === true)"
-        />
-      </section>
+      </CardHeader>
 
-      <template v-if="form.enabled">
+      <CardContent v-if="isLoading && showLoadingSkeleton" class="border-t p-0">
+        <div class="space-y-4 p-6">
+          <Skeleton class="h-6 w-1/3" />
+          <Skeleton class="h-4 w-2/3" />
+          <Skeleton class="h-24 w-full" />
+        </div>
+      </CardContent>
+
+      <CardContent v-else class="border-t p-0 divide-y">
         <section
-          class="grid gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_minmax(360px,520px)]"
+          class="flex flex-col gap-4 bg-muted/10 p-6 sm:flex-row sm:items-center sm:justify-between"
         >
           <div class="space-y-1 pr-6">
-            <Label class="text-base">防护强度</Label>
+            <Label
+              class="cursor-pointer text-base font-medium"
+              @click="handleEnabledChange(!form.enabled)"
+            >
+              启用WAF
+            </Label>
             <div class="text-sm text-muted-foreground">
-              日常使用建议保持 1 级。等级越高越严格，也越可能误拦截。
+              默认关闭。开启时会先更新系统规则，再按当前强度加载到 Go
+              网关；关闭后网关会立即跳过 WAF 检查。
             </div>
           </div>
-          <div class="grid justify-items-end gap-5">
-            <Select
-              :model-value="String(form.paranoia_level)"
-              :disabled="isBusy"
-              @update:model-value="handleParanoiaLevelChange"
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem
-                  v-for="level in LEVEL_OPTIONS"
-                  :key="level.value"
-                  :value="level.value"
-                >
-                  {{ level.label }} · {{ level.description }}
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          <Switch
+            :model-value="form.enabled"
+            :disabled="isBusy"
+            @update:model-value="(value) => handleEnabledChange(value === true)"
+          />
         </section>
 
-        <section class="space-y-5 p-6">
-          <div
-            class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"
-          >
-            <div class="space-y-1">
-              <div class="flex items-center gap-2">
-                <Label class="text-base">系统规则</Label>
-                <Badge
-                  v-if="details?.system.update_available"
-                  variant="secondary"
-                >
-                  有更新
-                </Badge>
-              </div>
-              <div class="text-sm text-muted-foreground">
-                清单 {{ manifestLabel }} · 本地 {{ syncedLabel }}
-              </div>
-              <div
-                v-if="details?.system.manifest_last_error"
-                class="text-sm text-destructive"
-              >
-                {{ details.system.manifest_last_error }}
-              </div>
-            </div>
-            <div class="flex flex-wrap gap-2">
-              <Button size="sm" :disabled="isBusy" @click="updateSystemRules">
-                <RefreshCw
-                  class="mr-2 h-4 w-4"
-                  :class="isUpdatingSystemRules ? 'animate-spin' : ''"
-                />
-                更新规则
-              </Button>
-            </div>
-          </div>
-
-          <div
-            v-if="systemRules.length === 0"
-            class="text-sm text-muted-foreground"
-          >
-            尚未同步系统规则
-          </div>
-          <div v-else class="overflow-hidden rounded-md border">
-            <div
-              class="flex flex-col gap-3 border-b bg-muted/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+        <section
+          class="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div class="space-y-1 pr-6">
+            <Label
+              class="cursor-pointer text-base font-medium"
+              @click="
+                handleAutoUpdateChange(!form.system_rules_auto_update_enabled)
+              "
             >
-              <label class="flex items-center gap-3 text-sm">
-                <Checkbox
-                  :model-value="
-                    selectedSystemRules.length === systemRules.length &&
-                    systemRules.length > 0
-                  "
-                  :disabled="isBusy"
-                  @update:model-value="
-                    (value) => setAllSelected('system', value === true)
-                  "
-                />
-                <span>已选择 {{ selectedCount("system") }} 个</span>
-              </label>
-              <div class="flex flex-wrap gap-2">
-                <Button
-                  v-if="selectedCount('system') > 0"
-                  variant="outline"
-                  size="sm"
-                  :disabled="isBusy"
-                  @click="updateSelectedRules('system', true)"
-                >
-                  开启所选
-                </Button>
-                <Button
-                  v-if="selectedCount('system') > 0"
-                  variant="outline"
-                  size="sm"
-                  :disabled="isBusy"
-                  @click="updateSelectedRules('system', false)"
-                >
-                  关闭所选
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  :disabled="isBusy"
-                  @click="toggleAllRules('system')"
-                >
-                  {{ toggleAllRulesLabel("system") }}
-                </Button>
-              </div>
-            </div>
-
-            <div class="divide-y">
-              <div
-                v-for="rule in systemRules"
-                :key="rule.filename"
-                class="group flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center"
-                @pointerdown.passive="activateRuleActions(rule)"
-                @touchstart.passive="activateRuleActions(rule)"
-              >
-                <Checkbox
-                  :model-value="selectedSystemRules.includes(rule.filename)"
-                  :disabled="isBusy"
-                  @update:model-value="
-                    (value) =>
-                      setRuleSelected('system', rule.filename, value === true)
-                  "
-                />
-                <div class="min-w-0 flex-1 space-y-1">
-                  <div class="flex min-w-0 items-center gap-2">
-                    <div class="min-w-0 truncate font-mono text-sm">
-                      {{ formatSystemRuleName(rule.filename) }}
-                    </div>
-                    <div
-                      class="flex h-8 shrink-0 items-center gap-1 transition-opacity duration-150"
-                      :class="ruleActionsClass(rule)"
-                    >
-                      <Tooltip>
-                        <TooltipTrigger as-child>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            class="h-8 w-8 text-muted-foreground hover:text-foreground"
-                            :disabled="loadingRuleKey === ruleKey(rule)"
-                            title="查看规则"
-                            aria-label="查看规则"
-                            @click.stop="openRulePreview(rule)"
-                          >
-                            <Loader2
-                              v-if="loadingRuleKey === ruleKey(rule)"
-                              class="h-4 w-4 animate-spin"
-                            />
-                            <Eye v-else class="h-4 w-4" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>查看规则</TooltipContent>
-                      </Tooltip>
-                      <Tooltip>
-                        <TooltipTrigger as-child>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            class="h-8 w-8 text-muted-foreground hover:text-foreground"
-                            :disabled="downloadingRuleKey === ruleKey(rule)"
-                            title="下载规则"
-                            aria-label="下载规则"
-                            @click.stop="downloadRuleFile(rule)"
-                          >
-                            <Loader2
-                              v-if="downloadingRuleKey === ruleKey(rule)"
-                              class="h-4 w-4 animate-spin"
-                            />
-                            <Download v-else class="h-4 w-4" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>下载规则</TooltipContent>
-                      </Tooltip>
-                    </div>
-                  </div>
-                  <div class="text-sm text-muted-foreground">
-                    {{ rule.description }}
-                  </div>
-                </div>
-                <div
-                  class="flex items-center justify-between gap-4 sm:justify-end"
-                >
-                  <span class="text-xs text-muted-foreground">
-                    {{ formatSize(rule.size_bytes) }}
-                  </span>
-                  <Switch
-                    :model-value="rule.enabled"
-                    :disabled="isBusy"
-                    @update:model-value="
-                      (value) => toggleRule(rule, value === true)
-                    "
-                  />
-                </div>
-              </div>
+              规则自动更新
+            </Label>
+            <div class="text-sm text-muted-foreground">
+              每 10 分钟检查一次系统规则；有更新才下载同步，失败后继续等待下一轮检查。
             </div>
           </div>
+          <Switch
+            :model-value="form.system_rules_auto_update_enabled"
+            :disabled="isBusy"
+            @update:model-value="
+              (value) => handleAutoUpdateChange(value === true)
+            "
+          />
         </section>
 
-        <section class="space-y-5 p-6">
-          <div
-            class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"
+        <template v-if="form.enabled">
+          <section
+            class="grid gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_minmax(360px,520px)]"
           >
-            <div class="space-y-1">
-              <Label class="text-base">自定义规则</Label>
+            <div class="space-y-1 pr-6">
+              <Label class="text-base">防护强度</Label>
               <div class="text-sm text-muted-foreground">
-                上传 `.conf` 文件后可单独开启或关闭。
+                日常使用建议保持 1 级。等级越高越严格，也越可能误拦截。
               </div>
             </div>
-            <div>
-              <Button
-                variant="outline"
-                size="sm"
+            <div class="grid justify-items-end gap-5">
+              <Select
+                :model-value="String(form.paranoia_level)"
                 :disabled="isBusy"
-                @click="triggerUpload"
+                @update:model-value="handleParanoiaLevelChange"
               >
-                <Upload class="mr-2 h-4 w-4" />
-                上传规则
-              </Button>
-              <input
-                ref="uploadInputRef"
-                type="file"
-                class="hidden"
-                accept=".conf"
-                multiple
-                @change="handleUploadChange"
-              />
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem
+                    v-for="level in LEVEL_OPTIONS"
+                    :key="level.value"
+                    :value="level.value"
+                  >
+                    {{ level.label }} · {{ level.description }}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-          </div>
+          </section>
 
-          <div
-            v-if="customRules.length === 0"
-            class="text-sm text-muted-foreground"
-          >
-            暂无自定义规则
-          </div>
-          <div v-else class="overflow-hidden rounded-md border">
+          <section class="space-y-5 p-6">
             <div
-              class="flex flex-col gap-3 border-b bg-muted/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+              class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"
             >
-              <label class="flex items-center gap-3 text-sm">
-                <Checkbox
-                  :model-value="
-                    selectedCustomRules.length === customRules.length &&
-                    customRules.length > 0
-                  "
-                  :disabled="isBusy"
-                  @update:model-value="
-                    (value) => setAllSelected('custom', value === true)
-                  "
-                />
-                <span>已选择 {{ selectedCount("custom") }} 个</span>
-              </label>
-              <div class="flex flex-wrap gap-2">
-                <Button
-                  v-if="selectedCount('custom') > 0"
-                  variant="outline"
-                  size="sm"
-                  :disabled="isBusy"
-                  @click="updateSelectedRules('custom', true)"
-                >
-                  开启所选
-                </Button>
-                <Button
-                  v-if="selectedCount('custom') > 0"
-                  variant="outline"
-                  size="sm"
-                  :disabled="isBusy"
-                  @click="updateSelectedRules('custom', false)"
-                >
-                  关闭所选
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  :disabled="isBusy"
-                  @click="toggleAllRules('custom')"
-                >
-                  {{ toggleAllRulesLabel("custom") }}
-                </Button>
-              </div>
-            </div>
-
-            <div class="divide-y">
-              <div
-                v-for="rule in customRules"
-                :key="rule.filename"
-                class="group flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center"
-                @pointerdown.passive="activateRuleActions(rule)"
-                @touchstart.passive="activateRuleActions(rule)"
-              >
-                <Checkbox
-                  :model-value="selectedCustomRules.includes(rule.filename)"
-                  :disabled="isBusy"
-                  @update:model-value="
-                    (value) =>
-                      setRuleSelected('custom', rule.filename, value === true)
-                  "
-                />
-                <div class="min-w-0 flex-1 space-y-1">
-                  <div class="flex min-w-0 items-center gap-2">
-                    <div class="min-w-0 truncate font-mono text-sm">
-                      {{ rule.filename }}
-                    </div>
-                    <div
-                      class="flex h-8 shrink-0 items-center gap-1 transition-opacity duration-150"
-                      :class="ruleActionsClass(rule)"
-                    >
-                      <Tooltip>
-                        <TooltipTrigger as-child>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            class="h-8 w-8 text-muted-foreground hover:text-foreground"
-                            :disabled="loadingRuleKey === ruleKey(rule)"
-                            title="查看规则"
-                            aria-label="查看规则"
-                            @click.stop="openRulePreview(rule)"
-                          >
-                            <Loader2
-                              v-if="loadingRuleKey === ruleKey(rule)"
-                              class="h-4 w-4 animate-spin"
-                            />
-                            <Eye v-else class="h-4 w-4" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>查看规则</TooltipContent>
-                      </Tooltip>
-                      <Tooltip>
-                        <TooltipTrigger as-child>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            class="h-8 w-8 text-muted-foreground hover:text-foreground"
-                            :disabled="downloadingRuleKey === ruleKey(rule)"
-                            title="下载规则"
-                            aria-label="下载规则"
-                            @click.stop="downloadRuleFile(rule)"
-                          >
-                            <Loader2
-                              v-if="downloadingRuleKey === ruleKey(rule)"
-                              class="h-4 w-4 animate-spin"
-                            />
-                            <Download v-else class="h-4 w-4" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>下载规则</TooltipContent>
-                      </Tooltip>
-                    </div>
-                  </div>
-                  <div class="text-sm text-muted-foreground">
-                    {{ formatSize(rule.size_bytes) }} ·
-                    {{ formatDate(rule.updated_at) }}
-                  </div>
+              <div class="space-y-1">
+                <div class="flex items-center gap-2">
+                  <Label class="text-base">系统规则</Label>
+                  <Badge
+                    v-if="details?.system.update_available"
+                    variant="secondary"
+                  >
+                    有更新
+                  </Badge>
+                </div>
+                <div class="text-sm text-muted-foreground">
+                  清单 {{ manifestLabel }} · 本地 {{ syncedLabel }}
                 </div>
                 <div
-                  class="flex items-center justify-between gap-3 sm:justify-end"
+                  v-if="details?.system.manifest_last_error"
+                  class="text-sm text-destructive"
                 >
-                  <Switch
-                    :model-value="rule.enabled"
+                  {{ details.system.manifest_last_error }}
+                </div>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <Button size="sm" :disabled="isBusy" @click="updateSystemRules">
+                  <RefreshCw
+                    class="mr-2 h-4 w-4"
+                    :class="isUpdatingSystemRules ? 'animate-spin' : ''"
+                  />
+                  更新规则
+                </Button>
+              </div>
+            </div>
+
+            <div
+              v-if="systemRules.length === 0"
+              class="text-sm text-muted-foreground"
+            >
+              尚未同步系统规则
+            </div>
+            <div v-else class="overflow-hidden rounded-md border">
+              <div
+                class="flex flex-col gap-3 border-b bg-muted/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <label class="flex items-center gap-3 text-sm">
+                  <Checkbox
+                    :model-value="
+                      selectedSystemRules.length === systemRules.length &&
+                      systemRules.length > 0
+                    "
                     :disabled="isBusy"
                     @update:model-value="
-                      (value) => toggleRule(rule, value === true)
+                      (value) => setAllSelected('system', value === true)
                     "
                   />
-                  <ConfirmDangerPopover
-                    :title="`删除 ${rule.filename}？`"
-                    description="删除后不会再加载这个自定义规则。"
-                    :loading="isChangingRules"
+                  <span>已选择 {{ selectedCount("system") }} 个</span>
+                </label>
+                <div class="flex flex-wrap gap-2">
+                  <Button
+                    v-if="selectedCount('system') > 0"
+                    variant="outline"
+                    size="sm"
                     :disabled="isBusy"
-                    :on-confirm="() => deleteCustomRule(rule.filename)"
+                    @click="updateSelectedRules('system', true)"
                   >
-                    <template #trigger>
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        class="h-8 w-8 border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                        :disabled="isBusy"
+                    开启所选
+                  </Button>
+                  <Button
+                    v-if="selectedCount('system') > 0"
+                    variant="outline"
+                    size="sm"
+                    :disabled="isBusy"
+                    @click="updateSelectedRules('system', false)"
+                  >
+                    关闭所选
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    :disabled="isBusy"
+                    @click="toggleAllRules('system')"
+                  >
+                    {{ toggleAllRulesLabel("system") }}
+                  </Button>
+                </div>
+              </div>
+
+              <div class="divide-y">
+                <div
+                  v-for="rule in systemRules"
+                  :key="rule.filename"
+                  class="group flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center"
+                  @pointerdown.passive="activateRuleActions(rule)"
+                  @touchstart.passive="activateRuleActions(rule)"
+                >
+                  <Checkbox
+                    :model-value="selectedSystemRules.includes(rule.filename)"
+                    :disabled="isBusy"
+                    @update:model-value="
+                      (value) =>
+                        setRuleSelected('system', rule.filename, value === true)
+                    "
+                  />
+                  <div class="min-w-0 flex-1 space-y-1">
+                    <div class="flex min-w-0 items-center gap-2">
+                      <div class="min-w-0 truncate font-mono text-sm">
+                        {{ formatSystemRuleName(rule.filename) }}
+                      </div>
+                      <div
+                        class="flex h-8 shrink-0 items-center gap-1 transition-opacity duration-150"
+                        :class="ruleActionsClass(rule)"
                       >
-                        <Trash2 class="h-4 w-4" />
-                      </Button>
-                    </template>
-                  </ConfirmDangerPopover>
+                        <Tooltip>
+                          <TooltipTrigger as-child>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              class="h-8 w-8 text-muted-foreground hover:text-foreground"
+                              :disabled="loadingRuleKey === ruleKey(rule)"
+                              title="查看规则"
+                              aria-label="查看规则"
+                              @click.stop="openRulePreview(rule)"
+                            >
+                              <Loader2
+                                v-if="loadingRuleKey === ruleKey(rule)"
+                                class="h-4 w-4 animate-spin"
+                              />
+                              <Eye v-else class="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>查看规则</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger as-child>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              class="h-8 w-8 text-muted-foreground hover:text-foreground"
+                              :disabled="downloadingRuleKey === ruleKey(rule)"
+                              title="下载规则"
+                              aria-label="下载规则"
+                              @click.stop="downloadRuleFile(rule)"
+                            >
+                              <Loader2
+                                v-if="downloadingRuleKey === ruleKey(rule)"
+                                class="h-4 w-4 animate-spin"
+                              />
+                              <Download v-else class="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>下载规则</TooltipContent>
+                        </Tooltip>
+                      </div>
+                    </div>
+                    <div class="text-sm text-muted-foreground">
+                      {{ rule.description }}
+                    </div>
+                  </div>
+                  <div
+                    class="flex items-center justify-between gap-4 sm:justify-end"
+                  >
+                    <span class="text-xs text-muted-foreground">
+                      {{ formatSize(rule.size_bytes) }}
+                    </span>
+                    <Switch
+                      :model-value="rule.enabled"
+                      :disabled="isBusy"
+                      @update:model-value="
+                        (value) => toggleRule(rule, value === true)
+                      "
+                    />
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        </section>
-      </template>
-    </CardContent>
-  </Card>
-  <DetailDialog
-    v-model:open="isRulePreviewOpen"
-    :title="activeRulePreview?.filename || '规则内容'"
-    :description="
-      activeRulePreview
-        ? `${sourceLabel(activeRulePreview.source)} · ${formatSize(activeRulePreview.size_bytes)} · ${formatDate(activeRulePreview.updated_at)}`
-        : ''
-    "
-    max-width-class="sm:max-w-[840px]"
-    close-variant="default"
-  >
-    <div
-      v-if="activeRulePreview"
-      class="overflow-hidden rounded-md border bg-muted/20"
+          </section>
+
+          <section class="space-y-5 p-6">
+            <div
+              class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"
+            >
+              <div class="space-y-1">
+                <Label class="text-base">自定义规则</Label>
+                <div class="text-sm text-muted-foreground">
+                  上传 `.conf` 文件后可单独开启或关闭。
+                </div>
+              </div>
+              <div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  :disabled="isBusy"
+                  @click="triggerUpload"
+                >
+                  <Upload class="mr-2 h-4 w-4" />
+                  上传规则
+                </Button>
+                <input
+                  ref="uploadInputRef"
+                  type="file"
+                  class="hidden"
+                  accept=".conf"
+                  multiple
+                  @change="handleUploadChange"
+                />
+              </div>
+            </div>
+
+            <div
+              v-if="customRules.length === 0"
+              class="text-sm text-muted-foreground"
+            >
+              暂无自定义规则
+            </div>
+            <div v-else class="overflow-hidden rounded-md border">
+              <div
+                class="flex flex-col gap-3 border-b bg-muted/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <label class="flex items-center gap-3 text-sm">
+                  <Checkbox
+                    :model-value="
+                      selectedCustomRules.length === customRules.length &&
+                      customRules.length > 0
+                    "
+                    :disabled="isBusy"
+                    @update:model-value="
+                      (value) => setAllSelected('custom', value === true)
+                    "
+                  />
+                  <span>已选择 {{ selectedCount("custom") }} 个</span>
+                </label>
+                <div class="flex flex-wrap gap-2">
+                  <Button
+                    v-if="selectedCount('custom') > 0"
+                    variant="outline"
+                    size="sm"
+                    :disabled="isBusy"
+                    @click="updateSelectedRules('custom', true)"
+                  >
+                    开启所选
+                  </Button>
+                  <Button
+                    v-if="selectedCount('custom') > 0"
+                    variant="outline"
+                    size="sm"
+                    :disabled="isBusy"
+                    @click="updateSelectedRules('custom', false)"
+                  >
+                    关闭所选
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    :disabled="isBusy"
+                    @click="toggleAllRules('custom')"
+                  >
+                    {{ toggleAllRulesLabel("custom") }}
+                  </Button>
+                </div>
+              </div>
+
+              <div class="divide-y">
+                <div
+                  v-for="rule in customRules"
+                  :key="rule.filename"
+                  class="group flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center"
+                  @pointerdown.passive="activateRuleActions(rule)"
+                  @touchstart.passive="activateRuleActions(rule)"
+                >
+                  <Checkbox
+                    :model-value="selectedCustomRules.includes(rule.filename)"
+                    :disabled="isBusy"
+                    @update:model-value="
+                      (value) =>
+                        setRuleSelected('custom', rule.filename, value === true)
+                    "
+                  />
+                  <div class="min-w-0 flex-1 space-y-1">
+                    <div class="flex min-w-0 items-center gap-2">
+                      <div class="min-w-0 truncate font-mono text-sm">
+                        {{ rule.filename }}
+                      </div>
+                      <div
+                        class="flex h-8 shrink-0 items-center gap-1 transition-opacity duration-150"
+                        :class="ruleActionsClass(rule)"
+                      >
+                        <Tooltip>
+                          <TooltipTrigger as-child>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              class="h-8 w-8 text-muted-foreground hover:text-foreground"
+                              :disabled="loadingRuleKey === ruleKey(rule)"
+                              title="查看规则"
+                              aria-label="查看规则"
+                              @click.stop="openRulePreview(rule)"
+                            >
+                              <Loader2
+                                v-if="loadingRuleKey === ruleKey(rule)"
+                                class="h-4 w-4 animate-spin"
+                              />
+                              <Eye v-else class="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>查看规则</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger as-child>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              class="h-8 w-8 text-muted-foreground hover:text-foreground"
+                              :disabled="downloadingRuleKey === ruleKey(rule)"
+                              title="下载规则"
+                              aria-label="下载规则"
+                              @click.stop="downloadRuleFile(rule)"
+                            >
+                              <Loader2
+                                v-if="downloadingRuleKey === ruleKey(rule)"
+                                class="h-4 w-4 animate-spin"
+                              />
+                              <Download v-else class="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>下载规则</TooltipContent>
+                        </Tooltip>
+                      </div>
+                    </div>
+                    <div class="text-sm text-muted-foreground">
+                      {{ formatSize(rule.size_bytes) }} ·
+                      {{ formatDate(rule.updated_at) }}
+                    </div>
+                  </div>
+                  <div
+                    class="flex items-center justify-between gap-3 sm:justify-end"
+                  >
+                    <Switch
+                      :model-value="rule.enabled"
+                      :disabled="isBusy"
+                      @update:model-value="
+                        (value) => toggleRule(rule, value === true)
+                      "
+                    />
+                    <ConfirmDangerPopover
+                      :title="`删除 ${rule.filename}？`"
+                      description="删除后不会再加载这个自定义规则。"
+                      :loading="isChangingRules"
+                      :disabled="isBusy"
+                      :on-confirm="() => deleteCustomRule(rule.filename)"
+                    >
+                      <template #trigger>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          class="h-8 w-8 border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                          :disabled="isBusy"
+                        >
+                          <Trash2 class="h-4 w-4" />
+                        </Button>
+                      </template>
+                    </ConfirmDangerPopover>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </template>
+      </CardContent>
+    </Card>
+    <DetailDialog
+      v-model:open="isRulePreviewOpen"
+      :title="activeRulePreview?.filename || '规则内容'"
+      :description="
+        activeRulePreview
+          ? `${sourceLabel(activeRulePreview.source)} · ${formatSize(activeRulePreview.size_bytes)} · ${formatDate(activeRulePreview.updated_at)}`
+          : ''
+      "
+      max-width-class="sm:max-w-[840px]"
+      close-variant="default"
     >
-      <pre
-        class="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-xs leading-5 text-foreground"
+      <div
+        v-if="activeRulePreview"
+        class="overflow-hidden rounded-md border bg-muted/20"
+      >
+        <pre
+          class="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-xs leading-5 text-foreground"
       >{{ activeRulePreview.content }}</pre>
-    </div>
-  </DetailDialog>
+      </div>
+    </DetailDialog>
   </TooltipProvider>
 </template>

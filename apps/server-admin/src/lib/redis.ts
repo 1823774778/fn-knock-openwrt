@@ -196,6 +196,7 @@ export type WAFMode = "off" | "detection" | "blocking";
 
 export interface WAFConfig {
   enabled: boolean;
+  system_rules_auto_update_enabled: boolean;
   mode: WAFMode;
   active_bundle_id: string;
   rules_dir: string;
@@ -531,6 +532,7 @@ const DEFAULT_GATEWAY_CONFIG_DIR =
 
 export const DEFAULT_WAF_CONFIG: WAFConfig = {
   enabled: false,
+  system_rules_auto_update_enabled: true,
   mode: "blocking",
   active_bundle_id: "local",
   rules_dir: join(DEFAULT_GATEWAY_CONFIG_DIR, "waf"),
@@ -963,6 +965,10 @@ export const normalizeWAFConfig = (
   );
   return {
     enabled: raw.enabled === true,
+    system_rules_auto_update_enabled:
+      typeof raw.system_rules_auto_update_enabled === "boolean"
+        ? raw.system_rules_auto_update_enabled
+        : DEFAULT_WAF_CONFIG.system_rules_auto_update_enabled,
     mode: normalizeWAFMode(raw.mode),
     active_bundle_id: "local",
     rules_dir: DEFAULT_WAF_CONFIG.rules_dir,
