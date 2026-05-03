@@ -97,6 +97,10 @@ export const ensureProxyTargetPort = (
     return `${host}:${port}${rest}${suffix}`;
   }
 
+  if (authority.includes(":")) {
+    return trimmed;
+  }
+
   return `${authority}:${port}${suffix}`;
 };
 
