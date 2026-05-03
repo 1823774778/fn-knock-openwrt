@@ -181,33 +181,16 @@ watch(
 
     <div class="overflow-hidden rounded-md border">
       <TooltipProvider>
-        <Table class="table-fixed" container-class="overflow-hidden">
-          <colgroup>
-            <col class="w-[30%] sm:w-[15%]" />
-            <col class="w-[34%] sm:w-[18%]" />
-            <col class="hidden sm:table-column sm:w-[18%]" />
-            <col class="hidden lg:table-column lg:w-[18%]" />
-            <col class="hidden 2xl:table-column 2xl:w-[10%]" />
-            <col class="hidden 2xl:table-column 2xl:w-[10%]" />
-            <col class="w-[132px] 2xl:w-[260px]" />
-          </colgroup>
+        <Table>
           <TableHeader>
             <TableRow>
-              <TableHead class="whitespace-normal">会话 ID</TableHead>
-              <TableHead class="whitespace-normal">凭证</TableHead>
-              <TableHead class="hidden whitespace-normal sm:table-cell"
-                >备注</TableHead
-              >
-              <TableHead class="hidden whitespace-normal lg:table-cell"
-                >当前 IP</TableHead
-              >
-              <TableHead class="hidden whitespace-normal 2xl:table-cell"
-                >登录时间</TableHead
-              >
-              <TableHead class="hidden whitespace-normal 2xl:table-cell"
-                >过期时间</TableHead
-              >
-              <TableHead class="text-right">操作</TableHead>
+              <TableHead class="w-[150px]">会话 ID</TableHead>
+              <TableHead>凭证</TableHead>
+              <TableHead>备注</TableHead>
+              <TableHead>当前 IP</TableHead>
+              <TableHead>登录时间</TableHead>
+              <TableHead>过期时间</TableHead>
+              <TableHead class="w-[210px] text-right">操作</TableHead>
             </TableRow>
           </TableHeader>
 
@@ -226,11 +209,9 @@ watch(
                 </Tooltip>
               </TableCell>
 
-              <TableCell class="whitespace-normal">
-                <div class="flex min-w-0 items-center gap-2">
-                  <div class="min-w-0 truncate text-sm">
-                    {{ session.credentialName }}
-                  </div>
+              <TableCell>
+                <div class="flex items-center gap-2">
+                  <div class="text-sm">{{ session.credentialName }}</div>
                   <FnosAttachmentIndicator
                     v-if="session.fnosAttachments?.length"
                     :attachments="session.fnosAttachments"
@@ -248,19 +229,17 @@ watch(
                 </div>
               </TableCell>
 
-              <TableCell class="hidden min-w-0 whitespace-normal sm:table-cell">
+              <TableCell class="min-w-[180px]">
                 <InlineCommentEditor
                   :text="session.comment"
                   :save="(value) => updateComment(session.id, value)"
                 />
               </TableCell>
 
-              <TableCell class="hidden whitespace-normal lg:table-cell">
+              <TableCell>
                 <Tooltip>
                   <TooltipTrigger as-child>
-                    <div
-                      class="cursor-help break-all font-mono text-sm leading-5"
-                    >
+                    <div class="cursor-help font-mono text-sm">
                       {{ middleEllipsis(session.ip, 24) }}
                     </div>
                   </TooltipTrigger>
@@ -270,47 +249,43 @@ watch(
                 </Tooltip>
                 <div
                   v-if="session.ipLocation"
-                  class="line-clamp-2 whitespace-normal text-xs leading-5 text-muted-foreground"
+                  class="line-clamp-1 text-xs text-muted-foreground"
                 >
                   {{ session.ipLocation }}
                 </div>
               </TableCell>
 
-              <TableCell class="hidden 2xl:table-cell">
+              <TableCell>
                 <div class="text-sm">
                   <HumanFriendlyTime :value="session.loginTime" />
                 </div>
               </TableCell>
 
-              <TableCell class="hidden 2xl:table-cell">
+              <TableCell>
                 <div class="text-sm">
                   <HumanFriendlyTime :value="session.expiresAt" />
                 </div>
               </TableCell>
 
               <TableCell class="text-right">
-                <div class="flex flex-wrap justify-end gap-1.5 2xl:gap-2">
+                <div class="flex justify-end gap-2">
                   <Button
                     variant="outline"
                     size="sm"
-                    class="gap-1.5 px-2 2xl:px-2.5"
-                    title="查看会话轨迹"
-                    aria-label="查看会话轨迹"
+                    class="gap-1.5"
                     @click="openMobility(session)"
                   >
                     <GitBranch class="h-4 w-4" />
-                    <span class="hidden 2xl:inline">轨迹</span>
+                    轨迹
                   </Button>
                   <Button
                     variant="outline"
                     size="sm"
-                    class="gap-1.5 px-2 2xl:px-2.5"
-                    title="查看会话详情"
-                    aria-label="查看会话详情"
+                    class="gap-1.5"
                     @click="openDetail(session)"
                   >
                     <Eye class="h-4 w-4" />
-                    <span class="hidden 2xl:inline">详情</span>
+                    详情
                   </Button>
                   <ConfirmDangerPopover
                     title="确认踢出会话？"
@@ -325,12 +300,10 @@ watch(
                         variant="destructive"
                         size="sm"
                         :disabled="isKicking"
-                        class="gap-1.5 px-2 2xl:px-2.5"
-                        title="踢出会话"
-                        aria-label="踢出会话"
+                        class="gap-1.5"
                       >
                         <Trash2 class="h-4 w-4" />
-                        <span class="hidden 2xl:inline">踢出</span>
+                        踢出
                       </Button>
                     </template>
                   </ConfirmDangerPopover>
@@ -342,7 +315,7 @@ watch(
           <TableBody v-else>
             <TableRow>
               <TableCell
-                colspan="7"
+                colspan="8"
                 class="py-6 text-center text-muted-foreground"
               >
                 暂无会话
