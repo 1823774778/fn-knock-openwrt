@@ -202,6 +202,11 @@ export interface FnosShareBypassConfig {
   session_ttl_seconds: number;
 }
 
+export interface FnosPortIconHijackConfig {
+  enabled: boolean;
+  updated_at: string | null;
+}
+
 export interface GatewayLoggingConfig {
   enabled: boolean;
   max_days: number;
@@ -692,6 +697,7 @@ export interface AppConfig {
   subdomain_mode: SubdomainModeConfig;
   default_tunnel?: "frp" | "cloudflared";
   fnos_share_bypass?: FnosShareBypassConfig;
+  fnos_port_icon_hijack?: FnosPortIconHijackConfig;
   gateway_logging?: GatewayLoggingConfig;
   waf?: WAFConfig;
   reverse_proxy_throttle?: ReverseProxyThrottleConfig;

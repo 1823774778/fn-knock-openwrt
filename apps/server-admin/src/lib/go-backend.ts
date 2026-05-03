@@ -135,6 +135,11 @@ export interface PreserveHostConfig {
   updated_at?: string | null;
 }
 
+export interface FnosPortIconHijackConfig {
+  enabled: boolean;
+  updated_at?: string | null;
+}
+
 export interface ReverseProxyThrottleExemptIPsRuntime {
   enabled: boolean;
   ips: string[];
@@ -558,6 +563,29 @@ export class GoBackendService {
 
     return this.request<PreserveHostConfig>(
       "/api/config/preserve-host",
+      "POST",
+      payload,
+    );
+  }
+
+  async getFnosPortIconHijackConfig(): Promise<
+    GoResponse<FnosPortIconHijackConfig>
+  > {
+    return this.request<FnosPortIconHijackConfig>(
+      "/api/config/fnos-port-icon-hijack",
+    );
+  }
+
+  async setFnosPortIconHijackConfig(
+    config: FnosPortIconHijackConfig,
+  ): Promise<GoResponse<FnosPortIconHijackConfig>> {
+    const payload = {
+      enabled: config.enabled,
+      ...(config.updated_at ? { updated_at: config.updated_at } : {}),
+    };
+
+    return this.request<FnosPortIconHijackConfig>(
+      "/api/config/fnos-port-icon-hijack",
       "POST",
       payload,
     );

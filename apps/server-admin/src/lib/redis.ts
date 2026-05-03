@@ -187,6 +187,11 @@ export interface FnosShareBypassConfig {
   session_ttl_seconds: number;
 }
 
+export interface FnosPortIconHijackConfig {
+  enabled: boolean;
+  updated_at: string | null;
+}
+
 export interface GatewayLoggingSettings {
   enabled: boolean;
   max_days: number;
@@ -480,6 +485,7 @@ export interface AppConfig {
   default_route: string;
   default_tunnel?: "frp" | "cloudflared";
   fnos_share_bypass?: FnosShareBypassConfig;
+  fnos_port_icon_hijack?: FnosPortIconHijackConfig;
   gateway_logging?: GatewayLoggingSettings;
   waf?: WAFConfig;
   reverse_proxy_throttle?: ReverseProxyThrottleConfig;
@@ -785,6 +791,10 @@ const DEFAULT_CONFIG: AppConfig = {
     validation_lock_ttl_seconds: 5,
     session_ttl_seconds: 300,
   },
+  fnos_port_icon_hijack: {
+    enabled: false,
+    updated_at: null,
+  },
   gateway_logging: {
     ...DEFAULT_GATEWAY_LOGGING_SETTINGS,
   },
@@ -891,6 +901,11 @@ const DEFAULT_FNOS_SHARE_BYPASS_CONFIG: FnosShareBypassConfig = {
   validation_cache_ttl_seconds: 30,
   validation_lock_ttl_seconds: 5,
   session_ttl_seconds: 300,
+};
+
+export const DEFAULT_FNOS_PORT_ICON_HIJACK_CONFIG: FnosPortIconHijackConfig = {
+  enabled: false,
+  updated_at: null,
 };
 
 const normalizeGatewayLoggingSettings = (
@@ -1486,6 +1501,17 @@ const normalizeFnosShareBypassConfig = (
       DEFAULT_FNOS_SHARE_BYPASS_CONFIG.session_ttl_seconds,
       { min: 30, max: 3600 },
     ),
+  };
+};
+
+const normalizeFnosPortIconHijackConfig = (
+  value?: Partial<FnosPortIconHijackConfig> | null,
+): FnosPortIconHijackConfig => {
+  const raw = value ?? {};
+
+  return {
+    enabled: raw.enabled === true,
+    updated_at: normalizeOptionalString(raw.updated_at) ?? null,
   };
 };
 
@@ -2513,6 +2539,9 @@ return actual
         parsed.fnos_share_bypass = normalizeFnosShareBypassConfig(
           parsed.fnos_share_bypass,
         );
+        parsed.fnos_port_icon_hijack = normalizeFnosPortIconHijackConfig(
+          parsed.fnos_port_icon_hijack,
+        );
         parsed.gateway_logging = normalizeGatewayLoggingSettings(
           parsed.gateway_logging,
         );
@@ -2560,6 +2589,7 @@ return actual
       subdomain_mode: { ...DEFAULT_CONFIG.subdomain_mode },
       ssl: normalizeSSLConfig(DEFAULT_CONFIG.ssl),
       fnos_share_bypass: { ...DEFAULT_FNOS_SHARE_BYPASS_CONFIG },
+      fnos_port_icon_hijack: { ...DEFAULT_FNOS_PORT_ICON_HIJACK_CONFIG },
       gateway_logging: { ...DEFAULT_GATEWAY_LOGGING_SETTINGS },
       waf: {
         ...DEFAULT_WAF_CONFIG,
@@ -4383,6 +4413,11 @@ return actual
     return normalizeFnosShareBypassConfig(config.fnos_share_bypass);
   }
 
+  async getFnosPortIconHijackConfig(): Promise<FnosPortIconHijackConfig> {
+    const config = await this.getConfig();
+    return normalizeFnosPortIconHijackConfig(config.fnos_port_icon_hijack);
+  }
+
   async getGatewayLoggingConfig(): Promise<GatewayLoggingSettings> {
     const config = await this.getConfig();
     return normalizeGatewayLoggingSettings(config.gateway_logging);
@@ -4548,6 +4583,20 @@ return actual
       ...patch,
     });
     config.fnos_share_bypass = next;
+    await this.saveConfig(config);
+    return next;
+  }
+
+  async updateFnosPortIconHijackConfig(
+    patch: Partial<FnosPortIconHijackConfig>,
+  ): Promise<FnosPortIconHijackConfig> {
+    const config = await this.getConfig();
+    const next = normalizeFnosPortIconHijackConfig({
+      ...config.fnos_port_icon_hijack,
+      ...patch,
+      updated_at: new Date().toISOString(),
+    });
+    config.fnos_port_icon_hijack = next;
     await this.saveConfig(config);
     return next;
   }

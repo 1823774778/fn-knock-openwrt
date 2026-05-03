@@ -19,7 +19,10 @@ import { backoffRoutes } from "./routes/backoff";
 import { scannerRoutes } from "./routes/scanner";
 import { hmacMiddleware } from "./middleware/hmac";
 import { frpcRoutes, restoreFrpcOnBoot } from "./routes/frpc";
-import { configManager } from "./lib/redis";
+import {
+  DEFAULT_FNOS_PORT_ICON_HIJACK_CONFIG,
+  configManager,
+} from "./lib/redis";
 import { whitelistRoutes } from "./routes/whitelist";
 import { whitelistManager } from "./lib/whitelist-manager";
 import { portScannerPlugin } from "./plugins/scanner";
@@ -96,6 +99,7 @@ import {
   resolveDockerAdminIncomingRequestContext,
 } from "./lib/docker-admin-panel";
 import { autoHttpsRedirectManager } from "./lib/auto-https-redirect";
+import { goBackend } from "./lib/go-backend";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const runtimeProfile = getRuntimeProfile();
@@ -766,8 +770,12 @@ authApp.get("/auth/__fn-knock/runtime-hmac-secret", ({ set }) => {
 authApp.get("/__auth__/__fn-knock/runtime-hmac-secret", ({ set }) => {
   return buildRuntimeHmacSecretResponse(set);
 });
-authApp.get("/oidc/bind", ({ request }) => redirectLegacyOidcBindRoute(request));
-authApp.get("/oidc/bind/", ({ request }) => redirectLegacyOidcBindRoute(request));
+authApp.get("/oidc/bind", ({ request }) =>
+  redirectLegacyOidcBindRoute(request),
+);
+authApp.get("/oidc/bind/", ({ request }) =>
+  redirectLegacyOidcBindRoute(request),
+);
 authApp.get("/auth/oidc/bind", ({ request }) =>
   redirectLegacyOidcBindRoute(request),
 );
@@ -864,6 +872,24 @@ syncGatewayLoggingToGateway(config.gateway_logging).catch((error) => {
     error,
   );
 });
+goBackend
+  .setFnosPortIconHijackConfig(
+    config.fnos_port_icon_hijack ?? DEFAULT_FNOS_PORT_ICON_HIJACK_CONFIG,
+  )
+  .then((response) => {
+    if (!response.success) {
+      console.error(
+        "[fnos-port-icon-hijack] failed to sync config on boot:",
+        response.message || "unknown gateway error",
+      );
+    }
+  })
+  .catch((error) => {
+    console.error(
+      "[fnos-port-icon-hijack] failed to sync config on boot:",
+      error,
+    );
+  });
 syncWAFToGatewayOnBoot()
   .then(() => {
     startWAFSystemRulesAutoUpdate();

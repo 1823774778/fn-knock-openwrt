@@ -25,6 +25,7 @@ import type {
   SystemEventListPayload,
   SystemEventSource,
   SystemEventType,
+  FnosPortIconHijackConfig,
   FnosShareBypassConfig,
   GatewayHostResponseDetails,
   GatewayProxyHeadersDetails,
@@ -1269,6 +1270,16 @@ export const SystemAPI = {
     payload: Partial<FnosShareBypassConfig>,
   ): Promise<FnosShareBypassConfig> {
     const res = await apiClient.post("/config/fnos_share_bypass", payload);
+    return res.data.data;
+  },
+  async getFnosPortIconHijackConfig(): Promise<FnosPortIconHijackConfig> {
+    const res = await apiClient.get("/config/fnos_port_icon_hijack");
+    return res.data.data;
+  },
+  async updateFnosPortIconHijackConfig(
+    payload: Partial<FnosPortIconHijackConfig>,
+  ): Promise<FnosPortIconHijackConfig> {
+    const res = await apiClient.post("/config/fnos_port_icon_hijack", payload);
     return res.data.data;
   },
   async getFrpStatus() {

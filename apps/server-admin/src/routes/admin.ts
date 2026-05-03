@@ -1302,6 +1302,51 @@ export const adminRoutes = new Elysia({
     }),
   )
   .get(
+    "/config/fnos_port_icon_hijack",
+    async () => {
+      const settings = await configManager.getFnosPortIconHijackConfig();
+      return { success: true, data: settings };
+    },
+    routeDoc("获取飞牛端口图标接管配置"),
+  )
+  .post(
+    "/config/fnos_port_icon_hijack",
+    async ({ body, set }) => {
+      const previousConfig = await configManager.getConfig();
+      const next = await configManager.updateFnosPortIconHijackConfig(body);
+      try {
+        ensureGoResponseSuccess(
+          await goBackend.setFnosPortIconHijackConfig(next),
+          "同步飞牛端口图标接管配置到网关失败",
+        );
+      } catch (error: any) {
+        let rollbackError: string | null = null;
+        try {
+          const rollbackConfig = await configManager.getConfig();
+          rollbackConfig.fnos_port_icon_hijack =
+            previousConfig.fnos_port_icon_hijack;
+          await configManager.saveConfig(rollbackConfig);
+        } catch (innerError: any) {
+          rollbackError = innerError?.message || "恢复之前的配置失败";
+        }
+        set.status = 502;
+        const message = error?.message || "同步飞牛端口图标接管配置到网关失败";
+        return {
+          success: false,
+          message: rollbackError
+            ? `${message}；回滚失败：${rollbackError}`
+            : message,
+        };
+      }
+      return { success: true, data: next };
+    },
+    withRouteDoc("更新飞牛端口图标接管配置", {
+      body: t.Object({
+        enabled: t.Optional(t.Boolean()),
+      }),
+    }),
+  )
+  .get(
     "/config/gateway",
     async () => {
       const [
