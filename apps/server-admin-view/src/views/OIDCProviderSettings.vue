@@ -44,7 +44,7 @@
             <col class="hidden sm:table-column sm:w-[12%]" />
             <col class="hidden md:table-column md:w-[10%]" />
             <col />
-            <col class="w-[184px] 2xl:w-[350px]" />
+            <col class="w-[86px] sm:w-[184px] 2xl:w-[350px]" />
           </colgroup>
           <TableHeader>
             <TableRow>
@@ -55,7 +55,9 @@
               <TableHead class="hidden whitespace-normal md:table-cell"
                 >状态</TableHead
               >
-              <TableHead class="whitespace-normal">Callback URL</TableHead>
+              <TableHead class="min-w-0 whitespace-nowrap">
+                Callback URL
+              </TableHead>
               <TableHead class="text-right">操作</TableHead>
             </TableRow>
           </TableHeader>
@@ -70,13 +72,13 @@
               <TableCell class="hidden whitespace-normal md:table-cell">
                 <Badge variant="outline">{{ providerStatus(provider) }}</Badge>
               </TableCell>
-              <TableCell class="min-w-0 whitespace-normal">
+              <TableCell class="min-w-0 max-w-[48vw] sm:max-w-none">
                 <div
                   v-if="provider.callback_url"
-                  class="group/callback flex max-w-full items-start gap-2 rounded-md border bg-muted/30 px-2.5 py-2"
+                  class="group/callback flex min-w-0 max-w-full items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-2"
                 >
                   <span
-                    class="min-w-0 flex-1 whitespace-normal break-all font-mono text-xs leading-5 text-muted-foreground"
+                    class="block min-w-0 flex-1 truncate font-mono text-xs leading-5 text-muted-foreground"
                   >
                     {{ provider.callback_url }}
                   </span>
@@ -95,7 +97,7 @@
               </TableCell>
               <TableCell class="text-right">
                 <div
-                  class="inline-flex flex-wrap items-center justify-end gap-1.5 2xl:gap-2"
+                  class="inline-flex flex-nowrap items-center justify-end gap-1.5 2xl:gap-2"
                 >
                   <Button
                     variant="outline"
