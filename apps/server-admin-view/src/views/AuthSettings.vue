@@ -1,18 +1,32 @@
 <template>
   <Card class="min-h-[600px]">
-    <CardHeader class="flex flex-row items-center justify-between">
-      <div>
-        <CardTitle>TOTP 令牌管理</CardTitle>
+    <CardHeader
+      class="gap-4 sm:flex sm:flex-row sm:items-center sm:justify-between"
+    >
+      <div class="min-w-0 space-y-1.5">
+        <div class="flex items-center justify-between gap-3">
+          <CardTitle>TOTP 令牌管理</CardTitle>
+          <DocsLinkButton class="sm:hidden" :href="docsUrls.guides.auth" />
+        </div>
         <CardDescription
           >管理管理员登录使用的所有 TOTP 双端验证器。</CardDescription
         >
       </div>
-      <div class="flex items-center gap-2">
-        <DocsLinkButton :href="docsUrls.guides.auth" />
-        <Button variant="outline" @click="goToOidcProviders"
-          >外部账号登录</Button
+      <div class="grid w-full gap-2 sm:flex sm:w-auto sm:items-center">
+        <DocsLinkButton
+          class="hidden sm:inline-flex"
+          :href="docsUrls.guides.auth"
+        />
+        <Button
+          class="w-full sm:w-auto"
+          variant="outline"
+          @click="goToOidcProviders"
         >
-        <Button @click="openSetupDialog">绑定新令牌</Button>
+          外部账号登录
+        </Button>
+        <Button class="w-full sm:w-auto" @click="openSetupDialog"
+          >绑定新令牌</Button
+        >
       </div>
     </CardHeader>
     <CardContent v-if="isLoading && showLoadingSkeleton && !credentials.length">
