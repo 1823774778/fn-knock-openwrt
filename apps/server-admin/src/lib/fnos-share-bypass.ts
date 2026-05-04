@@ -18,7 +18,7 @@ import { isAnySubdomainRoutingMode } from "./reverse-proxy-submode";
 type ShareValidationCacheRecord = {
   version: 1;
   valid: boolean;
-  validationState: "valid" | "invalid" | "unknown";
+  validationState: "valid" | "password_required" | "invalid" | "unknown";
   shareId: string;
   cleanPath: string;
   token: string | null;
@@ -63,6 +63,7 @@ export type FnosShareAuthorizationResult =
 const SHARE_ENTRY_REGEX = /^\/s\/([a-z0-9]{18})$/;
 const SHARE_SCRIPT_REGEX =
   /<script\b[^>]*\bid=(["'])share-data\1[^>]*>([\s\S]*?)<\/script>/i;
+const FNOS_SHARE_NEED_PASSWORD_CODE = 3_000_008;
 const CACHE_KEY_PREFIX = "fn_knock:fnos-share:validation:";
 const SESSION_KEY_PREFIX = "fn_knock:fnos-share:session:";
 const LOCK_KEY_PREFIX = "fn_knock:lock:fnos-share:validation:";
@@ -152,6 +153,7 @@ const normalizeShareValidation = (
   valid: value.valid === true,
   validationState:
     value.validationState === "valid" ||
+    value.validationState === "password_required" ||
     value.validationState === "invalid" ||
     value.validationState === "unknown"
       ? value.validationState
@@ -681,6 +683,7 @@ class FnosShareBypassService {
 
     try {
       const parsed = JSON.parse(match[2]);
+      const code = typeof parsed?.code === "number" ? parsed.code : null;
       const token =
         typeof parsed?.data?.token === "string" && parsed.data.token.trim()
           ? parsed.data.token.trim()
@@ -691,10 +694,16 @@ class FnosShareBypassService {
           : null;
       const type =
         typeof parsed?.data?.type === "number" ? parsed.data.type : null;
+      const hasUsableToken = code === 0 && !!token;
+      const requiresPassword = code === FNOS_SHARE_NEED_PASSWORD_CODE;
       return normalizeShareValidation({
         version: 1,
-        valid: parsed?.code === 0 && !!token,
-        validationState: parsed?.code === 0 && !!token ? "valid" : "invalid",
+        valid: hasUsableToken || requiresPassword,
+        validationState: hasUsableToken
+          ? "valid"
+          : requiresPassword
+            ? "password_required"
+            : "invalid",
         shareId,
         cleanPath: `/s/${shareId}`,
         token,

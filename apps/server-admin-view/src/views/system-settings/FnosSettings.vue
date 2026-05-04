@@ -215,10 +215,10 @@ onMounted(fetchSettings);
             class="cursor-pointer text-base font-medium"
             @click="toggleIconHijack"
           >
-            端口图标接管
+            端口类图标接管
           </Label>
           <div class="text-sm text-muted-foreground">
-            公网访问时，飞牛桌面里有些应用图标会跳到不可访问的本机端口。开启后，点击这些原本指向端口的图标，会自动匹配已有的子域映射并改为可访问地址。
+            公网访问时，飞牛桌面里有些应用图标会跳到不可访问的本机端口。开启后，点击这些原本指向端口的图标，会自动匹配已有的子域映射并改为可访问地址。你也可以手动每个图标进行编辑“外部访问地址”来实现，但通过这里可以一键完成。
           </div>
         </div>
         <Switch
