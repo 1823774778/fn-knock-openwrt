@@ -13,6 +13,7 @@ import {
   normalizeAcmeEnvVars,
 } from "../../lib/acme-dns-providers";
 import { collectStreamOutput, fileExists, waitForProcessExit } from "../../lib/runtime";
+import { applyAcmeDnsProviderPatches } from "./patches/index";
 
 export type AcmeStatus = "uninstalled" | "installing" | "installed" | "error";
 
@@ -372,9 +373,8 @@ export class AcmeService {
       throw new Error("域名列表不能为空");
     }
 
-    await this.registerAccount({ certificateAuthority });
-
-    const args: string[] = [this.acmePath, "--issue"];
+    const normalizedDnsType =
+      method === "dns" ? normalizeAcmeDnsType(dnsType) : null;
     const recentLogLines: string[] = [];
     const appendRecentLog = async (line: string) => {
       const normalizedLine = line.trim();
@@ -389,6 +389,18 @@ export class AcmeService {
       }
     };
 
+    if (method === "dns") {
+      if (!normalizedDnsType) throw new Error("缺少 DNS 验证类型");
+      await applyAcmeDnsProviderPatches({
+        acmeHomeDir: this.acmeDir,
+        dnsType: normalizedDnsType,
+        onLog: appendRecentLog,
+      });
+    }
+
+    await this.registerAccount({ certificateAuthority });
+
+    const args: string[] = [this.acmePath, "--issue"];
     args.push("--home", this.acmeDir, "--config-home", this.acmeDir);
     if (certificateAuthority) {
       args.push("--server", certificateAuthority);
@@ -396,9 +408,7 @@ export class AcmeService {
     if (force !== false) {
       args.push("--force");
     }
-    if (method === "dns") {
-      const normalizedDnsType = normalizeAcmeDnsType(dnsType);
-      if (!normalizedDnsType) throw new Error("缺少 DNS 验证类型");
+    if (normalizedDnsType) {
       args.push("--dns", normalizedDnsType);
     }
 
