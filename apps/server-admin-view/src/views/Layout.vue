@@ -29,7 +29,9 @@
         </SheetHeader>
         <div class="flex h-full flex-col">
           <div class="border-b px-4 py-3 text-sm font-semibold">导航菜单</div>
-          <nav class="flex-1 space-y-2 overflow-y-auto p-3">
+          <nav
+            class="flex-1 space-y-2 overflow-y-auto p-3 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+          >
             <Button
               v-for="item in navItems"
               :key="item.path"
@@ -76,7 +78,7 @@
       >
         <div class="flex h-full min-h-0 flex-col gap-3">
           <nav
-            class="flex min-h-0 flex-1 flex-col items-stretch gap-1.5 overflow-y-auto"
+            class="flex min-h-0 flex-1 flex-col items-stretch gap-1.5 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
           >
             <Button
               v-for="item in navItems"
