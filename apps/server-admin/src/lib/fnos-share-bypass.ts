@@ -14,6 +14,7 @@ import {
 } from "./redis";
 import { isFnosLocalePayload } from "./fnos-locale-signature";
 import { isAnySubdomainRoutingMode } from "./reverse-proxy-submode";
+import { fetchWithRelaxedTls } from "./relaxed-tls-fetch";
 
 type ShareValidationCacheRecord = {
   version: 1;
@@ -328,14 +329,17 @@ class FnosShareBypassService {
     );
 
     try {
-      const response = await fetch(new URL(FNOS_DETECTION_PATH, origin), {
-        method: "GET",
-        redirect: "manual",
-        signal: controller.signal,
-        headers: {
-          Accept: "application/json",
+      const response = await fetchWithRelaxedTls(
+        new URL(FNOS_DETECTION_PATH, origin),
+        {
+          method: "GET",
+          redirect: "manual",
+          signal: controller.signal,
+          headers: {
+            Accept: "application/json",
+          },
         },
-      });
+      );
       if (response.status !== 200) {
         this.setCachedFnosTargetProbe(origin, false);
         return false;
@@ -649,7 +653,7 @@ class FnosShareBypassService {
 
     try {
       const targetUrl = new URL(cleanPath, config.upstreamBaseUrl);
-      const response = await fetch(targetUrl, {
+      const response = await fetchWithRelaxedTls(targetUrl, {
         method: "GET",
         signal: controller.signal,
         headers: {

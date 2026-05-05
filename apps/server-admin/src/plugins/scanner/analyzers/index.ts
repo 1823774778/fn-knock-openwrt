@@ -12,6 +12,15 @@ import { miniDLNARule } from "./rules/minidlna";
 import { sunPanelRule } from "./rules/sun-panel";
 import { nowenRule } from "./rules/nowen";
 import { fnysRule } from "./rules/fnys";
+import { dpanelRule } from "./rules/dpanel";
+import { lotteryRule } from "./rules/lottery";
+import { kuakeRule } from "./rules/kuake";
+import { jellyfinRule } from "./rules/jellyfin";
+import { mefrpRule } from "./rules/mefrp";
+import { moontvRule } from "./rules/moontv";
+import { fnosappsRule } from "./rules/fnosapps";
+import { embyRule } from "./rules/emby";
+import { dlymusicRule } from "./rules/dlymusic";
 
 const rules: AnalyzerRule[] = [
   mongoExpressRule,
@@ -29,6 +38,15 @@ const rules: AnalyzerRule[] = [
   miniDLNARule,
   nowenRule,
   fnysRule,
+  dpanelRule,
+  lotteryRule,
+  kuakeRule,
+  jellyfinRule,
+  mefrpRule,
+  moontvRule,
+  fnosappsRule,
+  embyRule,
+  dlymusicRule
 ];
 
 function extractTitle(body?: string): string {

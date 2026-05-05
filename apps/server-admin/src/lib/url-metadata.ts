@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { fetchWithRelaxedTls } from "./relaxed-tls-fetch";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 5000;
 const MAX_HTML_LENGTH = 256 * 1024;
@@ -169,7 +170,7 @@ const fetchWithTimeout = async (
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    return await fetch(input, {
+    return await fetchWithRelaxedTls(input, {
       ...init,
       headers: {
         "User-Agent": METADATA_USER_AGENT,

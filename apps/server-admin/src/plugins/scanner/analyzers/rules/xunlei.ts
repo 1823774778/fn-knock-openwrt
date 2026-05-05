@@ -13,7 +13,6 @@ export const xunleiRule: AnalyzerRule = {
   },
   isDefault: false,
   match: (result) => {
-    const auth = result.headers?.["www-authenticate"];
-    return !!auth && auth.includes('Basic realm="xlp"');
+    return !!result.body && result.body.includes("<title>迅雷下载</title>");
   },
 };

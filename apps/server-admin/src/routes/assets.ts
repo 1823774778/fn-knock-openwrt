@@ -230,7 +230,7 @@ export const assetsRoutes = new Elysia({
         }
       }
 
-      const excludePorts = Array.from(new Set([...envPorts, ...mappingPorts]));
+      const excludePorts = Array.from(new Set([...envPorts, ...mappingPorts, 8200, 30661, 30662]));
       console.log("准备跳过的端口:", excludePorts);
 
       try {
