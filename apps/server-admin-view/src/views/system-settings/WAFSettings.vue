@@ -5,9 +5,11 @@ import {
   Eye,
   Loader2,
   RefreshCw,
+  TriangleAlert,
   Trash2,
   Upload,
 } from "lucide-vue-next";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -517,6 +519,19 @@ onMounted(fetchDetails);
       </CardContent>
 
       <CardContent v-else class="border-t p-0 divide-y">
+        <section class="p-6">
+          <Alert
+            class="items-start rounded-xl border-amber-200 bg-amber-50/70 text-amber-950 [&>svg]:text-amber-600"
+          >
+            <TriangleAlert class="mt-0.5 h-4 w-4" />
+            <AlertTitle>规则误报提示</AlertTitle>
+            <AlertDescription class="text-sm leading-6 text-amber-900">
+              开启 WAF
+              所有规则后，部分正常请求可能被误判并拦截；如果发现误报，请及时反馈。QQ群：1081609274
+            </AlertDescription>
+          </Alert>
+        </section>
+
         <section
           class="flex flex-col gap-4 bg-muted/10 p-6 sm:flex-row sm:items-center sm:justify-between"
         >
