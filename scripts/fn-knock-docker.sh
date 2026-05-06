@@ -560,6 +560,46 @@ create_manifest_tag() {
   docker buildx imagetools create -t "${target_ref}" "$@"
 }
 
+resolve_manifest_digest() {
+  local target_ref="$1"
+  local inspect_output
+  local digest
+
+  inspect_output="$(docker buildx imagetools inspect "${target_ref}")" || \
+    fail "failed to inspect manifest ${target_ref}"
+  digest="$(printf '%s\n' "${inspect_output}" | awk '/^Digest:[[:space:]]*/ { print $2; exit }')"
+  [ -n "${digest}" ] || fail "failed to resolve manifest digest for ${target_ref}"
+
+  printf '%s\n' "${digest}"
+}
+
+wait_for_manifest_digest() {
+  local target_ref="$1"
+  local expected_digest="$2"
+  local expected_label="${3:-${expected_digest}}"
+  local max_attempts="${FN_KNOCK_DOCKER_MANIFEST_VERIFY_ATTEMPTS:-6}"
+  local delay_seconds="${FN_KNOCK_DOCKER_MANIFEST_VERIFY_DELAY:-5}"
+  local attempt=1
+  local actual_digest=""
+
+  while [ "${attempt}" -le "${max_attempts}" ]; do
+    actual_digest="$(resolve_manifest_digest "${target_ref}")"
+    if [ "${actual_digest}" = "${expected_digest}" ]; then
+      log "Verified manifest ${target_ref} points at ${expected_label} (${expected_digest})"
+      return 0
+    fi
+
+    if [ "${attempt}" -lt "${max_attempts}" ]; then
+      log "Manifest ${target_ref} digest is ${actual_digest}; waiting for ${expected_label} (${expected_digest})"
+      sleep "${delay_seconds}"
+    fi
+
+    attempt=$((attempt + 1))
+  done
+
+  fail "manifest ${target_ref} digest ${actual_digest} does not match ${expected_label} (${expected_digest})"
+}
+
 verify_manifest_platforms() {
   local target_ref="$1"
   local inspect_output
@@ -762,6 +802,7 @@ cmd_publish_hub() {
   local tag_base
   local image_ref
   local manifest_ref
+  local manifest_digest
   local latest_ref
   local arch_refs=()
   local arch
@@ -789,7 +830,10 @@ cmd_publish_hub() {
 
   create_manifest_tag "${manifest_ref}" "${arch_refs[@]}"
   verify_manifest_platforms "${manifest_ref}"
-  create_manifest_tag "${latest_ref}" "${arch_refs[@]}"
+  manifest_digest="$(resolve_manifest_digest "${manifest_ref}")"
+  log "Version manifest digest ${manifest_digest}"
+  create_manifest_tag "${latest_ref}" "${image_repo}@${manifest_digest}"
+  wait_for_manifest_digest "${latest_ref}" "${manifest_digest}" "${manifest_ref}"
   verify_manifest_platforms "${latest_ref}"
 }
 
@@ -805,7 +849,7 @@ Commands:
   logs-local    Tail local fn-knock container logs
   reset-panel-password-local   Clear Docker admin panel password for the local compose stack
   local-deploy  Build amd64, arm64, and arm32 images, upload them via SSH, and restart remote compose
-  publish-hub   Push amd64, arm64, and arm32 images to a registry and create a multi-arch manifest tag
+  publish-hub   Push amd64, arm64, and arm32 images to a registry, then update version and latest manifest tags
   remote-ps     Show remote compose status
   remote-logs   Tail remote fn-knock container logs
   reset-panel-password-remote  Clear Docker admin panel password on the remote compose stack
@@ -824,6 +868,8 @@ Optional env overrides:
   FN_KNOCK_DOCKER_ALL_PROXY       (optional build proxy; falls back to ALL_PROXY/all_proxy)
   FN_KNOCK_DOCKER_NO_PROXY        (optional no_proxy; falls back to NO_PROXY/no_proxy)
   FN_KNOCK_DOCKER_PROXY_HOST_ALIAS(default: host.docker.internal; rewrites localhost/127.0.0.1 for containers)
+  FN_KNOCK_DOCKER_MANIFEST_VERIFY_ATTEMPTS (default: 6)
+  FN_KNOCK_DOCKER_MANIFEST_VERIFY_DELAY    (default: 5 seconds)
   FN_KNOCK_DOCKER_REMOTE_HOST     (default: root@192.168.31.135)
   FN_KNOCK_DOCKER_REMOTE_DIR      (default: /opt/fn-knock-docker)
   FN_KNOCK_DOCKER_SERVICE_NAME    (default: fn-knock)
