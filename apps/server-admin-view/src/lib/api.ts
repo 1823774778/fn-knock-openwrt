@@ -1746,7 +1746,12 @@ export const BackoffAPI = {
 };
 
 export type AcmeCertificateAuthority = "zerossl" | "letsencrypt";
-export type AcmeJobStatus = "queued" | "running" | "succeeded" | "failed";
+export type AcmeJobStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "stopped";
 export type AcmeJobTrigger = "manual_request" | "auto_renew";
 
 export type AcmeDnsProvider = {
@@ -2015,6 +2020,18 @@ export const AcmeAPI = {
     credentials?: Record<string, string>;
   }): Promise<{ jobId: string }> {
     const res = await apiClient.post("/acme/request", payload);
+    return res.data.data;
+  },
+  async stopActiveJob(): Promise<{
+    stopped: boolean;
+    job: AcmeJobData | null;
+    processResult: {
+      matchedPids: number[];
+      remainingPids: number[];
+      errors: string[];
+    };
+  }> {
+    const res = await apiClient.post("/acme/jobs/active/stop");
     return res.data.data;
   },
   async job(id: string): Promise<AcmeJobData> {

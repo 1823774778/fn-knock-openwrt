@@ -13,6 +13,7 @@ import {
   reserveAcmeApplicationJob,
   runReservedAcmeApplicationJob,
   startAcmeApplicationJob,
+  stopActiveAcmeApplicationJob,
 } from "../lib/acme-job-runner";
 import {
   dnsProviders,
@@ -1227,6 +1228,19 @@ export const acmeRoutes = new Elysia({
         credentials: t.Optional(t.Record(t.String(), t.String())),
       }),
     }),
+  )
+  .post(
+    "/jobs/active/stop",
+    async ({ acme, set }) => {
+      try {
+        const stopped = await stopActiveAcmeApplicationJob({ acme });
+        return { success: true, data: stopped };
+      } catch (e: any) {
+        set.status = 500;
+        return { success: false, message: e?.message || String(e) };
+      }
+    },
+    routeDoc("停止当前 ACME 任务并终止 acme.sh 进程"),
   )
   .get(
     "/jobs/:id/poll",

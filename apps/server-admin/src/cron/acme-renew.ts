@@ -77,12 +77,14 @@ export const registerAcmeRenewCron = (app: Elysia) => {
 
           for (const entry of renewableEntries) {
             try {
-              await startAcmeApplicationJob({
+              const started = await startAcmeApplicationJob({
                 acme: acmeService,
                 application: entry.application,
                 trigger: "auto_renew",
                 wait: true,
               });
+              const latestJob = await configManager.getAcmeJob(started.job.id);
+              if (latestJob?.status === "stopped") return;
             } catch (error: any) {
               const message = error?.message || String(error);
               if (/当前已有 ACME 任务正在执行/.test(message)) {

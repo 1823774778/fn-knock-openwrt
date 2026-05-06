@@ -26,15 +26,38 @@
             </span>
           </CardDescription>
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          :disabled="props.isRefreshing"
-          @click="emit('refresh')"
-        >
-          刷新日志
-        </Button>
+        <div class="flex flex-wrap items-center justify-end gap-2">
+          <ConfirmDangerPopover
+            v-if="props.canStop"
+            title="确认停止当前 ACME 任务？"
+            description="停止后会终止所有正在运行的 acme.sh 进程，当前申请会标记为已停止，需要重新发起申请。"
+            confirm-text="停止任务"
+            :loading="props.isStopping"
+            :disabled="props.isStopping"
+            :on-confirm="props.stopAction || (() => undefined)"
+            content-class="w-80 text-left"
+          >
+            <template #trigger>
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                :disabled="props.isStopping"
+              >
+                停止任务
+              </Button>
+            </template>
+          </ConfirmDangerPopover>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            :disabled="props.isRefreshing"
+            @click="emit('refresh')"
+          >
+            刷新日志
+          </Button>
+        </div>
       </div>
     </CardHeader>
 
@@ -123,6 +146,7 @@ import {
 } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
 import { Progress } from "@/components/ui/progress";
+import ConfirmDangerPopover from "@admin-shared/components/common/ConfirmDangerPopover.vue";
 import LogViewer from "@admin-shared/components/LogViewer.vue";
 
 const props = defineProps<{
@@ -131,6 +155,9 @@ const props = defineProps<{
   analysis?: AcmeLogAnalysis | null;
   applicationLabel?: string;
   isRefreshing?: boolean;
+  canStop?: boolean;
+  isStopping?: boolean;
+  stopAction?: () => void | Promise<void>;
 }>();
 
 const emit = defineEmits<{
@@ -160,12 +187,14 @@ const jobStatusLabel = computed(() => {
   if (props.job.status === "running") return "执行中";
   if (props.job.status === "succeeded") return "已完成";
   if (props.job.status === "failed") return "失败";
+  if (props.job.status === "stopped") return "已停止";
   return props.job.status || "未知";
 });
 
 const jobBadgeVariant = computed(() => {
   if (props.job.status === "succeeded") return "secondary";
   if (props.job.status === "failed") return "destructive";
+  if (props.job.status === "stopped") return "outline";
   if (props.job.status === "running") return "default";
   return "outline";
 });

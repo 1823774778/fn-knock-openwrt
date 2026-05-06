@@ -12,7 +12,10 @@ import { syncSSLDeploymentToGateway } from "./ssl-gateway";
 
 export const isAcmeJobTerminalStatus = (
   status: string | undefined | null,
-): boolean => status === "succeeded" || status === "failed";
+): boolean =>
+  status === "succeeded" || status === "failed" || status === "stopped";
+
+const manualStopMessage = "ACME 任务已由用户手动停止";
 
 const buildQueuedJob = (
   application: AcmeApplication,
@@ -199,6 +202,89 @@ export const startAcmeApplicationJob = async (options: {
   }
 };
 
+export const stopActiveAcmeApplicationJob = async (options: {
+  acme: AcmeService;
+  message?: string;
+}): Promise<{
+  stopped: boolean;
+  job: AcmeJob | null;
+  lock: AcmeRuntimeLock;
+  processResult: Awaited<ReturnType<AcmeService["stopAllAcmeProcesses"]>>;
+}> => {
+  const lock = await configManager.getActiveAcmeRuntimeLock();
+  const message = options.message || manualStopMessage;
+  const stoppedAt = new Date().toISOString();
+  let job: AcmeJob | null = null;
+
+  if (lock.locked && lock.jobId) {
+    job = await configManager.getAcmeJob(lock.jobId);
+    if (job && !isAcmeJobTerminalStatus(job.status)) {
+      await configManager
+        .appendAcmeLog(job.id, message)
+        .catch(() => undefined);
+      await configManager.updateAcmeJob(job.id, {
+        status: "stopped",
+        progress: 100,
+        finishedAt: stoppedAt,
+        message,
+      });
+      if (job.applicationId) {
+        await configManager.updateAcmeApplicationJobState(job.applicationId, {
+          ...job,
+          status: "stopped",
+          finishedAt: stoppedAt,
+          message,
+        });
+      }
+      job = {
+        ...job,
+        status: "stopped",
+        progress: 100,
+        finishedAt: stoppedAt,
+        message,
+      };
+    }
+  }
+
+  const processResult = await options.acme.stopAllAcmeProcesses();
+  if (job) {
+    const killedCount =
+      processResult.matchedPids.length - processResult.remainingPids.length;
+    await configManager
+      .appendAcmeLog(
+        job.id,
+        processResult.matchedPids.length
+          ? `已发送停止信号，结束 ${Math.max(0, killedCount)} 个 acme.sh 进程`
+          : "未发现正在运行的 acme.sh 进程",
+      )
+      .catch(() => undefined);
+    for (const error of processResult.errors) {
+      await configManager
+        .appendAcmeLog(job.id, `停止进程时出现异常: ${error}`)
+        .catch(() => undefined);
+    }
+    if (processResult.remainingPids.length > 0) {
+      await configManager
+        .appendAcmeLog(
+          job.id,
+          `仍有 acme.sh 进程未退出: ${processResult.remainingPids.join(", ")}`,
+        )
+        .catch(() => undefined);
+    }
+  }
+
+  if (lock.locked && lock.lockId) {
+    await configManager.releaseAcmeRuntimeLock(lock).catch(() => undefined);
+  }
+
+  return {
+    stopped: Boolean(job),
+    job,
+    lock,
+    processResult,
+  };
+};
+
 export const executeAcmeApplicationJob = async (options: {
   acme: AcmeService;
   application: AcmeApplication;
@@ -215,6 +301,10 @@ export const executeAcmeApplicationJob = async (options: {
   const lockLeaseTtlMs = configManager.getAcmeRuntimeLockTtlSeconds() * 1000;
 
   const persistJobPatch = async (patch: Partial<AcmeJob>) => {
+    const currentJob = await configManager.getAcmeJob(jobId);
+    if (currentJob?.status === "stopped" && patch.status !== "stopped") {
+      throw new Error(manualStopMessage);
+    }
     await configManager.updateAcmeJob(jobId, patch);
     const latestJob = await configManager.getAcmeJob(jobId);
     if (latestJob?.applicationId) {
@@ -278,16 +368,16 @@ export const executeAcmeApplicationJob = async (options: {
   }, getAcmeLockHeartbeatIntervalMs());
   heartbeatTimer.unref?.();
 
-  await persistJobPatch({
-    applicationId: application.id,
-    trigger,
-    status: "running",
-    progress: 5,
-    message: lockMessageByTrigger[trigger],
-    startedAt,
-  });
-
   try {
+    await persistJobPatch({
+      applicationId: application.id,
+      trigger,
+      status: "running",
+      progress: 5,
+      message: lockMessageByTrigger[trigger],
+      startedAt,
+    });
+
     ensureLockHealthy();
     const clientSettings = await configManager.ensureAcmeClientSettings(
       await acme.getDefaultCertificateAuthority(),
@@ -429,6 +519,13 @@ export const executeAcmeApplicationJob = async (options: {
       message: saved ? "succeeded" : "signed",
     });
   } catch (error: any) {
+    const latestJob = await configManager.getAcmeJob(jobId).catch(() => null);
+    if (latestJob?.status === "stopped") {
+      await configManager
+        .appendAcmeLog(jobId, "任务已停止，已忽略进程退出后的错误")
+        .catch(() => undefined);
+      return;
+    }
     const message = error?.message || String(error);
     await configManager.appendAcmeLog(jobId, `证书申请流程失败: ${message}`);
     await persistJobPatch({

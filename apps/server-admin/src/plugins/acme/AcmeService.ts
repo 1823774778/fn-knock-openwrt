@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { chmod, cp, mkdir, readdir, readFile, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { ACME_EXECUTABLE_PATH, ACME_HOME_DIR, resolveBundledAcmeZipPath } from "../../lib/acme-paths";
 import {
   DEFAULT_ACME_CERTIFICATE_AUTHORITY,
@@ -12,7 +12,7 @@ import {
   normalizeAcmeDnsType,
   normalizeAcmeEnvVars,
 } from "../../lib/acme-dns-providers";
-import { collectStreamOutput, fileExists, waitForProcessExit } from "../../lib/runtime";
+import { collectStreamOutput, fileExists, sleep, waitForProcessExit } from "../../lib/runtime";
 import { applyAcmeDnsProviderPatches } from "./patches/index";
 
 export type AcmeStatus = "uninstalled" | "installing" | "installed" | "error";
@@ -42,10 +42,17 @@ type AcmeCommandResult = {
   stderr: string;
 };
 
+export type StopAcmeProcessesResult = {
+  matchedPids: number[];
+  remainingPids: number[];
+  errors: string[];
+};
+
 export class AcmeService {
   private readonly currentDir = dirname(fileURLToPath(import.meta.url));
   private readonly legacyAcmeDir = join(homedir(), ".acme.sh");
   private readonly legacyAcmePath = join(this.legacyAcmeDir, "acme.sh");
+  private readonly activeAcmeProcesses = new Set<ChildProcess>();
 
   private state: AcmeState = {
     status: "uninstalled",
@@ -60,6 +67,121 @@ export class AcmeService {
 
   private get acmePath() {
     return ACME_EXECUTABLE_PATH;
+  }
+
+  private trackAcmeProcess(proc: ChildProcess): ChildProcess {
+    this.activeAcmeProcesses.add(proc);
+    const cleanup = () => {
+      this.activeAcmeProcesses.delete(proc);
+    };
+    proc.once("close", cleanup);
+    proc.once("error", cleanup);
+    return proc;
+  }
+
+  private spawnAcmeProcess(
+    args: string[],
+    extraEnv?: Record<string, string>,
+  ): ChildProcess {
+    return this.trackAcmeProcess(
+      spawn(this.acmePath, args, {
+        detached: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, ...(extraEnv || {}) },
+      }),
+    );
+  }
+
+  private async findAcmeProcessIds(): Promise<number[]> {
+    const psProc = spawn("ps", ["-eo", "pid=,command="], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, , exitCode] = await Promise.all([
+      collectStreamOutput(psProc.stdout).catch(() => ""),
+      collectStreamOutput(psProc.stderr).catch(() => ""),
+      waitForProcessExit(psProc).catch(() => -1),
+    ]);
+    if (exitCode !== 0) return [];
+
+    const currentPid = process.pid;
+    const ids: number[] = [];
+    for (const line of stdout.split("\n")) {
+      const matched = line.match(/^\s*(\d+)\s+(.+)$/);
+      if (!matched) continue;
+      const pid = Number(matched[1]);
+      const command = matched[2] || "";
+      if (!Number.isInteger(pid) || pid <= 0 || pid === currentPid) continue;
+      if (!command.includes("acme.sh")) continue;
+      ids.push(pid);
+    }
+    return Array.from(new Set(ids));
+  }
+
+  private collectTrackedAcmeProcessIds(): number[] {
+    const ids: number[] = [];
+    for (const proc of this.activeAcmeProcesses) {
+      if (typeof proc.pid === "number" && proc.pid > 0) {
+        ids.push(proc.pid);
+      }
+    }
+    return ids;
+  }
+
+  private killPid(
+    target: number,
+    signal: NodeJS.Signals,
+    errors: string[],
+  ): void {
+    try {
+      process.kill(target, signal);
+    } catch (error: any) {
+      if (error?.code === "ESRCH") return;
+      errors.push(
+        `发送 ${signal} 到 ${target} 失败: ${error?.message || String(error)}`,
+      );
+    }
+  }
+
+  async stopAllAcmeProcesses(): Promise<StopAcmeProcessesResult> {
+    const trackedPids = this.collectTrackedAcmeProcessIds();
+    const discoveredPids = await this.findAcmeProcessIds();
+    const matchedPidSet = new Set([...trackedPids, ...discoveredPids]);
+    const errors: string[] = [];
+
+    for (const pid of trackedPids) {
+      this.killPid(-pid, "SIGTERM", errors);
+    }
+    for (const pid of matchedPidSet) {
+      this.killPid(pid, "SIGTERM", errors);
+    }
+
+    if (matchedPidSet.size > 0) {
+      await sleep(1000);
+    }
+
+    const stillRunning = await this.findAcmeProcessIds();
+    for (const pid of stillRunning) {
+      matchedPidSet.add(pid);
+    }
+    for (const pid of trackedPids.filter((pid) =>
+      stillRunning.includes(pid),
+    )) {
+      this.killPid(-pid, "SIGKILL", errors);
+    }
+    for (const pid of stillRunning) {
+      this.killPid(pid, "SIGKILL", errors);
+    }
+
+    if (stillRunning.length > 0) {
+      await sleep(300);
+    }
+
+    const finalRunning = await this.findAcmeProcessIds();
+    return {
+      matchedPids: Array.from(matchedPidSet),
+      remainingPids: finalRunning,
+      errors,
+    };
   }
 
   private isValidEmail(value: string | undefined | null): boolean {
@@ -115,10 +237,7 @@ export class AcmeService {
   }
 
   private async runAcmeCommand(args: string[], extraEnv?: Record<string, string>): Promise<AcmeCommandResult> {
-    const proc = spawn(this.acmePath, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, ...(extraEnv || {}) },
-    });
+    const proc = this.spawnAcmeProcess(args, extraEnv);
     const exitPromise = waitForProcessExit(proc);
 
     const [stdout, stderr, exitCode] = await Promise.all([
@@ -419,10 +538,10 @@ export class AcmeService {
       args.push("-d", d);
     }
 
-    const issueProc = spawn(args[0]!, args.slice(1), {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, ...normalizeAcmeEnvVars(dnsType, envVars) },
-    });
+    const issueProc = this.spawnAcmeProcess(
+      args.slice(1),
+      normalizeAcmeEnvVars(dnsType, envVars),
+    );
     const issueExitPromise = waitForProcessExit(issueProc);
 
     const p1 = this.processIssueStream(issueProc.stdout, appendRecentLog);

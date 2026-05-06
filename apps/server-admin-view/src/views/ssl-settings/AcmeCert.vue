@@ -49,7 +49,7 @@
         <div class="relative">
           <div
             v-if="isTableLocked"
-            class="absolute inset-0 z-10 flex items-center justify-center rounded-lg border bg-background/80 backdrop-blur-sm"
+            class="absolute inset-0 z-10 flex items-center justify-center rounded-lg border bg-background/80 p-4 backdrop-blur-sm"
           >
             <div class="max-w-md text-center">
               <div class="text-sm font-medium">{{ lockMessageTitle }}</div>
@@ -294,6 +294,9 @@
       :analysis="analysis"
       :application-label="selectedApplicationLabel"
       :is-refreshing="isRefreshingLogs"
+      :can-stop="canStopActiveJob"
+      :is-stopping="isStoppingJob"
+      :stop-action="stopActiveJob"
       @refresh="refreshLogs"
       @focus-credentials="focusCredentialsFromJob"
     />
@@ -433,6 +436,11 @@ const { isPending: isRefreshingLogs, run: runRefreshLogs } = useAsyncAction({
     toast.error(extractErrorMessage(error, "刷新日志失败"));
   },
 });
+const { isPending: isStoppingJob, run: runStopJob } = useAsyncAction({
+  onError: (error) => {
+    toast.error(extractErrorMessage(error, "停止 ACME 任务失败"));
+  },
+});
 const { isPending: isDownloading, run: runDownload } = useAsyncAction({
   onError: (error) => {
     toast.error(extractErrorMessage(error, "下载失败"));
@@ -448,6 +456,11 @@ const applications = computed(() => overview.value?.applications || []);
 const acmeState = computed(() => overview.value?.acmeState || null);
 const isAcmeInstalled = computed(() => acmeState.value?.status === "installed");
 const isTableLocked = computed(() => overview.value?.lock.locked === true);
+const canStopActiveJob = computed(() => {
+  if (!isTableLocked.value) return false;
+  if (isStoppingJob.value) return true;
+  return Boolean(overview.value?.lock.jobId || job.value?.status === "running");
+});
 const lockedApplication = computed(() => {
   const applicationId = overview.value?.lock.applicationId;
   if (!applicationId) return null;
@@ -572,7 +585,11 @@ const pollJobOnce = async (jobId: string) => {
   logs.value = data.logs;
   analysis.value = data.analysis ?? null;
 
-  if (data.job.status === "succeeded" || data.job.status === "failed") {
+  if (
+    data.job.status === "succeeded" ||
+    data.job.status === "failed" ||
+    data.job.status === "stopped"
+  ) {
     stopPolling();
     await fetchOverview({ silent: true, preserveSelection: true });
   }
@@ -749,6 +766,32 @@ const refreshLogs = async () => {
   await runRefreshLogs(() => pollJobOnce(selectedJobId.value));
 };
 
+const stopActiveJob = async () => {
+  await runStopJob(async () => {
+    const result = await AcmeAPI.stopActiveJob();
+    stopPolling();
+    const killedCount =
+      result.processResult.matchedPids.length -
+      result.processResult.remainingPids.length;
+    if (result.stopped) {
+      toast.success("已停止 ACME 任务", {
+        description:
+          result.processResult.matchedPids.length > 0
+            ? `已结束 ${Math.max(0, killedCount)} 个 acme.sh 进程`
+            : "未发现仍在运行的 acme.sh 进程",
+      });
+    } else {
+      toast.info("当前没有正在执行的 ACME 任务");
+    }
+
+    await fetchOverview({ silent: true, preserveSelection: true });
+    const stoppedJobId = result.job?.id || selectedJobId.value;
+    if (stoppedJobId) {
+      await pollJobOnce(stoppedJobId);
+    }
+  });
+};
+
 const focusCredentialsFromJob = async () => {
   const applicationId = job.value?.applicationId;
   if (!applicationId) return;
@@ -758,7 +801,12 @@ const focusCredentialsFromJob = async () => {
 const isActionBlocked = () => {
   if (!isAcmeInstalled.value) return true;
   if (isTableLocked.value) return true;
-  if (isMutating.value || isDialogSubmitting.value || isDownloading.value) {
+  if (
+    isMutating.value ||
+    isDialogSubmitting.value ||
+    isDownloading.value ||
+    isStoppingJob.value
+  ) {
     return true;
   }
   return false;
@@ -766,7 +814,12 @@ const isActionBlocked = () => {
 
 const isDeleteApplicationBlocked = () => {
   if (isTableLocked.value) return true;
-  if (isMutating.value || isDialogSubmitting.value || isDownloading.value) {
+  if (
+    isMutating.value ||
+    isDialogSubmitting.value ||
+    isDownloading.value ||
+    isStoppingJob.value
+  ) {
     return true;
   }
   return false;
@@ -813,6 +866,7 @@ const latestJobLabel = (application: AcmeApplicationOverviewItem) => {
   if (status === "running") return "执行中";
   if (status === "succeeded") return "最近成功";
   if (status === "failed") return "最近失败";
+  if (status === "stopped") return "已停止";
   return status;
 };
 
@@ -822,6 +876,7 @@ const jobBadgeVariant = (status?: string | null) => {
   if (status === "running") return "default";
   if (status === "succeeded") return "secondary";
   if (status === "failed") return "outline";
+  if (status === "stopped") return "outline";
   return "outline";
 };
 

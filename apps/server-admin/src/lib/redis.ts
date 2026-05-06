@@ -367,7 +367,12 @@ export const DEFAULT_IP_LOCATION_API_CONFIG: IpLocationApiConfig = {
   cidr_url: "https://cidr.wxlnk.com/api/v1",
 };
 
-export type AcmeJobStatus = "queued" | "running" | "succeeded" | "failed";
+export type AcmeJobStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "stopped";
 export type AcmeJobMethod = "dns" | "http" | "https";
 export type AcmeJobTrigger = "manual_request" | "auto_renew";
 export type AcmeApplicationLatestJobStatus = AcmeJobStatus | "idle";
@@ -1762,6 +1767,7 @@ const normalizeAcmeApplicationLatestJobStatus = (
   if (value === "running") return "running";
   if (value === "succeeded") return "succeeded";
   if (value === "failed") return "failed";
+  if (value === "stopped") return "stopped";
   return undefined;
 };
 
@@ -1775,7 +1781,8 @@ const normalizeAcmeJob = (value: unknown): AcmeJob | null => {
     raw.status === "queued" ||
     raw.status === "running" ||
     raw.status === "succeeded" ||
-    raw.status === "failed"
+    raw.status === "failed" ||
+    raw.status === "stopped"
       ? raw.status
       : undefined;
   if (!id || !domains.length || !createdAt || !status) return null;
@@ -3853,7 +3860,12 @@ return actual
       return { locked: false };
     }
     const job = await this.getAcmeJob(lock.jobId);
-    if (!job || job.status === "succeeded" || job.status === "failed") {
+    if (
+      !job ||
+      job.status === "succeeded" ||
+      job.status === "failed" ||
+      job.status === "stopped"
+    ) {
       if (lock.lockId) {
         await this.releaseAcmeRuntimeLock(lock.lockId);
       } else if (raw) {
