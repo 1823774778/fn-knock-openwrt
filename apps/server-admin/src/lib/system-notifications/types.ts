@@ -15,6 +15,7 @@ export const NOTIFICATION_PROVIDER_TYPES = [
   "email",
   "webhook",
   "pushdeer",
+  "magicpush",
   "bark",
   "telegram",
 ] as const;

@@ -615,9 +615,6 @@ watch(
         <div v-if="selectedDefinition" class="space-y-3">
           <div class="space-y-1">
             <div class="text-sm font-medium">连接配置</div>
-            <div class="text-xs text-muted-foreground">
-              敏感字段保存后会脱敏显示。编辑时留空可保持原值不变。
-            </div>
           </div>
 
           <SchemaFieldsEditor

@@ -1190,6 +1190,7 @@ export type NotificationProviderType =
   | "email"
   | "webhook"
   | "pushdeer"
+  | "magicpush"
   | "bark"
   | "telegram";
 

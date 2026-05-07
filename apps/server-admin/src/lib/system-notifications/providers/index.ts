@@ -10,6 +10,7 @@ import { barkProviderDefinition, sendBarkMessage } from "./bark";
 import { dingtalkProviderDefinition, sendDingTalkMessage } from "./dingtalk";
 import { emailProviderDefinition, sendEmailMessage } from "./email";
 import { feishuProviderDefinition, sendFeishuMessage } from "./feishu";
+import { magicpushProviderDefinition, sendMagicPushMessage } from "./magicpush";
 import { pushdeerProviderDefinition, sendPushDeerMessage } from "./pushdeer";
 import { pushplusProviderDefinition, sendPushPlusMessage } from "./pushplus";
 import {
@@ -67,6 +68,10 @@ const PROVIDER_REGISTRY = {
   pushdeer: {
     definition: pushdeerProviderDefinition,
     send: sendPushDeerMessage,
+  },
+  magicpush: {
+    definition: magicpushProviderDefinition,
+    send: sendMagicPushMessage,
   },
   bark: {
     definition: barkProviderDefinition,
