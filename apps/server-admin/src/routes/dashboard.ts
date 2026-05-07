@@ -1,6 +1,9 @@
 import { Elysia, t } from "elysia";
 import { goBackend } from "../lib/go-backend";
-import { trafficMetricsManager } from "../lib/traffic-metrics";
+import {
+  normalizeTrafficHost,
+  trafficMetricsManager,
+} from "../lib/traffic-metrics";
 import { routeDoc, withRouteDoc } from "../lib/openapi";
 
 const parseIntSafe = (value: string | undefined, fallback: number) => {
@@ -77,6 +80,14 @@ const buildRealtimePayload = async () => {
     total_out: resp.data.total_out,
     active_conns: resp.data.active_conns,
     error_5xx: resp.data.error_5xx,
+    by_host: (resp.data.by_host ?? [])
+      .map((item) => ({
+        host: normalizeTrafficHost(item.host),
+        total_in: Number(item.total_in ?? 0),
+        total_out: Number(item.total_out ?? 0),
+        error_5xx: Number(item.error_5xx ?? 0),
+      }))
+      .filter((item) => item.host),
     timestamp: Date.now(),
   };
 };
@@ -89,6 +100,7 @@ export const dashboardRoutes = new Elysia({
     "/stats",
     async ({ query }) => {
       const userId = query.userId || process.env.TRAFFIC_USER_ID || "global";
+      const host = normalizeTrafficHost(query.host);
       const rangeSec = clamp(
         parseIntSafe(query.rangeSec, 3600),
         60,
@@ -107,16 +119,46 @@ export const dashboardRoutes = new Elysia({
         err5xx1d,
         err5xx1w,
       ] = await Promise.all([
-        trafficMetricsManager.listTrafficPoints(userId, "in", fromSec, nowSec),
-        trafficMetricsManager.listTrafficPoints(userId, "out", fromSec, nowSec),
-        trafficMetricsManager.sumTrafficDelta(userId, "in", fromSec, nowSec),
-        trafficMetricsManager.sumTrafficDelta(userId, "out", fromSec, nowSec),
-        trafficMetricsManager.sum5xxDelta(userId, fromSec, nowSec),
-        trafficMetricsManager.sum5xxDelta(userId, nowSec - 24 * 3600, nowSec),
+        trafficMetricsManager.listTrafficPoints(
+          userId,
+          "in",
+          fromSec,
+          nowSec,
+          host,
+        ),
+        trafficMetricsManager.listTrafficPoints(
+          userId,
+          "out",
+          fromSec,
+          nowSec,
+          host,
+        ),
+        trafficMetricsManager.sumTrafficDelta(
+          userId,
+          "in",
+          fromSec,
+          nowSec,
+          host,
+        ),
+        trafficMetricsManager.sumTrafficDelta(
+          userId,
+          "out",
+          fromSec,
+          nowSec,
+          host,
+        ),
+        trafficMetricsManager.sum5xxDelta(userId, fromSec, nowSec, host),
+        trafficMetricsManager.sum5xxDelta(
+          userId,
+          nowSec - 24 * 3600,
+          nowSec,
+          host,
+        ),
         trafficMetricsManager.sum5xxDelta(
           userId,
           nowSec - 7 * 24 * 3600,
           nowSec,
+          host,
         ),
       ]);
 
@@ -144,7 +186,15 @@ export const dashboardRoutes = new Elysia({
       let current: any = null;
       try {
         const resp = await goBackend.getTrafficStats();
-        if (resp.success && resp.data) current = resp.data;
+        if (resp.success && resp.data) {
+          current = resp.data;
+          if (host) {
+            current =
+              (resp.data.by_host ?? []).find(
+                (item) => normalizeTrafficHost(item.host) === host,
+              ) ?? null;
+          }
+        }
       } catch {}
 
       return {
@@ -174,6 +224,7 @@ export const dashboardRoutes = new Elysia({
       query: t.Object({
         rangeSec: t.Optional(t.String()),
         userId: t.Optional(t.String()),
+        host: t.Optional(t.String()),
       }),
     }),
   )

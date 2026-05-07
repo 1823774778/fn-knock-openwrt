@@ -8,6 +8,14 @@ export type TrafficSnapshot = {
   total_out: number;
   active_conns: number;
   error_5xx: number;
+  by_host?: HostTrafficSnapshot[];
+};
+
+export type HostTrafficSnapshot = {
+  host: string;
+  total_in: number;
+  total_out: number;
+  error_5xx?: number;
 };
 
 export type TrafficDeltaPoint = {
@@ -26,15 +34,64 @@ const toUnixSeconds = (ms = Date.now()) => Math.floor(ms / 1000);
 
 const computeDelta = (currentTotal: number, lastTotal: number | null) => {
   if (!Number.isFinite(currentTotal) || currentTotal < 0) return 0;
-  if (lastTotal === null || !Number.isFinite(lastTotal) || lastTotal < 0) return currentTotal;
+  if (lastTotal === null || !Number.isFinite(lastTotal) || lastTotal < 0)
+    return currentTotal;
   if (currentTotal >= lastTotal) return currentTotal - lastTotal;
   return currentTotal;
 };
 
-const normalizeSeconds = (value: unknown, fallback: number, min: number, max: number) => {
+const normalizeCounter = (value: unknown): number => {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return n;
+};
+
+const normalizeSeconds = (
+  value: unknown,
+  fallback: number,
+  min: number,
+  max: number,
+) => {
   const n = Number(value);
   if (!Number.isFinite(n)) return fallback;
   return Math.max(min, Math.min(max, Math.floor(n)));
+};
+
+export const normalizeTrafficHost = (value: unknown): string => {
+  let host = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  if (!host) return "";
+
+  host = host
+    .replace(/^[a-z][a-z0-9+.-]*:\/\//i, "")
+    .replace(/\/.*$/, "")
+    .replace(/\.+$/, "");
+
+  if (!host) return "";
+
+  if (host.startsWith("[")) {
+    const end = host.indexOf("]");
+    if (end > 0) return host.slice(0, end + 1);
+    return host;
+  }
+
+  const lastColon = host.lastIndexOf(":");
+  if (lastColon > -1 && host.indexOf(":") === lastColon) {
+    const possiblePort = host.slice(lastColon + 1);
+    if (/^\d+$/.test(possiblePort)) {
+      host = host.slice(0, lastColon);
+    }
+  }
+
+  return host.trim();
+};
+
+type TrafficSnapshotRecord = {
+  host: string | null;
+  total_in: number;
+  total_out: number;
+  error_5xx: number;
 };
 
 export class TrafficMetricsManager {
@@ -46,26 +103,68 @@ export class TrafficMetricsManager {
     this.r = redis;
   }
 
-  private trafficKey(userId: string, direction: TrafficDirection) {
-    return `fn_knock:traffic:${userId}:${direction}`;
+  private scopeSegment(userId: string, host?: string | null) {
+    const normalizedHost = normalizeTrafficHost(host);
+    if (!normalizedHost) return userId;
+    return `${userId}:host:${encodeURIComponent(normalizedHost)}`;
   }
 
-  private trafficLastTotalKey(userId: string, direction: TrafficDirection) {
-    return `fn_knock:traffic:last:${userId}:${direction}`;
+  private trafficKey(
+    userId: string,
+    direction: TrafficDirection,
+    host?: string | null,
+  ) {
+    return `fn_knock:traffic:${this.scopeSegment(userId, host)}:${direction}`;
   }
 
-  private error5xxKey(userId: string) {
-    return `fn_knock:errors:${userId}:5xx`;
+  private trafficLastTotalKey(
+    userId: string,
+    direction: TrafficDirection,
+    host?: string | null,
+  ) {
+    return `fn_knock:traffic:last:${this.scopeSegment(userId, host)}:${direction}`;
   }
 
-  private error5xxLastTotalKey(userId: string) {
-    return `fn_knock:errors:last:${userId}:5xx`;
+  private error5xxKey(userId: string, host?: string | null) {
+    return `fn_knock:errors:${this.scopeSegment(userId, host)}:5xx`;
+  }
+
+  private error5xxLastTotalKey(userId: string, host?: string | null) {
+    return `fn_knock:errors:last:${this.scopeSegment(userId, host)}:5xx`;
+  }
+
+  private buildSnapshotRecords(
+    snapshot: TrafficSnapshot,
+  ): TrafficSnapshotRecord[] {
+    const records: TrafficSnapshotRecord[] = [
+      {
+        host: null,
+        total_in: normalizeCounter(snapshot.total_in),
+        total_out: normalizeCounter(snapshot.total_out),
+        error_5xx: normalizeCounter(snapshot.error_5xx),
+      },
+    ];
+
+    const byHost = new Map<string, TrafficSnapshotRecord>();
+    for (const item of snapshot.by_host ?? []) {
+      const host = normalizeTrafficHost(item?.host);
+      if (!host) continue;
+      byHost.set(host, {
+        host,
+        total_in: normalizeCounter(item.total_in),
+        total_out: normalizeCounter(item.total_out),
+        error_5xx: normalizeCounter(item.error_5xx),
+      });
+    }
+
+    records.push(...byHost.values());
+    return records;
   }
 
   async recordSnapshot(
     userId: string,
     snapshot: TrafficSnapshot,
-    opts?: { nowSec?: number; keepSeconds?: number }
+    opts?: { nowSec?: number; keepSeconds?: number },
   ): Promise<{
     nowSec: number;
     deltaIn: number;
@@ -73,81 +172,140 @@ export class TrafficMetricsManager {
     delta5xx: number;
   }> {
     const nowSec = opts?.nowSec ?? toUnixSeconds();
-    const keepSeconds = normalizeSeconds(opts?.keepSeconds, 7 * 24 * 3600, 60, 365 * 24 * 3600);
+    const keepSeconds = normalizeSeconds(
+      opts?.keepSeconds,
+      7 * 24 * 3600,
+      60,
+      365 * 24 * 3600,
+    );
     const expireBeforeSec = nowSec - keepSeconds;
 
     const directionIn: TrafficDirection = "in";
     const directionOut: TrafficDirection = "out";
+    const records = this.buildSnapshotRecords(snapshot);
+    const lastKeys = records.flatMap((record) => [
+      this.trafficLastTotalKey(userId, directionIn, record.host),
+      this.trafficLastTotalKey(userId, directionOut, record.host),
+      this.error5xxLastTotalKey(userId, record.host),
+    ]);
 
-    const lastKeys = [
-      this.trafficLastTotalKey(userId, directionIn),
-      this.trafficLastTotalKey(userId, directionOut),
-      this.error5xxLastTotalKey(userId),
-    ];
-
-    const [lastInRaw, lastOutRaw, last5xxRaw] = await this.r.mget(...lastKeys);
-    const lastIn = parseNumberSafe(lastInRaw);
-    const lastOut = parseNumberSafe(lastOutRaw);
-    const last5xx = parseNumberSafe(last5xxRaw);
-
-    const deltaIn = computeDelta(snapshot.total_in, lastIn);
-    const deltaOut = computeDelta(snapshot.total_out, lastOut);
-    const delta5xx = computeDelta(snapshot.error_5xx, last5xx);
-
-    const memberIn = `${nowSec}:${deltaIn}`;
-    const memberOut = `${nowSec}:${deltaOut}`;
-    const member5xx = `${nowSec}:${delta5xx}`;
-
-    const keyIn = this.trafficKey(userId, directionIn);
-    const keyOut = this.trafficKey(userId, directionOut);
-    const key5xx = this.error5xxKey(userId);
-
+    const lastValues = await this.r.mget(...lastKeys);
     const pipeline = this.r.pipeline();
-    pipeline.set(this.trafficLastTotalKey(userId, directionIn), String(snapshot.total_in));
-    pipeline.set(this.trafficLastTotalKey(userId, directionOut), String(snapshot.total_out));
-    pipeline.set(this.error5xxLastTotalKey(userId), String(snapshot.error_5xx));
+    let globalDeltaIn = 0;
+    let globalDeltaOut = 0;
+    let globalDelta5xx = 0;
 
-    pipeline.zadd(keyIn, nowSec, memberIn);
-    pipeline.zadd(keyOut, nowSec, memberOut);
-    pipeline.zadd(key5xx, nowSec, member5xx);
+    records.forEach((record, index) => {
+      const offset = index * 3;
+      const lastIn = parseNumberSafe(lastValues[offset]);
+      const lastOut = parseNumberSafe(lastValues[offset + 1]);
+      const last5xx = parseNumberSafe(lastValues[offset + 2]);
+      const deltaIn = computeDelta(record.total_in, lastIn);
+      const deltaOut = computeDelta(record.total_out, lastOut);
+      const delta5xx = computeDelta(record.error_5xx, last5xx);
 
-    pipeline.sadd(this.keyIndexTraffic, keyIn, keyOut);
-    pipeline.sadd(this.keyIndexError5xx, key5xx);
+      if (record.host === null) {
+        globalDeltaIn = deltaIn;
+        globalDeltaOut = deltaOut;
+        globalDelta5xx = delta5xx;
+      }
 
-    pipeline.zremrangebyscore(keyIn, 0, expireBeforeSec);
-    pipeline.zremrangebyscore(keyOut, 0, expireBeforeSec);
-    pipeline.zremrangebyscore(key5xx, 0, expireBeforeSec);
+      const keyIn = this.trafficKey(userId, directionIn, record.host);
+      const keyOut = this.trafficKey(userId, directionOut, record.host);
+      const key5xx = this.error5xxKey(userId, record.host);
+
+      pipeline.set(
+        this.trafficLastTotalKey(userId, directionIn, record.host),
+        String(record.total_in),
+      );
+      pipeline.set(
+        this.trafficLastTotalKey(userId, directionOut, record.host),
+        String(record.total_out),
+      );
+      pipeline.set(
+        this.error5xxLastTotalKey(userId, record.host),
+        String(record.error_5xx),
+      );
+
+      pipeline.zadd(keyIn, nowSec, `${nowSec}:${deltaIn}`);
+      pipeline.zadd(keyOut, nowSec, `${nowSec}:${deltaOut}`);
+      pipeline.zadd(key5xx, nowSec, `${nowSec}:${delta5xx}`);
+
+      pipeline.sadd(this.keyIndexTraffic, keyIn, keyOut);
+      pipeline.sadd(this.keyIndexError5xx, key5xx);
+
+      pipeline.zremrangebyscore(keyIn, 0, expireBeforeSec);
+      pipeline.zremrangebyscore(keyOut, 0, expireBeforeSec);
+      pipeline.zremrangebyscore(key5xx, 0, expireBeforeSec);
+    });
 
     await pipeline.exec();
 
-    return { nowSec, deltaIn, deltaOut, delta5xx };
+    return {
+      nowSec,
+      deltaIn: globalDeltaIn,
+      deltaOut: globalDeltaOut,
+      delta5xx: globalDelta5xx,
+    };
   }
 
-  async listTrafficPoints(userId: string, direction: TrafficDirection, fromSec: number, toSec: number) {
-    const key = this.trafficKey(userId, direction);
+  async listTrafficPoints(
+    userId: string,
+    direction: TrafficDirection,
+    fromSec: number,
+    toSec: number,
+    host?: string | null,
+  ) {
+    const key = this.trafficKey(userId, direction, normalizeTrafficHost(host));
     const members = await this.r.zrangebyscore(key, fromSec, toSec);
     return this.parsePoints(members);
   }
 
-  async list5xxPoints(userId: string, fromSec: number, toSec: number) {
-    const key = this.error5xxKey(userId);
+  async list5xxPoints(
+    userId: string,
+    fromSec: number,
+    toSec: number,
+    host?: string | null,
+  ) {
+    const key = this.error5xxKey(userId, normalizeTrafficHost(host));
     const members = await this.r.zrangebyscore(key, fromSec, toSec);
     return this.parsePoints(members);
   }
 
-  async sumTrafficDelta(userId: string, direction: TrafficDirection, fromSec: number, toSec: number) {
-    const points = await this.listTrafficPoints(userId, direction, fromSec, toSec);
+  async sumTrafficDelta(
+    userId: string,
+    direction: TrafficDirection,
+    fromSec: number,
+    toSec: number,
+    host?: string | null,
+  ) {
+    const points = await this.listTrafficPoints(
+      userId,
+      direction,
+      fromSec,
+      toSec,
+      host,
+    );
     return points.reduce((acc, p) => acc + p.delta, 0);
   }
 
-  async sum5xxDelta(userId: string, fromSec: number, toSec: number) {
-    const points = await this.list5xxPoints(userId, fromSec, toSec);
+  async sum5xxDelta(
+    userId: string,
+    fromSec: number,
+    toSec: number,
+    host?: string | null,
+  ) {
+    const points = await this.list5xxPoints(userId, fromSec, toSec, host);
     return points.reduce((acc, p) => acc + p.delta, 0);
   }
 
-  async cleanupExpired(keepSeconds = 7 * 24 * 3600): Promise<{ cleanedKeys: number }> {
+  async cleanupExpired(
+    keepSeconds = 7 * 24 * 3600,
+  ): Promise<{ cleanedKeys: number }> {
     const nowSec = toUnixSeconds();
-    const expireBeforeSec = nowSec - normalizeSeconds(keepSeconds, 7 * 24 * 3600, 60, 365 * 24 * 3600);
+    const expireBeforeSec =
+      nowSec -
+      normalizeSeconds(keepSeconds, 7 * 24 * 3600, 60, 365 * 24 * 3600);
 
     const [trafficKeys, errorKeys] = await Promise.all([
       this.r.smembers(this.keyIndexTraffic),
@@ -164,14 +322,23 @@ export class TrafficMetricsManager {
     return { cleanedKeys: keys.length };
   }
 
-  buildTrafficEchartsLine(points: TrafficDeltaPoint[], opts?: { name?: string; fallbackIntervalSec?: number }) {
-    const fallbackIntervalSec = normalizeSeconds(opts?.fallbackIntervalSec, 60, 1, 24 * 3600);
+  buildTrafficEchartsLine(
+    points: TrafficDeltaPoint[],
+    opts?: { name?: string; fallbackIntervalSec?: number },
+  ) {
+    const fallbackIntervalSec = normalizeSeconds(
+      opts?.fallbackIntervalSec,
+      60,
+      1,
+      24 * 3600,
+    );
     let lastTs: number | null = null;
 
     const data = points
       .sort((a, b) => a.ts - b.ts)
       .map((p) => {
-        const dt = lastTs !== null ? Math.max(1, p.ts - lastTs) : fallbackIntervalSec;
+        const dt =
+          lastTs !== null ? Math.max(1, p.ts - lastTs) : fallbackIntervalSec;
         lastTs = p.ts;
         const bps = Math.round((p.delta / dt) * 1000) / 1000;
         return [p.ts * 1000, bps] as const;

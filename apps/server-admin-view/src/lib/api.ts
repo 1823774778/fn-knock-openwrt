@@ -2080,9 +2080,16 @@ export const AcmeAPI = {
 };
 
 export const DashboardAPI = {
-  async getStats(rangeSec: number, userId?: string): Promise<DashboardStats> {
+  async getStats(
+    rangeSec: number,
+    userIdOrOptions?: string | { userId?: string; host?: string },
+  ): Promise<DashboardStats> {
+    const options =
+      typeof userIdOrOptions === "string"
+        ? { userId: userIdOrOptions }
+        : (userIdOrOptions ?? {});
     const res = await apiClient.get("/dashboard/stats", {
-      params: { rangeSec, userId },
+      params: { rangeSec, ...options },
     });
     return res.data.data;
   },

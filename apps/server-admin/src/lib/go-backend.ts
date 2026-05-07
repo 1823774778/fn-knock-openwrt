@@ -102,6 +102,14 @@ export interface TrafficStats {
   total_out: number;
   active_conns: number;
   error_5xx: number;
+  by_host?: HostTrafficStats[];
+}
+
+export interface HostTrafficStats {
+  host: string;
+  total_in: number;
+  total_out: number;
+  error_5xx: number;
 }
 
 export interface GatewayLoggingConfig {
@@ -364,6 +372,7 @@ export class GoBackendService {
     total_out: 0,
     active_conns: 0,
     error_5xx: 0,
+    by_host: [],
   };
 
   constructor(

@@ -1076,7 +1076,15 @@ export type TrafficStats = {
   total_out: number;
   active_conns: number;
   error_5xx: number;
+  by_host?: HostTrafficStats[];
   timestamp: number;
+};
+
+export type HostTrafficStats = {
+  host: string;
+  total_in: number;
+  total_out: number;
+  error_5xx: number;
 };
 
 export type DashboardStats = {

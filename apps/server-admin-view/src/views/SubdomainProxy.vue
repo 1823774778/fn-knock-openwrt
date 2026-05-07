@@ -356,6 +356,7 @@
                 <TableHead class="min-w-[12rem]">标题</TableHead>
                 <TableHead>域名</TableHead>
                 <TableHead>目标</TableHead>
+                <TableHead class="min-w-[10rem]">流量</TableHead>
                 <TableHead>状态</TableHead>
                 <TableHead class="text-right">操作</TableHead>
               </TableRow>
@@ -373,7 +374,7 @@
             >
               <TableRow v-if="filteredMappings.length === 0">
                 <TableCell
-                  colspan="7"
+                  colspan="8"
                   class="py-8 text-center text-muted-foreground"
                 >
                   还没有配置任何 Host 映射。
@@ -487,6 +488,14 @@
                   {{ formatHostWithAccessEntryPort(mapping.host) }}
                 </TableCell>
                 <TableCell>{{ mapping.target }}</TableCell>
+                <TableCell class="min-w-[10rem]">
+                  <HostTrafficActivity
+                    :host="mapping.host"
+                    :title="getMappingTitleForDisplay(mapping)"
+                    :sample="getHostTrafficSample(mapping.host)"
+                    :timestamp="trafficRealtimeStats?.timestamp ?? null"
+                  />
+                </TableCell>
                 <TableCell class="min-w-[3rem]">
                   <div
                     class="flex min-w-[3rem] flex-wrap items-center gap-2 text-xs text-muted-foreground"
@@ -769,10 +778,7 @@
               v-else-if="discoveredData"
               class="rounded-md border bg-background"
             >
-              <Table
-                class="min-w-[42rem]"
-                container-class="overflow-visible"
-              >
+              <Table class="min-w-[42rem]" container-class="overflow-visible">
                 <TableHeader
                   class="sticky top-0 z-10 bg-background shadow-sm [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background"
                 >
@@ -904,7 +910,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import {
   CircleAlert,
   ChevronDown,
@@ -954,6 +960,7 @@ import { Switch } from "@/components/ui/switch";
 import { VueDraggable } from "vue-draggable-plus";
 import ConfirmDangerPopover from "@admin-shared/components/common/ConfirmDangerPopover.vue";
 import ConfigCollapsibleCard from "@admin-shared/components/ConfigCollapsibleCard.vue";
+import HostTrafficActivity from "@/components/HostTrafficActivity.vue";
 import InlineCommentEditor from "@admin-shared/components/InlineCommentEditor.vue";
 import ProxyTargetInputField from "@admin-shared/components/common/ProxyTargetInputField.vue";
 import SearchInput from "@admin-shared/components/SearchInput.vue";
@@ -971,6 +978,7 @@ import { extractPortFromTarget } from "@admin-shared/utils/extractPortFromTarget
 import { useConfigStore } from "../store/config";
 import {
   ConfigAPI,
+  DashboardAPI,
   ScanAPI,
   SystemAPI,
   type DiscoveredServiceInfo,
@@ -979,8 +987,10 @@ import {
 import { docsUrls } from "../lib/docs";
 import type {
   GatewayProxyHeadersDetails,
+  HostTrafficStats,
   HostMapping,
   SubdomainModeConfig,
+  TrafficStats,
 } from "../types";
 import {
   extractErrorMessage,
@@ -1219,7 +1229,10 @@ const accessEntryPort = ref("7999");
 const brokenFaviconKeys = ref(new Set<string>());
 const draggableVisibleMappings = ref<HostMapping[]>([]);
 const gatewayProxyHeadersDetails = ref<GatewayProxyHeadersDetails | null>(null);
+const trafficRealtimeStats = ref<TrafficStats | null>(null);
 let gatewayProxyHeadersRequestId = 0;
+let trafficRealtimeTimer: number | null = null;
+let isTrafficRealtimeLoading = false;
 const mappingMetadataTarget = ref("");
 const openProtocolHeadersWarningHost = ref<string | null>(null);
 const modeForm = reactive<SubdomainModeConfig>(createDefaultModeForm());
@@ -1459,6 +1472,17 @@ const markFaviconBroken = (mapping: HostMapping) => {
 const visibleMappings = computed(() =>
   allMappings.value.filter((mapping) => !isAuthServiceTarget(mapping.target)),
 );
+const hostTrafficSamples = computed(() => {
+  const samples = new Map<string, HostTrafficStats>();
+  for (const item of trafficRealtimeStats.value?.by_host ?? []) {
+    const host = normalizeHostLike(item.host);
+    if (!host) continue;
+    samples.set(host, item);
+  }
+  return samples;
+});
+const getHostTrafficSample = (host: string): HostTrafficStats | null =>
+  hostTrafficSamples.value.get(normalizeHostLike(host)) ?? null;
 const visibleMappingsSignature = computed(() =>
   visibleMappings.value
     .map(
@@ -1780,6 +1804,11 @@ onMounted(async () => {
     await configStore.loadConfig();
   }
   void loadAccessEntryPort();
+  startTrafficRealtimePolling();
+});
+
+onUnmounted(() => {
+  stopTrafficRealtimePolling();
 });
 
 async function loadAccessEntryPort() {
@@ -1788,6 +1817,33 @@ async function loadAccessEntryPort() {
     accessEntryPort.value = info.port.trim() || "7999";
   } catch (error) {
     console.warn("load access entry port failed:", error);
+  }
+}
+
+async function loadTrafficRealtime() {
+  if (isTrafficRealtimeLoading) return;
+  isTrafficRealtimeLoading = true;
+  try {
+    trafficRealtimeStats.value = await DashboardAPI.getRealtime();
+  } catch (error) {
+    console.warn("load host traffic realtime failed:", error);
+  } finally {
+    isTrafficRealtimeLoading = false;
+  }
+}
+
+function startTrafficRealtimePolling() {
+  stopTrafficRealtimePolling();
+  void loadTrafficRealtime();
+  trafficRealtimeTimer = window.setInterval(() => {
+    void loadTrafficRealtime();
+  }, 1000);
+}
+
+function stopTrafficRealtimePolling() {
+  if (trafficRealtimeTimer !== null) {
+    window.clearInterval(trafficRealtimeTimer);
+    trafficRealtimeTimer = null;
   }
 }
 
