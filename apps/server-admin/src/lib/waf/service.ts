@@ -35,6 +35,14 @@ const MAX_UNPACKED_ZIP_BYTES = 60 * 1024 * 1024;
 const CONF_EXT_RE = /\.conf$/i;
 const BUNDLE_ENTRY_PATH_RE = /^[A-Za-z0-9._/-]+$/;
 const SYSTEM_INITIALIZATION_RULE_FILENAME = "REQUEST-901-INITIALIZATION.conf";
+// Highest-frequency false-positive CRS files from the REQUEST-900 exclusions.
+const DEFAULT_DISABLED_SYSTEM_RULE_FILENAMES = new Set([
+  "REQUEST-920-PROTOCOL-ENFORCEMENT.conf",
+  "REQUEST-930-APPLICATION-ATTACK-LFI.conf",
+  "REQUEST-932-APPLICATION-ATTACK-RCE.conf",
+  "REQUEST-941-APPLICATION-ATTACK-XSS.conf",
+  "REQUEST-942-APPLICATION-ATTACK-SQLI.conf",
+]);
 const BLOCKED_DIRECTIVE_RE =
   /^\s*(Include|SecAuditLog|SecDebugLog|SecDataDir|SecTmpDir|SecUploadDir)\b/im;
 
@@ -205,6 +213,10 @@ const defaultRulesState = (): WAFRulesState => ({
   },
   custom_enabled: {},
 });
+
+const isSystemRuleEnabledByDefault = (filename: string): boolean =>
+  filename === SYSTEM_INITIALIZATION_RULE_FILENAME ||
+  !DEFAULT_DISABLED_SYSTEM_RULE_FILENAMES.has(filename);
 
 const enforceRequiredRuleState = (state: WAFRulesState): WAFRulesState => ({
   system_enabled: {
@@ -408,7 +420,9 @@ const listRuleFiles = async (
       description:
         descriptions.get(entry.name) ||
         (source === "system" ? "系统安全规则" : "用户上传规则"),
-      enabled: enabledMap[entry.name] ?? true,
+      enabled:
+        enabledMap[entry.name] ??
+        (source === "system" ? isSystemRuleEnabledByDefault(entry.name) : true),
       size_bytes: info.size,
       updated_at: info.mtime.toISOString(),
     });
@@ -765,8 +779,14 @@ const syncSystemWAFRulesFromManifest = async (
   await rename(tempDir, SYSTEM_DIR);
 
   const state = await readRulesState();
+  const previousSystemState = state.system_enabled;
   state.system_enabled = Object.fromEntries(
-    [...ruleFiles.keys()].sort().map((filename) => [filename, true]),
+    [...ruleFiles.keys()]
+      .sort()
+      .map((filename) => [
+        filename,
+        previousSystemState[filename] ?? isSystemRuleEnabledByDefault(filename),
+      ]),
   );
   await writeRulesState(state);
 

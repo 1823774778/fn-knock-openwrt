@@ -526,8 +526,7 @@ onMounted(fetchDetails);
             <TriangleAlert class="mt-0.5 h-4 w-4" />
             <AlertTitle>规则误报提示</AlertTitle>
             <AlertDescription class="text-sm leading-6 text-amber-900">
-              开启 WAF
-              所有规则后，部分正常请求可能被误判并拦截；如果发现误报，请及时反馈。QQ群：1081609274
+              默认已关闭高频误报的系统规则文件；手动开启更多规则后，部分正常请求仍可能被误判并拦截。如果发现误报，请及时反馈。QQ群：1081609274
             </AlertDescription>
           </Alert>
         </section>
@@ -543,8 +542,8 @@ onMounted(fetchDetails);
               启用WAF
             </Label>
             <div class="text-sm text-muted-foreground">
-              默认关闭。开启时会先更新系统规则，再按当前强度加载到 Go
-              网关；关闭后网关会立即跳过 WAF 检查。
+              默认关闭。开启时会先更新系统规则，并跳过高频误报规则文件，再按当前强度加载到
+              Go 网关；关闭后网关会立即跳过 WAF 检查。
             </div>
           </div>
           <Switch
