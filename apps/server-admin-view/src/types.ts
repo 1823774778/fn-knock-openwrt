@@ -1320,6 +1320,10 @@ export interface NotificationProviderView {
   last_error?: string | null;
 }
 
+export interface NotificationProviderDetailView extends NotificationProviderView {
+  connection_config: Record<string, unknown>;
+}
+
 export interface NotificationTargetBinding {
   id: string;
   provider_id: string;

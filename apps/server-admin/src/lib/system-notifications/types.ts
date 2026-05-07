@@ -187,6 +187,10 @@ export type NotificationProviderView = Omit<
   connection_config_masked: Record<string, unknown>;
 };
 
+export type NotificationProviderDetailView = NotificationProviderView & {
+  connection_config: Record<string, unknown>;
+};
+
 export type NotificationTargetBinding = {
   id: string;
   provider_id: string;
@@ -308,6 +312,11 @@ export type NotificationProviderUpsertInput = {
   enabled?: boolean;
   connection_config?: Record<string, unknown>;
 };
+
+export type NotificationProviderDraftTestInput =
+  NotificationProviderUpsertInput & {
+    id?: string;
+  };
 
 export type NotificationRuleUpsertTargetInput = {
   id?: string;

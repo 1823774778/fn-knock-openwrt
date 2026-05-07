@@ -3,6 +3,7 @@ import {
   getNotificationProviderDefinition,
   listNotificationProviderDefinitions,
   maskNotificationProvider,
+  revealNotificationProvider,
   sendNotificationWithProvider,
 } from "./definitions";
 import {
@@ -24,7 +25,9 @@ import {
   type NotificationDelivery,
   type NotificationDeliveryListQuery,
   type NotificationDeliveryPolicy,
+  type NotificationMessage,
   type NotificationProvider,
+  type NotificationProviderDraftTestInput,
   type NotificationProviderUpsertInput,
   type NotificationRule,
   type NotificationRuleUpsertInput,
@@ -255,6 +258,36 @@ const validateRequiredSchemaFields = (
   }
 };
 
+const buildProviderTestMessage = (): NotificationMessage => {
+  const sentAt = nowIso();
+
+  return {
+    title: "测试通知",
+    summary: "通知通道配置正常，已成功触发一条测试消息。",
+    body_text:
+      "这是一条由敲门 knock 主动发出的测试通知，用于验证当前提供商的连通性、结构化文案以及展示效果。",
+    body_markdown:
+      "**连通性检查已通过。**\n\n这是一条由敲门 knock 主动发出的测试通知，用于验证当前提供商的连通性、结构化文案以及展示效果。",
+    severity: "info",
+    facts: [
+      {
+        label: "发送类型",
+        value: "提供商测试",
+      },
+      {
+        label: "发送时间",
+        value: sentAt,
+      },
+    ],
+    actions: [],
+    mentions: [],
+    occurred_at: sentAt,
+    metadata: {
+      test: true,
+    },
+  };
+};
+
 const resolveDeliveryPolicy = (
   policy?: NotificationDeliveryPolicy | null,
 ): Required<NotificationDeliveryPolicy> => ({
@@ -298,6 +331,15 @@ export class SystemNotificationService {
   async listProviders() {
     const providers = await redisNotificationStore.listProviders();
     return providers.map(maskNotificationProvider);
+  }
+
+  async getProvider(id: string) {
+    const provider = await redisNotificationStore.getProvider(id);
+    if (!provider) {
+      throw new Error("通知提供商不存在");
+    }
+
+    return revealNotificationProvider(provider);
   }
 
   async createProvider(input: NotificationProviderUpsertInput) {
@@ -417,31 +459,7 @@ export class SystemNotificationService {
       DEFAULT_DELIVERY_POLICY.timeout_seconds,
       { min: 1, max: 30 },
     );
-    const message = {
-      title: "测试通知",
-      summary: "通知通道配置正常，已成功触发一条测试消息。",
-      body_text:
-        "这是一条由敲门 knock 主动发出的测试通知，用于验证当前提供商的连通性、结构化文案以及展示效果。",
-      body_markdown:
-        "**连通性检查已通过。**\n\n这是一条由敲门 knock 主动发出的测试通知，用于验证当前提供商的连通性、结构化文案以及展示效果。",
-      severity: "info" as const,
-      facts: [
-        {
-          label: "发送类型",
-          value: "提供商测试",
-        },
-        {
-          label: "发送时间",
-          value: nowIso(),
-        },
-      ],
-      actions: [],
-      mentions: [],
-      occurred_at: nowIso(),
-      metadata: {
-        test: true,
-      },
-    };
+    const message = buildProviderTestMessage();
 
     const result = await sendNotificationWithProvider(
       provider,
@@ -466,6 +484,97 @@ export class SystemNotificationService {
         : result.reason || "测试发送失败",
       data: {
         provider: maskNotificationProvider(updatedProvider),
+        request_summary: result.request_summary,
+        response_summary: result.response_summary,
+      },
+    };
+  }
+
+  async testProviderDraft(input: NotificationProviderDraftTestInput) {
+    const requestedId = String(input.id || "").trim();
+    const requestedType = String(input.type || "").trim();
+    if (!NOTIFICATION_PROVIDER_TYPES.includes(requestedType as any)) {
+      throw new Error("不支持的通知提供商类型");
+    }
+
+    const definition = getNotificationProviderDefinition(requestedType);
+    if (!definition) {
+      throw new Error("通知提供商定义不存在");
+    }
+
+    const existingProvider = requestedId
+      ? await redisNotificationStore.getProvider(requestedId)
+      : null;
+    if (requestedId && !existingProvider) {
+      throw new Error("通知提供商不存在");
+    }
+    if (existingProvider && existingProvider.type !== definition.type) {
+      throw new Error("提供商类型与已有配置不一致");
+    }
+
+    const patch = normalizeSchemaPatch(
+      normalizeProviderConnectionConfig(
+        definition.type,
+        asPlainRecord(input.connection_config),
+      ),
+      definition.connection_schema,
+    );
+    const connectionConfig = applySchemaDefaults(
+      {
+        ...(existingProvider?.connection_config ?? {}),
+        ...patch,
+      },
+      definition.connection_schema,
+    );
+    validateRequiredSchemaFields(
+      connectionConfig,
+      definition.connection_schema,
+    );
+
+    const now = nowIso();
+    const provider: NotificationProvider = {
+      id: existingProvider?.id || createId("ntfprovtest"),
+      name:
+        input.name?.trim() ||
+        existingProvider?.name ||
+        `${definition.label} 测试`,
+      type: definition.type,
+      enabled: input.enabled ?? existingProvider?.enabled ?? true,
+      connection_config: connectionConfig,
+      created_at: existingProvider?.created_at || now,
+      updated_at: now,
+      last_test_at: existingProvider?.last_test_at,
+      last_test_status: existingProvider?.last_test_status,
+      last_error: existingProvider?.last_error ?? null,
+    };
+
+    const timeoutSeconds = parseNumberField(
+      provider.connection_config.timeout_seconds,
+      DEFAULT_DELIVERY_POLICY.timeout_seconds,
+      { min: 1, max: 30 },
+    );
+    const result = await sendNotificationWithProvider(
+      provider,
+      buildProviderTestMessage(),
+      undefined,
+      timeoutSeconds,
+    );
+
+    const testedProvider: NotificationProvider = {
+      ...provider,
+      last_test_at: nowIso(),
+      last_test_status: result.success ? "success" : "failed",
+      last_error: result.success ? null : result.reason || "测试发送失败",
+      updated_at: nowIso(),
+    };
+
+    return {
+      success: result.success,
+      message: result.success
+        ? "测试发送成功"
+        : result.reason || "测试发送失败",
+      data: {
+        provider: maskNotificationProvider(testedProvider),
         request_summary: result.request_summary,
         response_summary: result.response_summary,
       },

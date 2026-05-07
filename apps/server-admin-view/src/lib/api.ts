@@ -70,6 +70,7 @@ import type {
   NotificationDeliveryListPayload,
   NotificationDeliveryStatus,
   NotificationProviderCatalogPayload,
+  NotificationProviderDetailView,
   NotificationProviderListPayload,
   NotificationRuleListPayload,
   NotificationTriggerListPayload,
@@ -641,6 +642,16 @@ export const EventCenterAPI = {
     const res = await apiClient.get("/notifications/providers");
     return res.data;
   },
+  async getNotificationProvider(id: string): Promise<{
+    success: boolean;
+    data: NotificationProviderDetailView;
+    message?: string;
+  }> {
+    const res = await apiClient.get(
+      `/notifications/providers/${encodeURIComponent(id)}`,
+    );
+    return res.data;
+  },
   async createNotificationProvider(payload: {
     name?: string;
     type: string;
@@ -674,6 +685,16 @@ export const EventCenterAPI = {
     const res = await apiClient.post(
       `/notifications/providers/${encodeURIComponent(id)}/test`,
     );
+    return res.data;
+  },
+  async testNotificationProviderDraft(payload: {
+    id?: string;
+    name?: string;
+    type: string;
+    enabled: boolean;
+    connection_config: Record<string, unknown>;
+  }) {
+    const res = await apiClient.post("/notifications/providers/test", payload);
     return res.data;
   },
   async getNotificationRules(): Promise<{

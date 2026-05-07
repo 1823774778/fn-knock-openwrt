@@ -7,6 +7,7 @@ import type {
   NotificationDispatchContext,
   NotificationMessage,
   NotificationProvider,
+  NotificationProviderDetailView,
   NotificationProviderDefinition,
   NotificationProviderView,
   NotificationSendResult,
@@ -55,6 +56,15 @@ export const maskNotificationProvider = (
     connection_config_masked: masked,
   };
 };
+
+export const revealNotificationProvider = (
+  provider: NotificationProvider,
+): NotificationProviderDetailView => ({
+  ...maskNotificationProvider(provider),
+  connection_config: {
+    ...provider.connection_config,
+  },
+});
 
 export const sendNotificationWithProvider = async (
   provider: NotificationProvider,

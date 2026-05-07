@@ -18,9 +18,11 @@ const props = withDefaults(
     fields: NotificationSchemaField[];
     modelValue: Record<string, unknown>;
     configuredSensitiveFields?: string[];
+    revealSensitiveValues?: boolean;
   }>(),
   {
     configuredSensitiveFields: () => [],
+    revealSensitiveValues: false,
   },
 );
 
@@ -81,7 +83,9 @@ const resolvePlaceholder = (field: NotificationSchemaField) => {
 
       <Input
         v-if="field.type === 'string'"
-        :type="field.sensitive ? 'password' : 'text'"
+        :type="
+          field.sensitive && !props.revealSensitiveValues ? 'password' : 'text'
+        "
         :model-value="String(readFieldValue(field) ?? '')"
         :placeholder="resolvePlaceholder(field)"
         @update:model-value="(value) => updateField(field.key, value)"

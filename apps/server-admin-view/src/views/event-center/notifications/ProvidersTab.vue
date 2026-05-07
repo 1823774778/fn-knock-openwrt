@@ -62,6 +62,13 @@ type EditableProviderForm = {
   connection_config: Record<string, unknown>;
 };
 
+type ProviderFormPayload = {
+  name?: string;
+  type: string;
+  enabled: boolean;
+  connection_config: Record<string, unknown>;
+};
+
 const PROVIDER_TAIL_ORDER = [
   "webhook",
   "wxpusher",
@@ -100,8 +107,10 @@ const loading = ref(false);
 const dialogOpen = ref(false);
 const dialogMode = ref<ProviderDialogMode>("create");
 const saving = ref(false);
+const testingDraft = ref(false);
 const deletingId = ref<string | null>(null);
 const testingId = ref<string | null>(null);
+const editingId = ref<string | null>(null);
 const editingProvider = ref<NotificationProviderView | null>(null);
 
 const providerForm = ref<EditableProviderForm>({
@@ -194,30 +203,40 @@ const openCreateDialog = () => {
   dialogOpen.value = true;
 };
 
-const openEditDialog = (provider: NotificationProviderView) => {
-  const definition =
-    catalog.value.find((item) => item.type === provider.type) || null;
-  const connectionConfig = definition
-    ? createEditableSchemaRecord(
-        definition.connection_schema,
-        provider.connection_config_masked,
-      )
-    : {};
-  if (definition) {
-    for (const field of definition.connection_schema) {
-      if (!field.sensitive) continue;
-      connectionConfig[field.key] = "";
+const openEditDialog = async (provider: NotificationProviderView) => {
+  editingId.value = provider.id;
+  try {
+    const result = await EventCenterAPI.getNotificationProvider(provider.id);
+    if (!result.success) {
+      throw new Error(result.message || "加载提供商详情失败");
     }
+
+    const providerDetail = result.data;
+    const definition =
+      catalog.value.find((item) => item.type === providerDetail.type) || null;
+    const connectionConfig = definition
+      ? createEditableSchemaRecord(
+          definition.connection_schema,
+          providerDetail.connection_config,
+        )
+      : {};
+
+    dialogMode.value = "edit";
+    editingProvider.value = providerDetail;
+    providerForm.value = {
+      name: providerDetail.name,
+      type: providerDetail.type,
+      enabled: providerDetail.enabled,
+      connection_config: connectionConfig,
+    };
+    dialogOpen.value = true;
+  } catch (error) {
+    toast.error("加载提供商详情失败", {
+      description: error instanceof Error ? error.message : "请稍后重试",
+    });
+  } finally {
+    editingId.value = null;
   }
-  dialogMode.value = "edit";
-  editingProvider.value = provider;
-  providerForm.value = {
-    name: provider.name,
-    type: provider.type,
-    enabled: provider.enabled,
-    connection_config: connectionConfig,
-  };
-  dialogOpen.value = true;
 };
 
 const handleTypeChange = (value: unknown) => {
@@ -243,6 +262,33 @@ const handleTypeChange = (value: unknown) => {
   };
 };
 
+const buildProviderPayload = (): ProviderFormPayload => {
+  const definition = selectedDefinition.value!;
+  const trimmedName = providerForm.value.name.trim();
+  const connectionConfig = buildSchemaPayload({
+    fields: definition.connection_schema,
+    value: providerForm.value.connection_config,
+    editing: dialogMode.value === "edit",
+    configuredSensitiveFields: configuredSensitiveFields.value,
+  });
+
+  if (dialogMode.value === "edit" && definition.type === "wxpusher") {
+    for (const key of ["uids", "topic_ids", "url"]) {
+      if (key in connectionConfig) continue;
+      connectionConfig[key] = String(
+        providerForm.value.connection_config[key] ?? "",
+      ).trim();
+    }
+  }
+
+  return {
+    name: trimmedName || undefined,
+    type: providerForm.value.type,
+    enabled: providerForm.value.enabled,
+    connection_config: connectionConfig,
+  };
+};
+
 const saveProvider = async () => {
   if (!selectedDefinition.value) {
     toast.error("当前没有可用的提供商类型");
@@ -251,32 +297,7 @@ const saveProvider = async () => {
 
   saving.value = true;
   try {
-    const trimmedName = providerForm.value.name.trim();
-    const connectionConfig = buildSchemaPayload({
-      fields: selectedDefinition.value.connection_schema,
-      value: providerForm.value.connection_config,
-      editing: dialogMode.value === "edit",
-      configuredSensitiveFields: configuredSensitiveFields.value,
-    });
-
-    if (
-      dialogMode.value === "edit" &&
-      selectedDefinition.value.type === "wxpusher"
-    ) {
-      for (const key of ["uids", "topic_ids", "url"]) {
-        if (key in connectionConfig) continue;
-        connectionConfig[key] = String(
-          providerForm.value.connection_config[key] ?? "",
-        ).trim();
-      }
-    }
-
-    const payload = {
-      name: trimmedName || undefined,
-      type: providerForm.value.type,
-      enabled: providerForm.value.enabled,
-      connection_config: connectionConfig,
-    };
+    const payload = buildProviderPayload();
 
     const result =
       dialogMode.value === "create"
@@ -294,7 +315,7 @@ const saveProvider = async () => {
     }
 
     const savedName = String(
-      result?.data?.name || trimmedName || generatedProviderName.value,
+      result?.data?.name || payload.name || generatedProviderName.value,
     );
 
     toast.success(
@@ -310,6 +331,32 @@ const saveProvider = async () => {
     });
   } finally {
     saving.value = false;
+  }
+};
+
+const testProviderDraft = async () => {
+  if (!selectedDefinition.value) {
+    toast.error("当前没有可用的提供商类型");
+    return;
+  }
+
+  testingDraft.value = true;
+  try {
+    const result = await EventCenterAPI.testNotificationProviderDraft({
+      ...buildProviderPayload(),
+      id: dialogMode.value === "edit" ? editingProvider.value?.id : undefined,
+    });
+    if (!result.success) {
+      throw new Error(result.message || "测试发送失败");
+    }
+    toast.success("测试发送成功");
+  } catch (error) {
+    toast.error("测试发送失败", {
+      description:
+        error instanceof Error ? error.message : "请检查当前表单配置",
+    });
+  } finally {
+    testingDraft.value = false;
   }
 };
 
@@ -453,9 +500,14 @@ watch(
                 <Button
                   variant="ghost"
                   size="icon"
+                  :disabled="editingId === provider.id"
                   @click="openEditDialog(provider)"
                 >
-                  <Pencil class="h-4 w-4" />
+                  <Loader2
+                    v-if="editingId === provider.id"
+                    class="h-4 w-4 animate-spin"
+                  />
+                  <Pencil v-else class="h-4 w-4" />
                 </Button>
                 <ConfirmDangerPopover
                   title="确认删除该提供商？"
@@ -572,6 +624,7 @@ watch(
             :fields="selectedDefinition.connection_schema"
             :model-value="providerForm.connection_config"
             :configured-sensitive-fields="configuredSensitiveFields"
+            :reveal-sensitive-values="dialogMode === 'edit'"
             @update:model-value="
               (value) => {
                 providerForm.connection_config = value;
@@ -582,8 +635,23 @@ watch(
       </div>
 
       <DialogFooter>
-        <Button variant="outline" @click="dialogOpen = false">取消</Button>
-        <Button :disabled="saving" @click="saveProvider">
+        <Button
+          variant="outline"
+          :disabled="saving || testingDraft"
+          @click="dialogOpen = false"
+        >
+          取消
+        </Button>
+        <Button
+          variant="secondary"
+          :disabled="saving || testingDraft"
+          @click="testProviderDraft"
+        >
+          <Loader2 v-if="testingDraft" class="mr-2 h-4 w-4 animate-spin" />
+          <Send v-else class="mr-2 h-4 w-4" />
+          测试提供商
+        </Button>
+        <Button :disabled="saving || testingDraft" @click="saveProvider">
           <Loader2 v-if="saving" class="mr-2 h-4 w-4 animate-spin" />
           保存
         </Button>

@@ -24,6 +24,14 @@ const providerUpdateBody = t.Object({
   connection_config: t.Optional(t.Record(t.String(), t.Any())),
 });
 
+const providerDraftTestBody = t.Object({
+  id: t.Optional(t.String()),
+  name: t.Optional(t.String()),
+  type: t.String(),
+  enabled: t.Optional(t.Boolean()),
+  connection_config: t.Optional(t.Record(t.String(), t.Any())),
+});
+
 const nullableRecord = t.Union([t.Record(t.String(), t.Any()), t.Null()]);
 
 const ruleBody = t.Object({
@@ -125,6 +133,39 @@ export const notificationRoutes = new Elysia({
       }
     },
     withRouteDoc("创建通知提供商", { body: providerCreateBody }),
+  )
+  .post(
+    "/providers/test",
+    async ({ body, set }) => {
+      try {
+        return await systemNotificationService.testProviderDraft(body);
+      } catch (error) {
+        set.status = 400;
+        return {
+          success: false,
+          message:
+            error instanceof Error ? error.message : "测试通知提供商失败",
+        };
+      }
+    },
+    withRouteDoc("按草稿配置测试通知提供商", { body: providerDraftTestBody }),
+  )
+  .get(
+    "/providers/:id",
+    async ({ params, set }) => {
+      try {
+        const provider = await systemNotificationService.getProvider(params.id);
+        return { success: true, data: provider };
+      } catch (error) {
+        set.status = 400;
+        return {
+          success: false,
+          message:
+            error instanceof Error ? error.message : "获取通知提供商失败",
+        };
+      }
+    },
+    routeDoc("获取通知提供商详情"),
   )
   .patch(
     "/providers/:id",
