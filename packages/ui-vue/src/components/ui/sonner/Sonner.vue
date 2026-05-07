@@ -43,7 +43,7 @@ const defaultIcons = {
 
 const mergedProps = computed<ToasterProps>(() => ({
   ...props,
-  closeButton: props.closeButton ?? true,
+  closeButton: props.closeButton ?? false,
   class: cn("toaster group", props.class),
   style: {
     ...themedStyle,

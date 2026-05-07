@@ -464,6 +464,19 @@ const detailItems = computed(() => {
   });
 });
 
+const detailCopyText = computed(() => {
+  const lines = detailItems.value.map(
+    (item) => `${item.label}：${String(item.value)}`,
+  );
+  const tags = activeEvent.value?.tags || [];
+
+  if (tags.length > 0) {
+    lines.push("", `标签：${tags.join(", ")}`);
+  }
+
+  return lines.join("\n");
+});
+
 const levelBadgeClass = (level: SystemEventLevel) => {
   switch (level) {
     case "INFO":
@@ -897,6 +910,7 @@ onMounted(() => {
       description="查看事件基础信息与上下文字段。"
       max-width-class="sm:max-w-[760px]"
       close-variant="default"
+      :copy-text="detailCopyText"
     >
       <div v-if="activeEvent" class="space-y-6">
         <DetailFieldsGrid :items="detailItems" />

@@ -117,6 +117,43 @@ const openDetails = (delivery: NotificationDelivery) => {
   detailsOpen.value = true;
 };
 
+const formatCopyValue = (value: unknown) => {
+  const text = String(value ?? "").trim();
+  return text || "-";
+};
+
+const formatJsonCopyBlock = (value: unknown) =>
+  JSON.stringify(value || {}, null, 2);
+
+const detailCopyText = computed(() => {
+  const delivery = activeDelivery.value;
+  if (!delivery) return "";
+
+  return [
+    "基础信息",
+    `规则：${resolveRuleName(delivery.rule_id)}`,
+    `提供商：${resolveProviderName(delivery.provider_id)}`,
+    `状态：${formatDeliveryStatusLabel(delivery.status)}`,
+    `尝试次数：${delivery.attempt_count}`,
+    `触发时间：${formatCopyValue(delivery.triggered_at)}`,
+    `发送时间：${formatCopyValue(delivery.sent_at)}`,
+    `下次重试：${formatCopyValue(delivery.next_retry_at)}`,
+    `原因：${formatCopyValue(delivery.reason)}`,
+    "",
+    "消息快照",
+    `标题：${formatCopyValue(delivery.message_snapshot.title)}`,
+    `摘要：${formatCopyValue(delivery.message_snapshot.summary)}`,
+    "正文：",
+    formatCopyValue(delivery.message_snapshot.body_text),
+    "",
+    "请求摘要",
+    formatJsonCopyBlock(delivery.request_summary),
+    "",
+    "响应摘要",
+    formatJsonCopyBlock(delivery.response_summary),
+  ].join("\n");
+});
+
 const clearDeliveries = async () => {
   if (total.value === 0) {
     return;
@@ -291,6 +328,7 @@ watch(
     title="投递详情"
     description="查看这次 fan-out 生成的具体投递快照。"
     max-width-class="sm:max-w-[860px]"
+    :copy-text="detailCopyText"
   >
     <div v-if="activeDelivery" class="space-y-5">
       <div class="grid gap-4 md:grid-cols-2">

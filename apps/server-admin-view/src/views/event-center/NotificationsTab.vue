@@ -61,17 +61,19 @@ watch(currentTab, (nextTab) => {
       :model-value="currentTab"
       @update:model-value="navigateTo"
       :unmount-on-hide="false"
-      class="min-h-0 gap-0 overflow-hidden rounded-xl border bg-background shadow-sm"
+      class="min-h-0 gap-0 overflow-hidden rounded-xl border border-border/70 bg-card shadow-sm"
     >
-      <div class="border-b px-4 sm:px-6">
+      <div class="border-b border-border/70 bg-muted/20 px-4 sm:px-6">
         <RekaTabsList
           aria-label="通知配置分区"
-          class="w-fit rounded-none border-0 bg-transparent px-0 after:right-0 after:left-0"
+          class="w-fit rounded-none border-0 bg-transparent px-0 after:right-0 after:left-0 after:bg-border/70"
+          indicator-class="h-px bg-foreground"
         >
           <RekaTabsTrigger
             v-for="tab in notificationTabs"
             :key="tab.value"
             :value="tab.value"
+            class="min-w-[108px] px-5 text-muted-foreground transition-colors hover:bg-transparent hover:text-foreground focus-visible:ring-ring/30 data-[state=active]:font-semibold data-[state=active]:text-foreground"
           >
             {{ tab.label }}
           </RekaTabsTrigger>

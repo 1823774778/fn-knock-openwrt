@@ -54,8 +54,8 @@ const dockerAdminGateShowRetry = computed(() =>
   Boolean(dockerAdminAuthStore.bootstrapError),
 );
 const toastOptions = {
-  closeButton: true,
-  closeButtonPosition: "top-right" as const,
+  closeButton: false,
+  duration: 2500
 };
 
 const loadWelcomeGuideStatus = async () => {
@@ -213,9 +213,7 @@ watch(
   />
   <Toaster
     position="top-center"
-    :duration="3000"
-    close-button
-    close-button-position="top-right"
+    :duration="2000"
     :toast-options="toastOptions"
   />
 </template>

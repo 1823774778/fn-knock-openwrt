@@ -512,6 +512,12 @@ const detailItems = computed(() =>
   }),
 );
 
+const detailCopyText = computed(() =>
+  detailItems.value
+    .map((item) => `${item.label}：${String(item.value)}`)
+    .join("\n"),
+);
+
 watch(
   () => route.query.trace_id,
   (value) => {
@@ -883,6 +889,7 @@ onBeforeUnmount(() => {
       description="查看此条 WAF 事件的完整字段。"
       max-width-class="sm:max-w-[680px]"
       close-variant="default"
+      :copy-text="detailCopyText"
     >
       <div v-if="activeEvent" class="space-y-4">
         <DetailFieldsGrid :items="detailItems" />

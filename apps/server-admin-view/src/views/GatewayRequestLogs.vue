@@ -657,6 +657,12 @@ const detailItems = computed(() =>
   }),
 );
 
+const detailCopyText = computed(() =>
+  detailItems.value
+    .map((item) => `${item.label}：${String(item.value)}`)
+    .join("\n"),
+);
+
 watch(
   [entries, loading],
   async () => {
@@ -1163,6 +1169,7 @@ onBeforeUnmount(() => {
       description="查看此条网关请求日志的完整字段。"
       max-width-class="sm:max-w-[640px]"
       close-variant="default"
+      :copy-text="detailCopyText"
     >
       <div v-if="activeEntry">
         <DetailFieldsGrid :items="detailItems" />
