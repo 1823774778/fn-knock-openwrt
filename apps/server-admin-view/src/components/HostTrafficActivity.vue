@@ -3,7 +3,7 @@
     <PopoverAnchor as-child>
       <button
         type="button"
-        class="inline-flex h-6 items-center gap-3 whitespace-nowrap px-1.5 text-left text-xs leading-none transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        class="inline-flex h-6 items-center gap-2 whitespace-nowrap px-1.5 text-left text-xs leading-none transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         :class="{ 'border-primary/30 bg-primary/5': open || dialogOpen }"
         :aria-label="`${displayTitle} ${host} 流量详情`"
         @pointerdown="handleTriggerPointerDown"
@@ -13,14 +13,21 @@
         @blur="handleTriggerBlur"
         @click.prevent="handleTriggerClick"
       >
-        <span class="inline-flex items-center gap-1">
+        <span
+          v-if="hasRealtimeInTraffic"
+          class="inline-flex items-center gap-1"
+        >
           <ArrowDownLeft class="h-3 w-3 shrink-0 text-emerald-700" />
           <span>{{ compactInText }}</span>
         </span>
-        <span class="inline-flex items-center gap-1">
+        <span
+          v-if="hasRealtimeOutTraffic"
+          class="inline-flex items-center gap-1"
+        >
           <ArrowUpRight class="h-3 w-3 shrink-0 text-blue-700" />
           <span>{{ compactOutText }}</span>
         </span>
+        <span v-if="!hasCompactTraffic">查看</span>
       </button>
     </PopoverAnchor>
 
@@ -327,8 +334,17 @@ const formatBps = (bps: number | null | undefined) => {
   return `${formatBytes(bps)} /s`;
 };
 
-const compactInText = computed(() => `入 ${formatBps(realtimeInBps.value)}`);
-const compactOutText = computed(() => `出 ${formatBps(realtimeOutBps.value)}`);
+const hasRealtimeInTraffic = computed(
+  () => Number(realtimeInBps.value ?? 0) > 0,
+);
+const hasRealtimeOutTraffic = computed(
+  () => Number(realtimeOutBps.value ?? 0) > 0,
+);
+const hasCompactTraffic = computed(
+  () => hasRealtimeInTraffic.value || hasRealtimeOutTraffic.value,
+);
+const compactInText = computed(() => formatBps(realtimeInBps.value));
+const compactOutText = computed(() => formatBps(realtimeOutBps.value));
 const realtimeInText = computed(() => formatBps(realtimeInBps.value));
 const realtimeOutText = computed(() => formatBps(realtimeOutBps.value));
 
