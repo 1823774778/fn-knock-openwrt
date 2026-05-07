@@ -519,7 +519,7 @@ onMounted(fetchDetails);
       </CardContent>
 
       <CardContent v-else class="border-t p-0 divide-y">
-        <section class="p-6">
+        <section v-if="form.enabled" class="p-6">
           <Alert
             class="items-start rounded-xl border-amber-200 bg-amber-50/70 text-amber-950 [&>svg]:text-amber-600"
           >
@@ -555,6 +555,7 @@ onMounted(fetchDetails);
         </section>
 
         <section
+          v-if="form.enabled"
           class="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between"
         >
           <div class="space-y-1 pr-6">

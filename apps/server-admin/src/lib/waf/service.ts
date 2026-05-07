@@ -112,6 +112,7 @@ export interface WAFDetails {
 
 export type WAFSystemRulesAutoUpdateSkipReason =
   | "disabled"
+  | "waf_disabled"
   | "locked"
   | "running"
   | "up_to_date";
@@ -794,6 +795,13 @@ export const checkAndSyncSystemWAFRulesIfNeeded =
     await ensureWAFDirectories();
     const checkedAt = nowISO();
     const config = normalizeFixedWAFConfig(await configManager.getWAFConfig());
+    if (!config.enabled) {
+      return {
+        checked_at: checkedAt,
+        updated: false,
+        skipped_reason: "waf_disabled",
+      };
+    }
     if (!config.system_rules_auto_update_enabled) {
       return {
         checked_at: checkedAt,
@@ -963,7 +971,7 @@ export const applyWAFConfig = async (
 export const syncWAFToGatewayOnBoot = async (): Promise<void> => {
   await ensureWAFDirectories();
   const config = normalizeFixedWAFConfig(await configManager.getWAFConfig());
-  if (config.system_rules_auto_update_enabled) {
+  if (config.enabled && config.system_rules_auto_update_enabled) {
     try {
       const cache = await readManifestCache();
       if (!cache.manifest || isManifestStale(cache)) {

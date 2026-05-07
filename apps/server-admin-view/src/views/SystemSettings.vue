@@ -138,7 +138,7 @@ const { currentTab, navigateTo } = useSyncedQueryTab({
             >面板</TabsTrigger
           >
           <TabsTrigger value="captcha" class="flex-none shrink-0 px-3"
-            >验证码</TabsTrigger
+            >Challenge</TabsTrigger
           >
           <TabsTrigger value="maintenance" class="flex-none shrink-0 px-3"
             >维护</TabsTrigger
