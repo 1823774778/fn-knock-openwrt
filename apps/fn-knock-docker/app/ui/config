@@ -1,0 +1,18 @@
+{
+  ".url": {
+    "fn-knock-docker.Application": {
+      "noDisplay": false,
+      "allUsers": false,
+      "fileTypes": [],
+      "control": {
+        "accessPerm": "readonly"
+      },
+      "protocol": "http",
+      "port": "${wizard_admin_view_port}",
+      "title": "敲门knock",
+      "icon": "images/ICON.PNG",
+      "type": "iframe",
+      "url": "/"
+    }
+  }
+}
