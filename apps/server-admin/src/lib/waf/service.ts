@@ -21,6 +21,7 @@ import {
   configManager,
   DEFAULT_WAF_CONFIG,
   normalizeWAFConfig,
+  redis,
   type WAFConfig,
 } from "../redis";
 import { wafCollector } from "./collector";
@@ -52,6 +53,8 @@ const CUSTOM_DIR = join(ROOT_DIR, "custom");
 const MANIFEST_CACHE_PATH = join(ROOT_DIR, "manifest.json");
 const SYSTEM_SYNC_PATH = join(ROOT_DIR, "system-sync.json");
 const RULES_STATE_PATH = join(ROOT_DIR, "rules-state.json");
+const DEFAULT_DISABLED_SYSTEM_RULES_PATCH_FLAG_KEY =
+  "fn_knock:patch:waf-default-disabled-system-rules:v1";
 
 export type WAFRuleSource = "system" | "custom";
 
@@ -161,6 +164,11 @@ export type WAFConfigPatch = Partial<
 interface WAFRulesState {
   system_enabled: Record<string, boolean>;
   custom_enabled: Record<string, boolean>;
+}
+
+interface WAFDefaultDisabledSystemRulesPatchResult {
+  applied: boolean;
+  disabled_filenames: string[];
 }
 
 interface ArchiveEntry {
@@ -449,6 +457,59 @@ const hasSystemRuleFiles = async (): Promise<boolean> => {
     throw error;
   }
 };
+
+const getDefaultDisabledSystemRuleFilenames = (
+  rules: Pick<WAFRuleFile, "filename">[],
+): string[] =>
+  rules
+    .map((rule) => rule.filename)
+    .filter((filename) => DEFAULT_DISABLED_SYSTEM_RULE_FILENAMES.has(filename))
+    .sort((left, right) => left.localeCompare(right));
+
+const shouldApplyDefaultDisabledSystemRulesPatch = (
+  systemRules: WAFRuleFile[],
+): boolean =>
+  systemRules.length > 0 && systemRules.every((rule) => rule.enabled);
+
+const markDefaultDisabledSystemRulesPatchApplied = async (): Promise<void> => {
+  await redis.set(DEFAULT_DISABLED_SYSTEM_RULES_PATCH_FLAG_KEY, "1");
+};
+
+export const applyDefaultDisabledSystemRulesPatchIfNeeded =
+  async (): Promise<WAFDefaultDisabledSystemRulesPatchResult> => {
+    const patchFlag = await redis.get(
+      DEFAULT_DISABLED_SYSTEM_RULES_PATCH_FLAG_KEY,
+    );
+    if (patchFlag === "1") {
+      return { applied: false, disabled_filenames: [] };
+    }
+
+    await ensureWAFDirectories();
+    const state = await readRulesState();
+    const systemRules = await listRuleFiles("system", null, state);
+    const disabledFilenames =
+      getDefaultDisabledSystemRuleFilenames(systemRules);
+
+    if (
+      shouldApplyDefaultDisabledSystemRulesPatch(systemRules) &&
+      disabledFilenames.length > 0
+    ) {
+      await writeRulesState({
+        system_enabled: {
+          ...state.system_enabled,
+          ...Object.fromEntries(
+            disabledFilenames.map((filename) => [filename, false]),
+          ),
+        },
+        custom_enabled: state.custom_enabled,
+      });
+      await markDefaultDisabledSystemRulesPatchApplied();
+      return { applied: true, disabled_filenames: disabledFilenames };
+    }
+
+    await markDefaultDisabledSystemRulesPatchApplied();
+    return { applied: false, disabled_filenames: [] };
+  };
 
 const normalizeFixedWAFConfig = (
   value?: Partial<WAFConfig> | null,
@@ -990,6 +1051,14 @@ export const applyWAFConfig = async (
 
 export const syncWAFToGatewayOnBoot = async (): Promise<void> => {
   await ensureWAFDirectories();
+  const defaultDisabledRulesPatch =
+    await applyDefaultDisabledSystemRulesPatchIfNeeded();
+  if (defaultDisabledRulesPatch.applied) {
+    console.log(
+      `[waf] applied default-disabled system rules patch: ${defaultDisabledRulesPatch.disabled_filenames.join(", ")}`,
+    );
+  }
+
   const config = normalizeFixedWAFConfig(await configManager.getWAFConfig());
   if (config.enabled && config.system_rules_auto_update_enabled) {
     try {
