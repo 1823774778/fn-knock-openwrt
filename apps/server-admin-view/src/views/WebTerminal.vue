@@ -75,7 +75,22 @@ const DEFAULT_TERMINAL_FONT_SIZE_MOBILE = 12;
 const MIN_TERMINAL_FONT_SIZE = 13;
 const MAX_TERMINAL_FONT_SIZE = 20;
 const TERMINAL_TOUCH_DRAG_THRESHOLD_PX = 10;
+const TERMINAL_MOUSE_MOVE_FLAG = 32;
+const TERMINAL_MOUSE_WHEEL_UP = 64;
+const TERMINAL_MOUSE_WHEEL_DOWN = 65;
+const TERMINAL_MOUSE_MAX_LEGACY_COORD = 223;
 type ArmedModifier = "ctrl" | "alt";
+type TerminalMouseButton = 0 | 1 | 2;
+type TerminalMouseCell = {
+  col: number;
+  row: number;
+};
+type TerminalMouseReportingState = {
+  enabled: boolean;
+  sgr: boolean;
+  buttonMotion: boolean;
+  anyMotion: boolean;
+};
 type ToolbarShortcut = {
   id: string;
   label: string;
@@ -161,6 +176,9 @@ let trackedTerminalTouchLastY = 0;
 let trackedTerminalTouchRemainder = 0;
 let trackedTerminalTouchMoved = false;
 let trackedTerminalTouchScrolling = false;
+let terminalMouseReportingTarget: HTMLElement | null = null;
+let terminalMousePressedButton: TerminalMouseButton | null = null;
+let lastTerminalMouseReportKey = "";
 let outputTextDecoder = new TextDecoder();
 let pendingLegacyTitleSequence = "";
 let pageScrollLocked = false;
@@ -501,6 +519,318 @@ const getTerminalTouchRowHeight = (): number => {
     1,
     terminalMountRef.value.clientHeight / Math.max(term.rows, 1),
   );
+};
+
+const isTerminalModeEnabled = (mode: number): boolean => {
+  try {
+    return term?.getMode(mode, false) === true;
+  } catch {
+    return false;
+  }
+};
+
+const getTerminalMouseReportingState = (): TerminalMouseReportingState => {
+  const normal = isTerminalModeEnabled(1000);
+  const buttonMotion = isTerminalModeEnabled(1002);
+  const anyMotion = isTerminalModeEnabled(1003);
+  const sgr = isTerminalModeEnabled(1006);
+
+  let enabled = normal || buttonMotion || anyMotion;
+  try {
+    if (term?.hasMouseTracking() === true) {
+      enabled = true;
+    }
+  } catch {
+    // Mode queries can throw while the terminal is being opened or disposed.
+  }
+
+  return {
+    enabled,
+    sgr,
+    buttonMotion,
+    anyMotion,
+  };
+};
+
+const getTerminalCanvas = (): HTMLCanvasElement | null => {
+  const canvas = terminalMountRef.value?.querySelector("canvas");
+  return canvas instanceof HTMLCanvasElement ? canvas : null;
+};
+
+const getTerminalMouseCell = (
+  event: MouseEvent,
+  options?: { clampToCanvas?: boolean },
+): TerminalMouseCell | null => {
+  if (!term) return null;
+
+  const canvas = getTerminalCanvas();
+  if (!canvas) return null;
+
+  const rect = canvas.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0 || term.cols <= 0 || term.rows <= 0) {
+    return null;
+  }
+
+  const inside =
+    event.clientX >= rect.left &&
+    event.clientX <= rect.right &&
+    event.clientY >= rect.top &&
+    event.clientY <= rect.bottom;
+  if (!inside && !options?.clampToCanvas) return null;
+
+  const clientX = Math.min(Math.max(event.clientX, rect.left), rect.right);
+  const clientY = Math.min(Math.max(event.clientY, rect.top), rect.bottom);
+  const cellWidth = rect.width / term.cols;
+  const cellHeight = rect.height / term.rows;
+  const col = Math.min(
+    term.cols,
+    Math.max(1, Math.floor((clientX - rect.left) / cellWidth) + 1),
+  );
+  const row = Math.min(
+    term.rows,
+    Math.max(1, Math.floor((clientY - rect.top) / cellHeight) + 1),
+  );
+
+  return { col, row };
+};
+
+const getTerminalMouseButton = (
+  event: MouseEvent,
+): TerminalMouseButton | null => {
+  if (event.button === 0) return 0;
+  if (event.button === 1) return 1;
+  if (event.button === 2) return 2;
+  return null;
+};
+
+const getTerminalMouseModifierCode = (event: MouseEvent): number => {
+  let code = 0;
+  if (event.shiftKey) code += 4;
+  if (event.altKey || event.metaKey) code += 8;
+  if (event.ctrlKey) code += 16;
+  return code;
+};
+
+const buildTerminalMouseSequence = (
+  event: MouseEvent,
+  state: TerminalMouseReportingState,
+  buttonCode: number,
+  cell: TerminalMouseCell,
+  options?: { release?: boolean },
+): string => {
+  const code = buttonCode + getTerminalMouseModifierCode(event);
+  if (state.sgr) {
+    return `\u001b[<${code};${cell.col};${cell.row}${
+      options?.release ? "m" : "M"
+    }`;
+  }
+
+  if (
+    cell.col > TERMINAL_MOUSE_MAX_LEGACY_COORD ||
+    cell.row > TERMINAL_MOUSE_MAX_LEGACY_COORD
+  ) {
+    return "";
+  }
+
+  const legacyCode =
+    (options?.release ? 3 : buttonCode) + getTerminalMouseModifierCode(event);
+  return `\u001b[M${String.fromCharCode(
+    legacyCode + 32,
+    cell.col + 32,
+    cell.row + 32,
+  )}`;
+};
+
+const stopTerminalMouseEvent = (event: Event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation();
+};
+
+const queueTerminalMouseSequence = (
+  sequence: string,
+  reportKey: string,
+  options?: { dedupe?: boolean },
+) => {
+  if (
+    !sequence ||
+    (options?.dedupe !== false && reportKey === lastTerminalMouseReportKey)
+  ) {
+    return;
+  }
+  lastTerminalMouseReportKey = reportKey;
+  queueTerminalInput(sequence, { immediate: true });
+};
+
+const reportTerminalMouseEvent = (
+  event: MouseEvent,
+  state: TerminalMouseReportingState,
+  buttonCode: number,
+  cell: TerminalMouseCell,
+  options?: { release?: boolean; dedupe?: boolean },
+) => {
+  const sequence = buildTerminalMouseSequence(event, state, buttonCode, cell, {
+    release: options?.release,
+  });
+  const reportKey = [
+    options?.release ? "release" : "press",
+    buttonCode,
+    cell.col,
+    cell.row,
+    getTerminalMouseModifierCode(event),
+  ].join(":");
+  queueTerminalMouseSequence(sequence, reportKey, { dedupe: options?.dedupe });
+};
+
+const handleTerminalMouseDown = (event: MouseEvent) => {
+  const state = getTerminalMouseReportingState();
+  if (!state.enabled) return;
+
+  const button = getTerminalMouseButton(event);
+  if (button === null) return;
+
+  const cell = getTerminalMouseCell(event);
+  if (!cell) return;
+
+  terminalMousePressedButton = button;
+  lastTerminalMouseReportKey = "";
+  stopTerminalMouseEvent(event);
+  focusTerminal();
+  reportTerminalMouseEvent(event, state, button, cell);
+};
+
+const handleTerminalMouseMove = (event: MouseEvent) => {
+  const state = getTerminalMouseReportingState();
+  if (!state.enabled) return;
+
+  const shouldReport =
+    state.anyMotion ||
+    (state.buttonMotion && terminalMousePressedButton !== null);
+  if (!shouldReport) return;
+
+  const cell = getTerminalMouseCell(event);
+  if (!cell) return;
+
+  const button = terminalMousePressedButton ?? 0;
+  stopTerminalMouseEvent(event);
+  reportTerminalMouseEvent(
+    event,
+    state,
+    button + TERMINAL_MOUSE_MOVE_FLAG,
+    cell,
+  );
+};
+
+const handleTerminalMouseUp = (event: MouseEvent) => {
+  const state = getTerminalMouseReportingState();
+  if (!state.enabled || terminalMousePressedButton === null) return;
+
+  const cell = getTerminalMouseCell(event, { clampToCanvas: true });
+  if (!cell) return;
+
+  const button = terminalMousePressedButton;
+  terminalMousePressedButton = null;
+  stopTerminalMouseEvent(event);
+  reportTerminalMouseEvent(event, state, button, cell, { release: true });
+  lastTerminalMouseReportKey = "";
+};
+
+const getTerminalWheelStepCount = (event: WheelEvent): number => {
+  const delta = Math.max(Math.abs(event.deltaY), Math.abs(event.deltaX));
+  if (delta <= 0) return 0;
+
+  if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) {
+    return Math.min(5, Math.max(1, Math.round(delta)));
+  }
+  if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+    return Math.min(
+      5,
+      Math.max(1, Math.round(delta * Math.max(1, term?.rows ?? 1))),
+    );
+  }
+
+  const rowHeight = getTerminalTouchRowHeight();
+  return Math.min(5, Math.max(1, Math.round(delta / rowHeight)));
+};
+
+const handleTerminalMouseWheel = (event: WheelEvent) => {
+  const state = getTerminalMouseReportingState();
+  if (!state.enabled) return;
+
+  const cell = getTerminalMouseCell(event);
+  if (!cell) return;
+
+  const steps = getTerminalWheelStepCount(event);
+  if (steps <= 0) return;
+
+  const buttonCode =
+    (event.deltaY || event.deltaX) > 0
+      ? TERMINAL_MOUSE_WHEEL_DOWN
+      : TERMINAL_MOUSE_WHEEL_UP;
+  stopTerminalMouseEvent(event);
+  focusTerminal();
+
+  for (let index = 0; index < steps; index += 1) {
+    reportTerminalMouseEvent(event, state, buttonCode, cell, {
+      dedupe: false,
+    });
+  }
+  lastTerminalMouseReportKey = "";
+};
+
+const handleTerminalMouseClick = (event: MouseEvent) => {
+  const state = getTerminalMouseReportingState();
+  if (!state.enabled || !getTerminalMouseCell(event)) return;
+
+  stopTerminalMouseEvent(event);
+  focusTerminal();
+};
+
+const bindTerminalMouseReporting = () => {
+  if (terminalMouseReportingTarget) return;
+
+  const target = terminalFrameRef.value || terminalMountRef.value;
+  if (!target) return;
+
+  terminalMouseReportingTarget = target;
+  target.addEventListener("mousedown", handleTerminalMouseDown, {
+    capture: true,
+  });
+  target.addEventListener("mousemove", handleTerminalMouseMove, {
+    capture: true,
+  });
+  target.addEventListener("wheel", handleTerminalMouseWheel, {
+    capture: true,
+    passive: false,
+  });
+  target.addEventListener("click", handleTerminalMouseClick, {
+    capture: true,
+  });
+  target.addEventListener("dblclick", handleTerminalMouseClick, {
+    capture: true,
+  });
+  target.addEventListener("contextmenu", handleTerminalMouseClick, {
+    capture: true,
+  });
+  document.addEventListener("mouseup", handleTerminalMouseUp, {
+    capture: true,
+  });
+};
+
+const unbindTerminalMouseReporting = () => {
+  const target = terminalMouseReportingTarget;
+  if (target) {
+    target.removeEventListener("mousedown", handleTerminalMouseDown, true);
+    target.removeEventListener("mousemove", handleTerminalMouseMove, true);
+    target.removeEventListener("wheel", handleTerminalMouseWheel, true);
+    target.removeEventListener("click", handleTerminalMouseClick, true);
+    target.removeEventListener("dblclick", handleTerminalMouseClick, true);
+    target.removeEventListener("contextmenu", handleTerminalMouseClick, true);
+  }
+  document.removeEventListener("mouseup", handleTerminalMouseUp, true);
+  terminalMouseReportingTarget = null;
+  terminalMousePressedButton = null;
+  lastTerminalMouseReportKey = "";
 };
 
 const applyTerminalFit = () => {
@@ -921,6 +1251,11 @@ const handleWindowKeydown = (event: KeyboardEvent) => {
 
 const handleTerminalContextMenu = async (event: MouseEvent) => {
   event.preventDefault();
+
+  if (getTerminalMouseReportingState().enabled) {
+    focusTerminal();
+    return;
+  }
 
   const selectedText = term?.getSelection() || "";
   if (!selectedText.length) {
@@ -1539,6 +1874,7 @@ const initializeTerminal = async () => {
   term.loadAddon(fitAddon);
   term.open(terminalMountRef.value);
   syncTerminalTextInputAnchor();
+  bindTerminalMouseReporting();
   bindTerminalTouchGestures();
   applyTerminalFit();
   fitAddon.observeResize();
@@ -1652,6 +1988,7 @@ watch(
 );
 
 onBeforeUnmount(() => {
+  unbindTerminalMouseReporting();
   unbindTerminalTouchGestures();
   window.removeEventListener("resize", syncViewportHeight);
   window.removeEventListener("keydown", handleWindowKeydown);
