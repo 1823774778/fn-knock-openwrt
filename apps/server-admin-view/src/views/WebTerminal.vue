@@ -1790,6 +1790,14 @@ const focusSendDialogTextarea = () => {
   });
 };
 
+const focusTerminalAfterDialogClose = (event: Event) => {
+  event.preventDefault();
+  void nextTick(() => {
+    focusTerminal();
+    window.requestAnimationFrame(() => focusTerminal());
+  });
+};
+
 const openManualPasteDialog = () => {
   if (toolbarDisabled.value) return;
   sendDialogPayload.value = "";
@@ -2700,7 +2708,10 @@ onBeforeUnmount(() => {
     </div>
 
     <Dialog v-model:open="sendDialogOpen">
-      <DialogContent class="sm:max-w-[560px]">
+      <DialogContent
+        class="sm:max-w-[560px]"
+        @close-auto-focus="focusTerminalAfterDialogClose"
+      >
         <DialogHeader>
           <DialogTitle>发送到终端</DialogTitle>
           <DialogDescription>
