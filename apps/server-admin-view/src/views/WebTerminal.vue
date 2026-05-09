@@ -27,11 +27,14 @@ import { Textarea } from "@/components/ui/textarea";
 import LiveStatusBadge from "@/components/LiveStatusBadge.vue";
 import {
   AlertTriangle,
+  ClipboardPaste,
+  Copy,
   LoaderCircle,
   Pencil,
   Plus,
   RefreshCcw,
   Send,
+  TextSelect,
   Trash2,
 } from "lucide-vue-next";
 import { toast } from "@admin-shared/utils/toast";
@@ -49,6 +52,9 @@ type GhosttyModule = typeof import("ghostty-web");
 
 let ghosttyModulePromise: Promise<GhosttyModule> | null = null;
 const textEncoder = new TextEncoder();
+const LEGACY_MOUSE_SEQUENCE_PREFIX = "\u001b[M";
+const REMOTE_RESPONSE_CODEPOINT_SAMPLE_LIMIT = 12;
+const ASCII_TERMINAL_RESPONSE_PATTERN = /^[\u0000-\u007f]*$/;
 
 const ensureGhostty = async () => {
   if (!ghosttyModulePromise) {
@@ -79,6 +85,9 @@ const TERMINAL_MOUSE_MOVE_FLAG = 32;
 const TERMINAL_MOUSE_WHEEL_UP = 64;
 const TERMINAL_MOUSE_WHEEL_DOWN = 65;
 const TERMINAL_MOUSE_MAX_LEGACY_COORD = 223;
+const TERMINAL_CONTEXT_MENU_WIDTH = 176;
+const TERMINAL_CONTEXT_MENU_HEIGHT = 132;
+const TERMINAL_CONTEXT_MENU_VIEWPORT_GAP = 8;
 type ArmedModifier = "ctrl" | "alt";
 type TerminalMouseButton = 0 | 1 | 2;
 type TerminalMouseCell = {
@@ -136,6 +145,7 @@ const terminalPanelRef = ref<HTMLElement | null>(null);
 const terminalFrameRef = ref<HTMLElement | null>(null);
 const mobileAccessoryBarRef = ref<HTMLElement | null>(null);
 const terminalStatusRef = ref<HTMLElement | null>(null);
+const terminalContextMenuRef = ref<HTMLElement | null>(null);
 const terminalHeight = ref(`${DEFAULT_TERMINAL_HEIGHT_PX}px`);
 const compactViewport = ref(false);
 const terminalFontSize = ref(DEFAULT_TERMINAL_FONT_SIZE);
@@ -148,6 +158,10 @@ const renameDialogOpen = ref(false);
 const renameDialogValue = ref("");
 const isRenamingSession = ref(false);
 const isTerminalFullscreen = ref(false);
+const terminalContextMenuOpen = ref(false);
+const terminalContextMenuX = ref(0);
+const terminalContextMenuY = ref(0);
+const terminalContextMenuHasSelection = ref(false);
 
 let term: InstanceType<GhosttyModule["Terminal"]> | null = null;
 let fitAddon: InstanceType<GhosttyModule["FitAddon"]> | null = null;
@@ -181,6 +195,9 @@ let terminalMousePressedButton: TerminalMouseButton | null = null;
 let lastTerminalMouseReportKey = "";
 let outputTextDecoder = new TextDecoder();
 let pendingLegacyTitleSequence = "";
+let remoteOutputWriteDepth = 0;
+let terminalInternalResponseDropDepth = 0;
+let terminalResizeObserver: ResizeObserver | null = null;
 let pageScrollLocked = false;
 let previousHtmlOverflow = "";
 let previousBodyOverflow = "";
@@ -246,6 +263,10 @@ const terminalPanelStyle = computed(() =>
       }
     : undefined,
 );
+const terminalContextMenuStyle = computed(() => ({
+  left: `${terminalContextMenuX.value}px`,
+  top: `${terminalContextMenuY.value}px`,
+}));
 const terminalFrameStyle = computed(() => {
   if (isTerminalFullscreen.value) {
     return {
@@ -272,7 +293,7 @@ const statusTone = computed(() => {
 });
 
 const encodeInputToBase64 = (value: string): string => {
-  const bytes = textEncoder.encode(value);
+  const bytes = encodeTerminalInputToBytes(value);
   let binary = "";
   bytes.forEach((byte) => {
     binary += String.fromCharCode(byte);
@@ -280,8 +301,59 @@ const encodeInputToBase64 = (value: string): string => {
   return btoa(binary);
 };
 
+const appendUtf8Bytes = (target: number[], value: string): void => {
+  textEncoder.encode(value).forEach((byte) => target.push(byte));
+};
+
+const encodeTerminalInputToBytes = (value: string): Uint8Array => {
+  if (!value.includes(LEGACY_MOUSE_SEQUENCE_PREFIX)) {
+    return textEncoder.encode(value);
+  }
+
+  const bytes: number[] = [];
+  let cursor = 0;
+
+  while (cursor < value.length) {
+    const sequenceStart = value.indexOf(LEGACY_MOUSE_SEQUENCE_PREFIX, cursor);
+    if (sequenceStart === -1 || sequenceStart + 6 > value.length) {
+      appendUtf8Bytes(bytes, value.slice(cursor));
+      break;
+    }
+
+    appendUtf8Bytes(bytes, value.slice(cursor, sequenceStart));
+    bytes.push(0x1b, 0x5b, 0x4d);
+    for (let offset = 3; offset < 6; offset += 1) {
+      bytes.push(value.charCodeAt(sequenceStart + offset) & 0xff);
+    }
+    cursor = sequenceStart + 6;
+  }
+
+  return Uint8Array.from(bytes);
+};
+
 const getInputByteLength = (value: string): number =>
-  textEncoder.encode(value).byteLength;
+  encodeTerminalInputToBytes(value).byteLength;
+
+const hasAsciiControlByte = (value: string): boolean => {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 0x20 || code === 0x7f) {
+      return true;
+    }
+  }
+  return false;
+};
+
+const isSafeRemoteTerminalResponse = (value: string): boolean =>
+  value.length > 0 &&
+  ASCII_TERMINAL_RESPONSE_PATTERN.test(value) &&
+  (value.includes("\u001b") || hasAsciiControlByte(value));
+
+const summarizeTerminalResponseCodePoints = (value: string): string =>
+  Array.from(value)
+    .slice(0, REMOTE_RESPONSE_CODEPOINT_SAMPLE_LIMIT)
+    .map((char) => `U+${char.codePointAt(0)?.toString(16).toUpperCase()}`)
+    .join(" ");
 
 const decodeBase64ToBytes = (value: string): Uint8Array => {
   const binary = atob(value);
@@ -392,6 +464,14 @@ const copyTextToClipboard = async (text: string) => {
   if (!copied) {
     throw new Error("execCommand copy failed");
   }
+};
+
+const readTextFromClipboard = async (): Promise<string> => {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.readText) {
+    return navigator.clipboard.readText();
+  }
+
+  throw new Error("浏览器未开放剪贴板读取权限");
 };
 
 const lockPageScroll = () => {
@@ -634,7 +714,7 @@ const buildTerminalMouseSequence = (
 
   const legacyCode =
     (options?.release ? 3 : buttonCode) + getTerminalMouseModifierCode(event);
-  return `\u001b[M${String.fromCharCode(
+  return `${LEGACY_MOUSE_SEQUENCE_PREFIX}${String.fromCharCode(
     legacyCode + 32,
     cell.col + 32,
     cell.row + 32,
@@ -683,6 +763,8 @@ const reportTerminalMouseEvent = (
 };
 
 const handleTerminalMouseDown = (event: MouseEvent) => {
+  if (event.button === 2) return;
+
   const state = getTerminalMouseReportingState();
   if (!state.enabled) return;
 
@@ -779,6 +861,8 @@ const handleTerminalMouseWheel = (event: WheelEvent) => {
 };
 
 const handleTerminalMouseClick = (event: MouseEvent) => {
+  if (event.type === "contextmenu") return;
+
   const state = getTerminalMouseReportingState();
   if (!state.enabled || !getTerminalMouseCell(event)) return;
 
@@ -840,7 +924,12 @@ const applyTerminalFit = () => {
   if (!dimensions) return;
   if (dimensions.cols === term.cols && dimensions.rows === term.rows) return;
 
-  term.resize(dimensions.cols, dimensions.rows);
+  runTerminalInternalMutation(
+    () => {
+      term?.resize(dimensions.cols, dimensions.rows);
+    },
+    { dropResponses: true },
+  );
 };
 
 const hasTerminalCanvasHeightGap = (): boolean => {
@@ -893,6 +982,21 @@ const scheduleTerminalFit = () => {
       runTerminalFitAttempt();
     });
   });
+};
+
+const observeTerminalMountSize = () => {
+  if (
+    terminalResizeObserver ||
+    typeof ResizeObserver === "undefined" ||
+    !terminalMountRef.value
+  ) {
+    return;
+  }
+
+  terminalResizeObserver = new ResizeObserver(() => {
+    scheduleTerminalFit();
+  });
+  terminalResizeObserver.observe(terminalMountRef.value);
 };
 
 const handleTerminalTouchStart = (event: TouchEvent) => {
@@ -1153,6 +1257,35 @@ const stripLegacyTitleSequences = (value: string): string => {
   return sanitized;
 };
 
+const writeRemoteTerminalOutput = (payload: string) => {
+  if (!term) return;
+
+  remoteOutputWriteDepth += 1;
+  try {
+    term.write(payload);
+  } finally {
+    remoteOutputWriteDepth -= 1;
+  }
+};
+
+const runTerminalInternalMutation = (
+  action: () => void,
+  options?: { dropResponses?: boolean },
+) => {
+  remoteOutputWriteDepth += 1;
+  if (options?.dropResponses) {
+    terminalInternalResponseDropDepth += 1;
+  }
+  try {
+    action();
+  } finally {
+    if (options?.dropResponses) {
+      terminalInternalResponseDropDepth -= 1;
+    }
+    remoteOutputWriteDepth -= 1;
+  }
+};
+
 const clearTerminal = () => {
   resetOutputState();
   if (!term) return;
@@ -1243,21 +1376,79 @@ const toggleTerminalFullscreen = () => {
 };
 
 const handleWindowKeydown = (event: KeyboardEvent) => {
-  if (event.key !== "Escape" || !isTerminalFullscreen.value) return;
+  if (event.key !== "Escape") return;
+
+  if (terminalContextMenuOpen.value) {
+    event.preventDefault();
+    closeTerminalContextMenu();
+    focusTerminal();
+    return;
+  }
+
+  if (!isTerminalFullscreen.value) return;
 
   event.preventDefault();
   void setTerminalFullscreen(false);
 };
 
-const handleTerminalContextMenu = async (event: MouseEvent) => {
-  event.preventDefault();
+const closeTerminalContextMenu = () => {
+  terminalContextMenuOpen.value = false;
+};
 
-  if (getTerminalMouseReportingState().enabled) {
-    focusTerminal();
+const handleDocumentPointerDown = (event: PointerEvent) => {
+  if (!terminalContextMenuOpen.value) return;
+
+  const target = event.target;
+  if (
+    target instanceof Node &&
+    terminalContextMenuRef.value?.contains(target)
+  ) {
     return;
   }
 
+  closeTerminalContextMenu();
+};
+
+const handleTerminalContextMenu = (event: MouseEvent) => {
+  event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation();
+
   const selectedText = term?.getSelection() || "";
+  const viewportWidth = window.innerWidth || TERMINAL_CONTEXT_MENU_WIDTH;
+  const viewportHeight = window.innerHeight || TERMINAL_CONTEXT_MENU_HEIGHT;
+  const maxX = Math.max(
+    TERMINAL_CONTEXT_MENU_VIEWPORT_GAP,
+    viewportWidth -
+      TERMINAL_CONTEXT_MENU_WIDTH -
+      TERMINAL_CONTEXT_MENU_VIEWPORT_GAP,
+  );
+  const maxY = Math.max(
+    TERMINAL_CONTEXT_MENU_VIEWPORT_GAP,
+    viewportHeight -
+      TERMINAL_CONTEXT_MENU_HEIGHT -
+      TERMINAL_CONTEXT_MENU_VIEWPORT_GAP,
+  );
+
+  terminalContextMenuHasSelection.value = selectedText.length > 0;
+  terminalContextMenuX.value = Math.min(
+    maxX,
+    Math.max(TERMINAL_CONTEXT_MENU_VIEWPORT_GAP, event.clientX),
+  );
+  terminalContextMenuY.value = Math.min(
+    maxY,
+    Math.max(TERMINAL_CONTEXT_MENU_VIEWPORT_GAP, event.clientY),
+  );
+  terminalContextMenuOpen.value = true;
+  void nextTick(() => {
+    focusElementWithoutScroll(terminalContextMenuRef.value || document.body);
+  });
+};
+
+const copyTerminalSelectionFromMenu = async () => {
+  const selectedText = term?.getSelection() || "";
+  closeTerminalContextMenu();
+
   if (!selectedText.length) {
     toast.info("当前没有选中内容");
     focusTerminal();
@@ -1267,14 +1458,49 @@ const handleTerminalContextMenu = async (event: MouseEvent) => {
   try {
     await copyTextToClipboard(selectedText);
     toast.success("已复制选中内容");
-    term?.clearSelection();
-    focusTerminal();
   } catch (error) {
     toast.error("复制失败", {
       description:
         error instanceof Error ? error.message : "无法将选中内容复制到剪贴板",
     });
+  } finally {
+    focusTerminal();
   }
+};
+
+const pasteClipboardToTerminal = async () => {
+  closeTerminalContextMenu();
+
+  if (!activeAttachment.value) {
+    toast.error("当前没有可用的终端连接");
+    focusTerminal();
+    return;
+  }
+
+  try {
+    const text = await readTextFromClipboard();
+    if (!text) {
+      toast.info("剪贴板为空");
+      focusTerminal();
+      return;
+    }
+
+    clearArmedModifier();
+    term?.paste(text);
+    focusTerminal();
+  } catch (error) {
+    console.warn("[terminal] clipboard read unavailable, using manual paste", {
+      error: error instanceof Error ? error.message : String(error ?? "unknown"),
+    });
+    openManualPasteDialog();
+  }
+};
+
+const selectAllTerminalText = () => {
+  closeTerminalContextMenu();
+  term?.selectAll();
+  terminalContextMenuHasSelection.value = true;
+  focusTerminal();
 };
 
 const keepTerminalFocused = (event: Event) => {
@@ -1324,7 +1550,7 @@ const applyOutputChunk = (chunk: TerminalOutputChunk) => {
       }),
     );
     if (payload) {
-      term.write(payload);
+      writeRemoteTerminalOutput(payload);
     }
   }
 
@@ -1507,6 +1733,18 @@ const queueTerminalInput = (
   scheduleInputFlush();
 };
 
+const queueRemoteTerminalResponse = (data: string) => {
+  if (!isSafeRemoteTerminalResponse(data)) {
+    console.warn("[terminal] dropped unexpected terminal response", {
+      codePoints: summarizeTerminalResponseCodePoints(data),
+      length: data.length,
+    });
+    return;
+  }
+
+  queueTerminalInput(data, { immediate: true });
+};
+
 const sendShortcut = (value: string) => {
   queueTerminalInput(value, { immediate: true });
   term?.focus();
@@ -1541,6 +1779,23 @@ const sendTerminalPayloadNow = async (payload: string) => {
 const openSendDialog = () => {
   if (toolbarDisabled.value) return;
   sendDialogOpen.value = true;
+};
+
+const focusSendDialogTextarea = () => {
+  void nextTick(() => {
+    const textarea = document.getElementById("terminal-send-payload");
+    if (textarea instanceof HTMLElement) {
+      focusElementWithoutScroll(textarea);
+    }
+  });
+};
+
+const openManualPasteDialog = () => {
+  if (toolbarDisabled.value) return;
+  sendDialogPayload.value = "";
+  sendDialogOpen.value = true;
+  focusSendDialogTextarea();
+  toast.info("浏览器不允许直接读取剪贴板，请在弹窗中粘贴后发送");
 };
 
 const openRenameDialog = () => {
@@ -1612,6 +1867,13 @@ const submitSendDialog = async () => {
   }
 };
 
+function restartHttpPollingFromSnapshot(attachment: TerminalAttachmentRecord) {
+  if (activeAttachment.value?.id !== attachment.id) return;
+
+  resetOutputState();
+  void startHttpPolling(attachment);
+}
+
 const flushPendingResize = async () => {
   if (resizeTimer) {
     window.clearTimeout(resizeTimer);
@@ -1645,6 +1907,7 @@ const flushPendingResize = async () => {
       );
       if (activeAttachment.value?.id !== attachment.id) return;
       markSyncedResize(session.id, session.cols, session.rows);
+      restartHttpPollingFromSnapshot(attachment);
     })
     .catch((error) => {
       if (activeAttachment.value?.id !== attachment.id) return;
@@ -1877,10 +2140,19 @@ const initializeTerminal = async () => {
   bindTerminalMouseReporting();
   bindTerminalTouchGestures();
   applyTerminalFit();
-  fitAddon.observeResize();
+  observeTerminalMountSize();
   scheduleTerminalFit();
   focusTerminal();
   term.onData((data) => {
+    if (terminalInternalResponseDropDepth > 0) {
+      return;
+    }
+
+    if (remoteOutputWriteDepth > 0) {
+      queueRemoteTerminalResponse(data);
+      return;
+    }
+
     queueTerminalInput(applyArmedModifierToInput(data));
   });
   term.onResize(() => {
@@ -1968,6 +2240,7 @@ onMounted(async () => {
   await bootstrapPage();
   window.addEventListener("resize", syncViewportHeight);
   window.addEventListener("keydown", handleWindowKeydown);
+  document.addEventListener("pointerdown", handleDocumentPointerDown);
   window.visualViewport?.addEventListener("resize", syncViewportHeight);
   window.visualViewport?.addEventListener("scroll", syncViewportHeight);
 });
@@ -1992,6 +2265,7 @@ onBeforeUnmount(() => {
   unbindTerminalTouchGestures();
   window.removeEventListener("resize", syncViewportHeight);
   window.removeEventListener("keydown", handleWindowKeydown);
+  document.removeEventListener("pointerdown", handleDocumentPointerDown);
   window.visualViewport?.removeEventListener("resize", syncViewportHeight);
   window.visualViewport?.removeEventListener("scroll", syncViewportHeight);
   unlockPageScroll();
@@ -2005,6 +2279,8 @@ onBeforeUnmount(() => {
   }
   terminalFitAttemptsRemaining = 0;
   void stopCurrentConnection();
+  terminalResizeObserver?.disconnect();
+  terminalResizeObserver = null;
   fitAddon?.dispose();
   term?.dispose();
   fitAddon = null;
@@ -2264,8 +2540,49 @@ onBeforeUnmount(() => {
                 <div
                   ref="terminalMountRef"
                   class="absolute inset-0 box-border min-h-0 min-w-0 overflow-hidden px-1.5 py-2.5 sm:px-2.5 sm:py-3"
-                  @contextmenu="handleTerminalContextMenu"
+                  @contextmenu.capture="handleTerminalContextMenu"
                 />
+                <div
+                  v-if="terminalContextMenuOpen"
+                  ref="terminalContextMenuRef"
+                  :style="terminalContextMenuStyle"
+                  class="fixed z-[70] w-44 overflow-hidden rounded-lg border border-white/12 bg-[#29292d]/95 p-1 text-sm text-white shadow-[0_16px_44px_rgba(0,0,0,0.38)] outline-none backdrop-blur-xl"
+                  role="menu"
+                  tabindex="-1"
+                  @contextmenu.prevent.stop
+                  @pointerdown.stop
+                  @click.stop
+                >
+                  <button
+                    type="button"
+                    class="flex h-9 w-full items-center gap-2 rounded-md px-2.5 text-left transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:text-white/35 disabled:hover:bg-transparent"
+                    role="menuitem"
+                    :disabled="!terminalContextMenuHasSelection"
+                    @click="copyTerminalSelectionFromMenu"
+                  >
+                    <Copy class="h-4 w-4" />
+                    <span>复制</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="flex h-9 w-full items-center gap-2 rounded-md px-2.5 text-left transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:text-white/35 disabled:hover:bg-transparent"
+                    role="menuitem"
+                    :disabled="!activeAttachment"
+                    @click="pasteClipboardToTerminal"
+                  >
+                    <ClipboardPaste class="h-4 w-4" />
+                    <span>粘贴</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="flex h-9 w-full items-center gap-2 rounded-md px-2.5 text-left transition-colors hover:bg-white/10"
+                    role="menuitem"
+                    @click="selectAllTerminalText"
+                  >
+                    <TextSelect class="h-4 w-4" />
+                    <span>全选</span>
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -2392,6 +2709,7 @@ onBeforeUnmount(() => {
         </DialogHeader>
 
         <Textarea
+          id="terminal-send-payload"
           v-model="sendDialogPayload"
           class="min-h-[180px] font-mono text-sm"
           placeholder="输入要发送到终端的内容"

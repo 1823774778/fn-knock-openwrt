@@ -29,6 +29,7 @@ const DEFAULT_CWD = homedir();
 const TMUX_TARGET_PANE_SUFFIX = ":0.0";
 const TERMINAL_STREAM_DIR_NAME = "terminal-streams";
 const TERMINAL_STREAM_CHUNK_MAX_BYTES = 256 * 1024;
+const TERMINAL_SNAPSHOT_SCROLLBACK_ROWS = 200;
 const INPUT_SESSION_TOUCH_THROTTLE_MS = 5_000;
 const INPUT_PIPE_OPEN_FLAGS =
   fsConstants.O_WRONLY | (fsConstants.O_NONBLOCK ?? 0);
@@ -144,6 +145,13 @@ class TerminalManager {
   private async runTmux(args: string[]): Promise<ExecResult> {
     const tmuxInfo = await this.detectTmuxExecutable();
     return this.runProcess(tmuxInfo?.path || "tmux", args);
+  }
+
+  private async runTmuxRaw(args: string[]): Promise<ExecResult> {
+    const tmuxInfo = await this.detectTmuxExecutable();
+    return this.runProcess(tmuxInfo?.path || "tmux", args, {
+      trimOutput: false,
+    });
   }
 
   private resetTmuxProbeCache(): void {
@@ -1166,6 +1174,41 @@ class TerminalManager {
     );
   }
 
+  private normalizePaneSnapshotOutput(output: string): string {
+    const trimmed = output.replace(/[ \t\r\n]+$/g, "");
+    if (!trimmed) return "";
+    return trimmed.replace(/\r?\n/g, "\r\n");
+  }
+
+  private async capturePaneSnapshotChunk(
+    session: TerminalSessionRecord,
+    cursor: number,
+    updatedAt: string,
+  ): Promise<TerminalOutputChunk> {
+    const rows = Math.max(
+      session.rows,
+      Math.min(TERMINAL_SNAPSHOT_SCROLLBACK_ROWS, session.rows * 2),
+    );
+    const result = await this.runTmuxRaw([
+      "capture-pane",
+      "-p",
+      "-e",
+      "-t",
+      this.paneTarget(session),
+      "-S",
+      `-${rows}`,
+    ]).catch(() => null);
+    const snapshot =
+      result?.code === 0 ? this.normalizePaneSnapshotOutput(result.stdout) : "";
+
+    return {
+      cursor,
+      data_base64: Buffer.from(snapshot, "utf8").toString("base64"),
+      reset: true,
+      updatedAt,
+    };
+  }
+
   private async readOutputChunk(
     session: TerminalSessionRecord,
     requestedCursor: number,
@@ -1174,41 +1217,21 @@ class TerminalManager {
     const updatedAt = new Date().toISOString();
 
     if (!outputLogPath) {
-      return requestedCursor > 0
-        ? {
-            cursor: 0,
-            data_base64: "",
-            reset: true,
-            updatedAt,
-          }
-        : null;
+      return this.capturePaneSnapshotChunk(session, 0, updatedAt);
     }
 
     const fileInfo = await stat(outputLogPath).catch(() => null);
     if (!fileInfo?.isFile()) {
-      return requestedCursor > 0
-        ? {
-            cursor: 0,
-            data_base64: "",
-            reset: true,
-            updatedAt,
-          }
-        : null;
+      return this.capturePaneSnapshotChunk(session, 0, updatedAt);
     }
 
-    const safeCursor =
-      requestedCursor > fileInfo.size ? 0 : Math.max(0, requestedCursor);
-    const reset = safeCursor !== requestedCursor;
+    if (requestedCursor <= 0 || requestedCursor > fileInfo.size) {
+      return this.capturePaneSnapshotChunk(session, fileInfo.size, updatedAt);
+    }
 
+    const safeCursor = Math.max(0, requestedCursor);
     if (safeCursor >= fileInfo.size) {
-      return reset
-        ? {
-            cursor: safeCursor,
-            data_base64: "",
-            reset,
-            updatedAt,
-          }
-        : null;
+      return null;
     }
 
     const bytesToRead = Math.min(
@@ -1226,20 +1249,13 @@ class TerminalManager {
         safeCursor,
       );
       if (bytesRead <= 0) {
-        return reset
-          ? {
-              cursor: safeCursor,
-              data_base64: "",
-              reset,
-              updatedAt,
-            }
-          : null;
+        return null;
       }
 
       return {
         cursor: safeCursor + bytesRead,
         data_base64: buffer.subarray(0, bytesRead).toString("base64"),
-        reset,
+        reset: false,
         updatedAt,
       };
     } finally {
