@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { networkInterfaces, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,6 +29,21 @@ const CURL_PROXY_ENV_KEYS = [
   "no_proxy",
   "NO_PROXY",
 ] as const;
+
+const DOCKER_HOST_INTERFACE_PREFIX = "docker-host:";
+const DEFAULT_DOCKER_HOST_IF_INET6_PATH = "/host/proc/net/if_inet6";
+const HOST_IF_INET6_PATH =
+  process.env.DDNS_HOST_IF_INET6_PATH || DEFAULT_DOCKER_HOST_IF_INET6_PATH;
+
+const IFA_F_TEMPORARY = 0x01;
+const IFA_F_DEPRECATED = 0x20;
+const IFA_F_TENTATIVE = 0x40;
+const IFA_F_DADFAILED = 0x08;
+
+type HostIPv6Address = DDNSNetworkInterfaceAddress & {
+  flags: number;
+  prefixLength: number;
+};
 
 function isUsableIPv4(address: string): boolean {
   return !(address.startsWith("127.") || address.startsWith("169.254."));
@@ -100,6 +116,14 @@ function isUniqueLocalIPv6(address: string): boolean {
   return normalized.startsWith("fc") || normalized.startsWith("fd");
 }
 
+function isDockerHostInterfaceName(value: string): boolean {
+  return value.startsWith(DOCKER_HOST_INTERFACE_PREFIX);
+}
+
+function toCurlNetworkInterface(value: string): string | undefined {
+  return isDockerHostInterfaceName(value) ? undefined : value || undefined;
+}
+
 export function isSelectableDDNSInterfaceAddress(
   address: DDNSNetworkInterfaceAddress,
 ): boolean {
@@ -134,6 +158,7 @@ function toNetworkInterfaceOption(
         address: item.address,
         cidr: item.cidr ?? null,
         internal: item.internal,
+        source: "runtime",
       },
     ];
   });
@@ -152,9 +177,154 @@ function toNetworkInterfaceOption(
     summary,
     hasIpv4: addresses.some((item) => item.family === "ipv4"),
     hasIpv6: addresses.some((item) => item.family === "ipv6"),
+    source: "runtime",
     addresses,
     selectableAddresses,
   };
+}
+
+function formatIPv6FromProcHex(value: string): string | null {
+  if (!/^[0-9a-fA-F]{32}$/.test(value)) {
+    return null;
+  }
+
+  const groups = value
+    .match(/.{4}/g)
+    ?.map((group) => Number.parseInt(group, 16).toString(16));
+  if (!groups || groups.length !== 8) {
+    return null;
+  }
+
+  let bestStart = -1;
+  let bestLength = 0;
+  let currentStart = -1;
+  let currentLength = 0;
+
+  for (let index = 0; index <= groups.length; index += 1) {
+    if (index < groups.length && groups[index] === "0") {
+      if (currentStart === -1) {
+        currentStart = index;
+        currentLength = 0;
+      }
+      currentLength += 1;
+      continue;
+    }
+
+    if (currentLength > bestLength) {
+      bestStart = currentStart;
+      bestLength = currentLength;
+    }
+    currentStart = -1;
+    currentLength = 0;
+  }
+
+  if (bestLength < 2) {
+    return groups.join(":");
+  }
+
+  const before = groups.slice(0, bestStart).join(":");
+  const after = groups.slice(bestStart + bestLength).join(":");
+  if (!before && !after) {
+    return "::";
+  }
+  if (!before) {
+    return `::${after}`;
+  }
+  if (!after) {
+    return `${before}::`;
+  }
+  return `${before}::${after}`;
+}
+
+function hostIPv6SortScore(address: HostIPv6Address): number {
+  let score = 0;
+  if (address.flags & IFA_F_DADFAILED) score += 200;
+  if (address.flags & IFA_F_TENTATIVE) score += 150;
+  if (address.flags & IFA_F_DEPRECATED) score += 100;
+  if (address.flags & IFA_F_TEMPORARY) score += 25;
+  if (address.prefixLength === 128) score -= 5;
+  return score;
+}
+
+function parseHostIfInet6(content: string): DDNSNetworkInterfaceOption[] {
+  const byInterface = new Map<string, HostIPv6Address[]>();
+
+  for (const line of content.split(/\r?\n/)) {
+    const [addressHex, , prefixHex, scopeHex, flagsHex, interfaceName] = line
+      .trim()
+      .split(/\s+/);
+    if (
+      !addressHex ||
+      !prefixHex ||
+      !scopeHex ||
+      !flagsHex ||
+      !interfaceName
+    ) {
+      continue;
+    }
+
+    const address = formatIPv6FromProcHex(addressHex);
+    const prefixLength = Number.parseInt(prefixHex, 16);
+    const scope = Number.parseInt(scopeHex, 16);
+    const flags = Number.parseInt(flagsHex, 16);
+    if (
+      !address ||
+      !Number.isFinite(prefixLength) ||
+      !Number.isFinite(scope) ||
+      !Number.isFinite(flags) ||
+      scope !== 0 ||
+      !isUsableIPv6(address)
+    ) {
+      continue;
+    }
+
+    const items = byInterface.get(interfaceName) || [];
+    items.push({
+      family: "ipv6",
+      address,
+      cidr: `${address}/${prefixLength}`,
+      internal: false,
+      source: "docker_host",
+      flags,
+      prefixLength,
+    });
+    byInterface.set(interfaceName, items);
+  }
+
+  return [...byInterface.entries()]
+    .map(([hostName, addresses]) => {
+      const sortedAddresses = [...addresses]
+        .sort((left, right) => {
+          const scoreDelta =
+            hostIPv6SortScore(left) - hostIPv6SortScore(right);
+          if (scoreDelta !== 0) return scoreDelta;
+          return left.address.localeCompare(right.address);
+        })
+        .map(({ flags, prefixLength, ...item }) => item);
+      const selectableAddresses = sortedAddresses.filter(
+        isSelectableDDNSInterfaceAddress,
+      );
+      const summary = formatAddressSummary(sortedAddresses);
+      return {
+        name: `${DOCKER_HOST_INTERFACE_PREFIX}${hostName}`,
+        label: `宿主机 ${hostName} (${summary})`,
+        summary,
+        source: "docker_host" as const,
+        hasIpv4: false,
+        hasIpv6: sortedAddresses.length > 0,
+        addresses: sortedAddresses,
+        selectableAddresses,
+      };
+    })
+    .filter((item) => item.selectableAddresses.length > 0);
+}
+
+function listDockerHostIPv6Interfaces(): DDNSNetworkInterfaceOption[] {
+  try {
+    return parseHostIfInet6(readFileSync(HOST_IF_INET6_PATH, "utf8"));
+  } catch {
+    return [];
+  }
 }
 
 export function normalizeNetworkInterface(
@@ -164,7 +334,7 @@ export function normalizeNetworkInterface(
 }
 
 export function listDDNSNetworkInterfaces(): DDNSNetworkInterfaceOption[] {
-  return Object.entries(networkInterfaces())
+  const runtimeInterfaces = Object.entries(networkInterfaces())
     .map(([name, items]) => {
       if (!items) {
         return null;
@@ -173,6 +343,15 @@ export function listDDNSNetworkInterfaces(): DDNSNetworkInterfaceOption[] {
     })
     .filter((item): item is DDNSNetworkInterfaceOption => item !== null)
     .sort((left, right) => left.name.localeCompare(right.name));
+
+  return [...listDockerHostIPv6Interfaces(), ...runtimeInterfaces].sort(
+    (left, right) => {
+      if (left.source !== right.source) {
+        return left.source === "docker_host" ? -1 : 1;
+      }
+      return left.name.localeCompare(right.name);
+    },
+  );
 }
 
 export function findDDNSNetworkInterface(
@@ -441,7 +620,7 @@ export async function ddnsFetch(
   }
 
   return fetchViaCurl(request, {
-    networkInterface: normalizedInterface || undefined,
+    networkInterface: toCurlNetworkInterface(normalizedInterface),
     preferredFamily,
   });
 }

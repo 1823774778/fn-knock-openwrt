@@ -43,6 +43,8 @@ BACKEND_PORT=7998
 AUTH_PORT=7997
 GO_BACKEND_PORT=7996
 GO_REPROXY_PORT=7999
+FN_KNOCK_DOCKER_IPV4_SUBNET=172.30.0.0/16
+FN_KNOCK_DOCKER_IPV6_SUBNET=fd42:fb33:7f7a:100::/64
 DOCKER_ADMIN_TRUSTED_PROXY_CIDRS=
 DOCKER_DISCOVER_LAN_IP=
 ```
@@ -52,6 +54,8 @@ DOCKER_DISCOVER_LAN_IP=
 - `FN_KNOCK_IMAGE`：推荐默认使用 `:latest`，这样用户可以始终更新到最新版本；如果需要锁版本，也可以改成 `:1.4.3` 这样的固定 tag
 - `ADMIN_VIEW_PORT`：管理后台入口端口，默认 `7991`
 - `GO_REPROXY_PORT`：网关对外服务端口，默认 `7999`
+- `FN_KNOCK_DOCKER_IPV4_SUBNET`：Docker bridge 的容器 IPv4 子网；如果同机网络冲突，可换成其它私网 CIDR
+- `FN_KNOCK_DOCKER_IPV6_SUBNET`：Docker bridge 的容器 IPv6 子网，默认启用 ULA `/64`，用于保留外部 IPv6 来源地址
 - `BACKEND_PORT` / `AUTH_PORT` / `GO_BACKEND_PORT`：容器内部组件端口，通常保持默认即可
 - `DOCKER_ADMIN_TRUSTED_PROXY_CIDRS`：如果 `7991` 需要挂在可信反代后面，填反代出口 IP 或 CIDR
 - `DOCKER_DISCOVER_LAN_IP`：仅第三方反代无法自动识别宿主机局域网地址时作为兜底
@@ -77,14 +81,18 @@ services:
       GO_REPROXY_PORT: ${GO_REPROXY_PORT:-7999}
       DOCKER_ADMIN_TRUSTED_PROXY_CIDRS: ${DOCKER_ADMIN_TRUSTED_PROXY_CIDRS:-}
       DOCKER_DISCOVER_LAN_IP: ${DOCKER_DISCOVER_LAN_IP:-}
+      DDNS_HOST_IF_INET6_PATH: /host/proc/net/if_inet6
       ADMIN_VIEW_HOST: 0.0.0.0
       BACKEND_HOST: 127.0.0.1
     ports:
       - "${ADMIN_VIEW_PORT:-7991}:${ADMIN_VIEW_PORT:-7991}"
       - "${GO_REPROXY_PORT:-7999}:${GO_REPROXY_PORT:-7999}"
+    networks:
+      - fn_knock_net
     volumes:
       - fn_knock_data:/var/lib/fn-knock
       - fn_knock_gateway:/usr/local/etc/fn-knock
+      - /proc/1/net:/host/proc/net:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -105,6 +113,8 @@ services:
     environment:
       TZ: ${TZ:-Asia/Shanghai}
     command: ["redis-server", "--appendonly", "yes"]
+    networks:
+      - fn_knock_net
     volumes:
       - fn_knock_redis:/data
     healthcheck:
@@ -117,12 +127,22 @@ volumes:
   fn_knock_data:
   fn_knock_gateway:
   fn_knock_redis:
+
+networks:
+  fn_knock_net:
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: ${FN_KNOCK_DOCKER_IPV4_SUBNET:-172.30.0.0/16}
+        - subnet: ${FN_KNOCK_DOCKER_IPV6_SUBNET:-fd42:fb33:7f7a:100::/64}
 ```
 
 这份 compose 配置的要点：
 
 - `fn-knock` 和 `redis` 都使用 `unless-stopped`，重启后会自动拉起
 - 只对宿主机开放 `ADMIN_VIEW_PORT` 和 `GO_REPROXY_PORT`
+- 默认启用容器 IPv6 网络，避免宿主机 IPv6 入口被 Docker 转接到容器 IPv4 后丢失真实来访 IP
+- 只读挂载宿主机 `/proc/1/net`，让 Docker 内的 DDNS 可以直接选择宿主机公网 IPv6；如果设备没有 IPv6 地址，DDNS 会自动退回原有公网探测逻辑
 - `fn_knock_data` 保存业务数据，`fn_knock_gateway` 保存网关配置，`fn_knock_redis` 保存 Redis 持久化数据
 - `depends_on + healthcheck` 会让 `fn-knock` 等 Redis 就绪后再启动
 
@@ -144,7 +164,13 @@ docker compose logs -f fn-knock
 - `7996`：Go 后端内部端口，不对宿主机暴露
 - `6379`：Redis 仅在 compose 内部使用，不对宿主机暴露
 
-### 6. 首次配置与后续更新
+### 6. 请求来源 IP
+
+Docker bridge 发布端口时，本机回环访问会经过 Docker 的本地转发层，因此 `curl http://127.0.0.1:7999` 这类探测日志可能显示 `172.30.0.1` 或其它 Docker 网关地址。局域网或公网 IPv4 从宿主机网卡进入时，通常会保留真实 TCP 来源；如果经过上游反代，真实访问者需要由可信反代写入 `X-Forwarded-For`、`X-Real-IP` 或云厂商真实 IP 头。
+
+请求日志中的“客户端 IP”会优先展示由上游真实 IP 头推断出的访问者；“连接来源 IP”保留网关实际看到的 TCP 对端，便于排查 Docker 端口发布、本机探测和反代链路。
+
+### 7. 首次配置与后续更新
 
 首次运行后：
 
@@ -180,6 +206,8 @@ BACKEND_PORT=7998
 AUTH_PORT=7997
 GO_BACKEND_PORT=7996
 GO_REPROXY_PORT=7999
+FN_KNOCK_DOCKER_IPV4_SUBNET=172.30.0.0/16
+FN_KNOCK_DOCKER_IPV6_SUBNET=fd42:fb33:7f7a:100::/64
 DOCKER_ADMIN_TRUSTED_PROXY_CIDRS=
 DOCKER_DISCOVER_LAN_IP=
 ```

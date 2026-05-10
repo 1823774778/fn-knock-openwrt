@@ -19,12 +19,14 @@ export type DDNSNetworkInterfaceAddress = {
   address: string;
   cidr: string | null;
   internal: boolean;
+  source?: "runtime" | "docker_host";
 };
 
 export type DDNSNetworkInterfaceOption = {
   name: string;
   label: string;
   summary: string;
+  source?: "runtime" | "docker_host";
   hasIpv4: boolean;
   hasIpv6: boolean;
   addresses: DDNSNetworkInterfaceAddress[];

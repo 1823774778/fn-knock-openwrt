@@ -1,6 +1,7 @@
 import { IPDetector } from "../../plugins/ip-detector";
 import {
   findDDNSNetworkInterface,
+  listDDNSNetworkInterfaces,
   listSelectableDDNSInterfaceAddresses,
   normalizeNetworkInterface,
 } from "./network";
@@ -108,6 +109,20 @@ function resolveInterfaceAddress(
   return selected.address;
 }
 
+function listKnownSelectableIPv6Addresses(interfaceName?: string): string[] {
+  if (interfaceName) {
+    return listSelectableDDNSInterfaceAddresses(interfaceName, "ipv6").map(
+      (item) => item.address,
+    );
+  }
+
+  return listDDNSNetworkInterfaces().flatMap((item) =>
+    item.selectableAddresses
+      .filter((address) => address.family === "ipv6")
+      .map((address) => address.address),
+  );
+}
+
 export async function resolveDDNSTargetIPs(options: {
   updateScope: DDNSUpdateScope;
   networkInterface?: string | null;
@@ -141,6 +156,19 @@ export async function resolveDDNSTargetIPs(options: {
           ? `IPv6 获取失败，将继续使用 IPv4 (${ips.errors.ipv6})`
           : `IPv6 获取失败 (${ips.errors.ipv6})`,
       );
+    }
+    if (detectionOptions.enableIPv6 && ips.ipv6) {
+      const knownIPv6Addresses = listKnownSelectableIPv6Addresses(
+        normalizedInterface,
+      );
+      if (
+        knownIPv6Addresses.length > 0 &&
+        !knownIPv6Addresses.includes(ips.ipv6)
+      ) {
+        warnings.push(
+          `公网探测得到的 IPv6 (${ips.ipv6}) 不在本机或 Docker 宿主机的可选网卡地址中；如果外网无法访问该地址，请改用“从网卡直接获取”并选择宿主机公网 IPv6`,
+        );
+      }
     }
 
     return {

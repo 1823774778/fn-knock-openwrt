@@ -100,6 +100,38 @@
       },
       {
         "type": "text",
+        "field": "wizard_docker_ipv6_subnet",
+        "label": "Docker IPv6 子网",
+        "initValue": "fd42:fb33:7f7a:100::/64",
+        "rules": [
+          {
+            "required": true,
+            "message": "请输入 Docker IPv6 子网"
+          },
+          {
+            "pattern": "^[0-9A-Fa-f:]+/[0-9]+$",
+            "message": "请输入 IPv6 CIDR，例如 fd42:fb33:7f7a:100::/64"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "field": "wizard_docker_ipv4_subnet",
+        "label": "Docker IPv4 子网",
+        "initValue": "172.30.0.0/16",
+        "rules": [
+          {
+            "required": true,
+            "message": "请输入 Docker IPv4 子网"
+          },
+          {
+            "pattern": "^[0-9.]+/[0-9]+$",
+            "message": "请输入 IPv4 CIDR，例如 172.30.0.0/16"
+          }
+        ]
+      },
+      {
+        "type": "text",
         "field": "wizard_admin_trusted_proxy_cidrs",
         "label": "可信反代 IP/CIDR",
         "initValue": ""

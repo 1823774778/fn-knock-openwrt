@@ -218,7 +218,7 @@ const fetchEntries = async () => {
     });
     logsDir.value = data.logs_dir || "";
     entries.value = data.items || [];
-    trackIps(entries.value.map((entry) => entry.remote_ip || ""));
+    trackIps(entries.value.map((entry) => getEntryClientIp(entry)));
     nextCursor.value = data.next_cursor || "";
     applyDates(data.available_dates || [], data.date || selectedDate.value);
   } catch (error) {
@@ -534,8 +534,11 @@ const formatBoolean = (value?: boolean) => {
 
 const formatDate = (value?: string) => formatDateTimeSafe(value);
 
+const getEntryClientIp = (entry: GatewayLogEntry) =>
+  entry.client_ip || entry.remote_ip || "";
+
 const getEntryIpSnapshot = (entry: GatewayLogEntry) =>
-  getSnapshot(entry.remote_ip || "");
+  getSnapshot(getEntryClientIp(entry));
 
 const getEntryIpLocation = (entry: GatewayLogEntry) =>
   getEntryIpSnapshot(entry)?.location || entry.ipLocation || "";
@@ -575,9 +578,17 @@ const getForwardedHeaderLines = (entry: GatewayLogEntry) => {
   return lines;
 };
 
+const getConnectionSourceText = (entry: GatewayLogEntry) => {
+  const clientIp = getEntryClientIp(entry);
+  const remoteIp = entry.remote_ip || "";
+  if (!remoteIp || remoteIp === clientIp) return "";
+  return `连接来源: ${remoteIp}`;
+};
+
 const displayedEntries = computed(() =>
   entries.value.map((entry) => ({
     ...entry,
+    client_ip: getEntryClientIp(entry),
     ipLocation: getEntryIpLocation(entry),
   })),
 );
@@ -586,6 +597,7 @@ const activeEntryWithIpLocation = computed(() =>
   activeEntry.value
     ? {
         ...activeEntry.value,
+        client_ip: getEntryClientIp(activeEntry.value),
         ipLocation: getEntryIpLocation(activeEntry.value),
       }
     : null,
@@ -602,9 +614,10 @@ const detailFields = [
   { key: "protocol", label: "HTTP 协议" },
   { key: "status", label: "状态码" },
   { key: "duration_ms", label: "耗时" },
-  { key: "remote_ip", label: "客户端 IP" },
+  { key: "client_ip", label: "客户端 IP" },
   { key: "ipLocation", label: "属地" },
-  { key: "remote_addr", label: "远端地址" },
+  { key: "remote_ip", label: "连接来源 IP" },
+  { key: "remote_addr", label: "连接来源地址" },
   { key: "user_agent", label: "User-Agent" },
   { key: "referer", label: "Referer" },
   { key: "logged_in", label: "已登录" },
@@ -907,7 +920,7 @@ onBeforeUnmount(() => {
                 >
                 <TableHead
                   class="h-10 text-[11px] font-medium text-muted-foreground"
-                  >来源 IP</TableHead
+                  >客户端 IP</TableHead
                 >
                 <TableHead
                   class="h-10 text-[11px] font-medium text-muted-foreground"
@@ -946,7 +959,9 @@ onBeforeUnmount(() => {
                 :key="`${entry.time}-${entry.request_uri}-${entry.remote_ip}`"
                 class="align-top"
               >
-                <TableCell class="w-[320px] min-w-[320px] max-w-[320px] whitespace-normal py-2.5">
+                <TableCell
+                  class="w-[320px] min-w-[320px] max-w-[320px] whitespace-normal py-2.5"
+                >
                   <div class="space-y-1.5">
                     <div class="flex items-start gap-2">
                       <div
@@ -1027,7 +1042,13 @@ onBeforeUnmount(() => {
                 </TableCell>
                 <TableCell class="min-w-[140px] py-2.5">
                   <div class="font-mono text-sm text-foreground">
-                    {{ entry.remote_ip || "-" }}
+                    {{ getEntryClientIp(entry) || "-" }}
+                  </div>
+                  <div
+                    v-if="getConnectionSourceText(entry)"
+                    class="break-all text-[10px] text-muted-foreground/75"
+                  >
+                    {{ getConnectionSourceText(entry) }}
                   </div>
                   <div
                     v-if="getEntryIpLocationText(entry)"

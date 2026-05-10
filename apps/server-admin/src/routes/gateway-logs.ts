@@ -11,6 +11,7 @@ import {
 } from "../lib/gateway-logging";
 import { configManager } from "../lib/redis";
 import { routeDoc, withRouteDoc } from "../lib/openapi";
+import { isWhitelistExemptIp, normalizeIp } from "../lib/ip-normalize";
 
 const toFailure = (
   set: { status?: number | string },
@@ -75,6 +76,54 @@ const gatewayLogMatchesWAFStatus = (
   }
 };
 
+const splitForwardedIps = (value: string | null | undefined): string[] =>
+  String(value ?? "")
+    .split(",")
+    .map((item) => normalizeIp(item.trim()))
+    .filter(Boolean);
+
+const pickPreferredIp = (candidates: string[]): string => {
+  const publicIp = candidates.find((ip) => !isWhitelistExemptIp(ip));
+  return publicIp || candidates[0] || "";
+};
+
+const inferGatewayLogClientIp = (entry: GatewayLogEntry): string => {
+  if (entry.client_ip) {
+    return normalizeIp(entry.client_ip) || entry.client_ip;
+  }
+
+  const providerCandidates = [
+    ...splitForwardedIps(entry.eo_connecting_ip),
+    ...splitForwardedIps(entry.ali_real_client_ip),
+  ];
+  const providerIp = pickPreferredIp(providerCandidates);
+  if (providerIp) return providerIp;
+
+  const remoteIp = normalizeIp(entry.remote_ip);
+  const proxyHeaderCandidates = [
+    ...splitForwardedIps(entry.x_forwarded_for),
+    ...splitForwardedIps(entry.x_real_ip),
+  ];
+  if (remoteIp && isWhitelistExemptIp(remoteIp)) {
+    const proxyHeaderIp = pickPreferredIp(proxyHeaderCandidates);
+    if (proxyHeaderIp) return proxyHeaderIp;
+  }
+
+  return remoteIp || entry.remote_ip || "";
+};
+
+const hydrateGatewayLogEntry = (entry: GatewayLogEntry): GatewayLogEntry => ({
+  ...entry,
+  client_ip: inferGatewayLogClientIp(entry),
+});
+
+const hydrateGatewayLogEntriesResponse = (
+  data: GatewayLogEntriesResponse,
+): GatewayLogEntriesResponse => ({
+  ...data,
+  items: data.items.map(hydrateGatewayLogEntry),
+});
+
 const getGatewayLogEntriesWithWAFFilter = async (
   query: Record<string, unknown>,
   wafStatus: string,
@@ -83,8 +132,7 @@ const getGatewayLogEntriesWithWAFFilter = async (
   const initialCursor = normalizeOptionalCursor(query.cursor);
   const items: GatewayLogEntry[] = [];
   let baseData: GatewayLogEntriesResponse | null = null;
-  let rawCursor =
-    initialCursor === null ? undefined : String(initialCursor);
+  let rawCursor = initialCursor === null ? undefined : String(initialCursor);
   let nextCursor = "";
   let hasMore = false;
 
@@ -174,7 +222,7 @@ const getGatewayLogEntriesWithWAFFilter = async (
 
   return {
     success: true,
-    data: {
+    data: hydrateGatewayLogEntriesResponse({
       ...baseData,
       pagination: "cursor",
       page: 1,
@@ -184,7 +232,7 @@ const getGatewayLogEntriesWithWAFFilter = async (
       next_cursor: nextCursor,
       has_more: hasMore,
       items,
-    },
+    }),
   };
 };
 
@@ -260,7 +308,10 @@ export const gatewayLogsRoutes = new Elysia({
       if (!response.success || !response.data) {
         return toFailure(set, response.message || "读取请求日志失败", 400);
       }
-      return { success: true, data: response.data };
+      return {
+        success: true,
+        data: hydrateGatewayLogEntriesResponse(response.data),
+      };
     },
     withRouteDoc("分页查询网关请求日志", {
       query: t.Object({

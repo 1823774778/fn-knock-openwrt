@@ -42,6 +42,8 @@ BACKEND_PORT=7998
 AUTH_PORT=7997
 GO_BACKEND_PORT=7996
 GO_REPROXY_PORT=7999
+FN_KNOCK_DOCKER_IPV4_SUBNET=172.30.0.0/16
+FN_KNOCK_DOCKER_IPV6_SUBNET=fd42:fb33:7f7a:100::/64
 DOCKER_ADMIN_TRUSTED_PROXY_CIDRS=
 DOCKER_DISCOVER_LAN_IP=
 ```
@@ -67,14 +69,18 @@ services:
       GO_REPROXY_PORT: ${GO_REPROXY_PORT:-7999}
       DOCKER_ADMIN_TRUSTED_PROXY_CIDRS: ${DOCKER_ADMIN_TRUSTED_PROXY_CIDRS:-}
       DOCKER_DISCOVER_LAN_IP: ${DOCKER_DISCOVER_LAN_IP:-}
+      DDNS_HOST_IF_INET6_PATH: /host/proc/net/if_inet6
       ADMIN_VIEW_HOST: 0.0.0.0
       BACKEND_HOST: 127.0.0.1
     ports:
       - "${ADMIN_VIEW_PORT:-7991}:${ADMIN_VIEW_PORT:-7991}"
       - "${GO_REPROXY_PORT:-7999}:${GO_REPROXY_PORT:-7999}"
+    networks:
+      - fn_knock_net
     volumes:
       - fn_knock_data:/var/lib/fn-knock
       - fn_knock_gateway:/usr/local/etc/fn-knock
+      - /proc/1/net:/host/proc/net:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -93,6 +99,8 @@ services:
     image: redis:7-bookworm
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
+    networks:
+      - fn_knock_net
     volumes:
       - fn_knock_redis:/data
     healthcheck:
@@ -105,6 +113,14 @@ volumes:
   fn_knock_data:
   fn_knock_gateway:
   fn_knock_redis:
+
+networks:
+  fn_knock_net:
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: ${FN_KNOCK_DOCKER_IPV4_SUBNET:-172.30.0.0/16}
+        - subnet: ${FN_KNOCK_DOCKER_IPV6_SUBNET:-fd42:fb33:7f7a:100::/64}
 ```
 
 启动：
@@ -128,8 +144,10 @@ docker compose logs -f fn-knock
 1. 打开 `http://<宿主机IP>:7991`，先设置管理面板密码并登录
 2. 在管理后台内完成反向代理、子域名、证书、鉴权等业务配置
 3. 让外部流量访问 `7999` 对应的网关入口
-4. 如果 `7991` 需要放到可信反向代理后面，设置 `DOCKER_ADMIN_TRUSTED_PROXY_CIDRS`
-5. 只有在第三方反向代理无法自动识别宿主机局域网地址时，才额外设置 `DOCKER_DISCOVER_LAN_IP`
+4. 如果要支持公网 IPv6，保留默认 IPv6 网络；如同一宿主机已有同网段 Docker 网络，修改 `FN_KNOCK_DOCKER_IPV4_SUBNET` 或 `FN_KNOCK_DOCKER_IPV6_SUBNET`
+5. 如果 DDNS 的公网探测地址不是宿主机可入站地址，在 DDNS 中选择“从网卡直接获取”，再选择“宿主机”网卡上的公网 IPv6
+6. 如果 `7991` 需要放到可信反向代理后面，设置 `DOCKER_ADMIN_TRUSTED_PROXY_CIDRS`
+7. 只有在第三方反向代理无法自动识别宿主机局域网地址时，才额外设置 `DOCKER_DISCOVER_LAN_IP`
 
 如果你始终希望跟随最新镜像，可以保持 `.env` 中的 `FN_KNOCK_IMAGE=kcilnk/fn-knock:latest`，更新时执行：
 
@@ -232,6 +250,8 @@ cp deploy/docker/.env.example deploy/docker/.env
 - `AUTH_PORT=7997`
 - `GO_BACKEND_PORT=7996`
 - `GO_REPROXY_PORT=7999`
+- `FN_KNOCK_DOCKER_IPV4_SUBNET=172.30.0.0/16`
+- `FN_KNOCK_DOCKER_IPV6_SUBNET=fd42:fb33:7f7a:100::/64`
 - `DOCKER_ADMIN_TRUSTED_PROXY_CIDRS=`（可选，放行 7991 前面的可信反代出口 IP / CIDR）
 - `DOCKER_DISCOVER_LAN_IP=`（可选兜底，仅第三方反代无法自动透传时使用）
 

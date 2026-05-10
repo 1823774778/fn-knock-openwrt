@@ -517,6 +517,7 @@ export interface GatewayLogEntry {
   protocol?: string;
   status: number;
   duration_ms: number;
+  client_ip?: string;
   remote_ip?: string;
   remote_addr?: string;
   user_agent?: string;

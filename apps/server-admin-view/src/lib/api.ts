@@ -2231,13 +2231,16 @@ export type DDNSNetworkInterfacePayload = {
     address: string;
     cidr: string | null;
     internal: boolean;
+    source?: "runtime" | "docker_host";
   }>;
   selectableAddresses: Array<{
     family: "ipv4" | "ipv6";
     address: string;
     cidr: string | null;
     internal: boolean;
+    source?: "runtime" | "docker_host";
   }>;
+  source?: "runtime" | "docker_host";
 };
 
 export type DDNSPollPayload = {
