@@ -30,6 +30,8 @@ BUILD_ALL_PROXY=""
 BUILD_NO_PROXY=""
 BUILD_PROXY_ENABLED=0
 DOCKER_ARCHES=(amd64 arm64 arm32)
+GATEWAY_BINARY_DIR="${ROOT_DIR}/apps/fn-knock/app/server"
+GATEWAY_BINARIES_PREPARED=0
 
 cleanup_temp_files() {
   if [ "${#TEMP_FILES[@]}" -gt 0 ]; then
@@ -51,6 +53,15 @@ fail() {
 require_cmd() {
   local cmd="$1"
   command -v "${cmd}" >/dev/null 2>&1 || fail "missing required command: ${cmd}"
+}
+
+prepare_gateway_binaries() {
+  if [ "${GATEWAY_BINARIES_PREPARED}" = "1" ]; then
+    return 0
+  fi
+
+  bash "${ROOT_DIR}/scripts/prepare-go-reauth-proxy.sh" "${GATEWAY_BINARY_DIR}" amd64 arm64 arm
+  GATEWAY_BINARIES_PREPARED=1
 }
 
 read_proxy_value() {
@@ -460,6 +471,7 @@ run_buildx_image() {
   local cache_export_enabled=1
 
   platform="$(docker_platform_for_arch "${arch}")"
+  prepare_gateway_binaries
   configure_build_proxy
   log "Building image ${image_ref} for ${platform} (${output_mode})"
   ensure_buildx_builder

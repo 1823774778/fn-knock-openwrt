@@ -11,7 +11,6 @@ SERVER_DIR="${OUTPUT_DIR}/server"
 SERVER_ADMIN_DIR="${SERVER_DIR}/server-admin"
 SERVER_ADMIN_RES_DIR="${SERVER_ADMIN_DIR}/resources"
 ACME_RESOURCE_SRC="${ROOT_DIR}/apps/server-admin/resources/acmesh.zip"
-GO_BINARY_SRC_DIR="${ROOT_DIR}/apps/fn-knock/app/server"
 
 echo "[fn-knock] Assembling runtime into ${OUTPUT_DIR}"
 
@@ -63,18 +62,6 @@ echo "[fn-knock] Copying bundled acme resource"
 cp "${ACME_RESOURCE_SRC}" "${SERVER_ADMIN_RES_DIR}/acmesh.zip"
 
 rm -f "${SERVER_DIR}"/go-reauth-proxy-linux-*
-
-for arch in amd64 arm64; do
-  src="${GO_BINARY_SRC_DIR}/go-reauth-proxy-linux-${arch}"
-  dst="${SERVER_DIR}/go-reauth-proxy-linux-${arch}"
-
-  if [ ! -f "${src}" ]; then
-    echo "[fn-knock] Missing gateway binary: ${src}" >&2
-    exit 1
-  fi
-
-  cp "${src}" "${dst}"
-  chmod +x "${dst}"
-done
+bash "${ROOT_DIR}/scripts/prepare-go-reauth-proxy.sh" "${SERVER_DIR}" amd64 arm64
 
 echo "[fn-knock] Runtime assembly completed"

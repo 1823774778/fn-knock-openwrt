@@ -201,6 +201,14 @@ npm run fn-knock:install:remote
 npm run fn-knock:verify:remote
 ```
 
+`go-reauth-proxy` 的 Linux 二进制不再提交到本仓库。打包脚本会默认从相邻目录 `../Go-Reauth-Proxy` 读取源码，并在缺少产物时执行 `task build`，然后复制 `build/go-reauth-proxy-linux-{amd64,arm64}` 到运行时目录。若 Go 项目在其他位置，可设置：
+
+```bash
+export FN_KNOCK_GO_REAUTH_PROXY_DIR=/path/to/Go-Reauth-Proxy
+```
+
+Docker 多架构构建会用同一套逻辑准备 `amd64` / `arm64` / `arm` 三个网关二进制。
+
 ## 可配置环境变量
 
 部署脚本支持以下环境变量覆盖默认值：
