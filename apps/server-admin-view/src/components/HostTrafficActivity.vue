@@ -3,7 +3,7 @@
     <PopoverAnchor as-child>
       <button
         type="button"
-        class="inline-flex h-6 items-center gap-2 whitespace-nowrap px-1.5 text-left text-xs leading-none transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        class="inline-flex min-h-6 max-w-full flex-wrap items-center gap-x-2 gap-y-1 px-1.5 text-left text-xs leading-none transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         :class="{ 'border-primary/30 bg-primary/5': open || dialogOpen }"
         :aria-label="`${displayTitle} ${host} 流量详情`"
         @pointerdown="handleTriggerPointerDown"

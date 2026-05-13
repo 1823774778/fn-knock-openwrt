@@ -348,15 +348,27 @@
         </p>
 
         <div class="overflow-hidden rounded-md border">
-          <Table>
+          <Table container-class="mapping-table-scroll">
             <TableHeader>
               <TableRow>
-                <TableHead class="w-[36px]"></TableHead>
-                <TableHead class="w-[22px]">Icon</TableHead>
-                <TableHead class="min-w-[12rem]">标题</TableHead>
+                <TableHead
+                  class="mapping-sticky-cell mapping-sticky-cell-1"
+                ></TableHead>
+                <TableHead
+                  class="mapping-sticky-cell mapping-sticky-cell-2 mapping-icon-cell"
+                >
+                  <span class="sr-only">Icon</span>
+                </TableHead>
+                <TableHead
+                  class="mapping-sticky-cell mapping-sticky-cell-3 mapping-title-cell"
+                >
+                  标题
+                </TableHead>
                 <TableHead>域名</TableHead>
                 <TableHead>目标</TableHead>
-                <TableHead class="min-w-[10rem]">流量</TableHead>
+                <TableHead class="w-[7rem] min-w-[7rem] max-w-[7rem]">
+                  流量
+                </TableHead>
                 <TableHead>状态</TableHead>
                 <TableHead class="text-right">操作</TableHead>
               </TableRow>
@@ -385,7 +397,9 @@
                 :key="mapping.host"
                 class="group"
               >
-                <TableCell class="w-[36px]">
+                <TableCell
+                  class="mapping-sticky-cell mapping-sticky-cell-1 mapping-icon-cell"
+                >
                   <button
                     type="button"
                     class="mapping-drag-handle -ml-1 inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
@@ -395,7 +409,9 @@
                     <GripVertical class="h-4 w-4" />
                   </button>
                 </TableCell>
-                <TableCell class="w-[22px]">
+                <TableCell
+                  class="mapping-sticky-cell mapping-sticky-cell-2 mapping-icon-cell"
+                >
                   <img
                     v-if="
                       getMappingFaviconSrc(mapping) && !isFaviconBroken(mapping)
@@ -407,10 +423,10 @@
                   />
                 </TableCell>
                 <TableCell
-                  class="max-w-[16rem] text-sm"
+                  class="mapping-sticky-cell mapping-sticky-cell-3 mapping-title-cell text-sm"
                   :title="getMappingTitleForDisplay(mapping)"
                 >
-                  <div class="flex max-w-[16rem] min-w-0 items-center gap-2">
+                  <div class="flex min-w-0 items-center gap-2">
                     <Popover
                       v-if="shouldShowProtocolHeadersWarning(mapping)"
                       :open="isProtocolHeadersWarningOpen(mapping.host)"
@@ -485,10 +501,18 @@
                   </div>
                 </TableCell>
                 <TableCell class="break-all font-medium">
-                  {{ formatHostWithAccessEntryPort(mapping.host) }}
+                  <button
+                    type="button"
+                    class="cursor-copy break-all rounded-sm text-left transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    :title="`点击复制 ${formatHostWithAccessEntryPort(mapping.host)}`"
+                    :aria-label="`复制域名 ${formatHostWithAccessEntryPort(mapping.host)}`"
+                    @click="copyMappingHost(mapping)"
+                  >
+                    {{ formatHostWithAccessEntryPort(mapping.host) }}
+                  </button>
                 </TableCell>
                 <TableCell>{{ mapping.target }}</TableCell>
-                <TableCell class="min-w-[10rem]">
+                <TableCell class="w-[7rem] min-w-[7rem] max-w-[7rem]">
                   <HostTrafficActivity
                     :host="mapping.host"
                     :title="getMappingTitleForDisplay(mapping)"
@@ -975,6 +999,7 @@ import {
 import { toast } from "@admin-shared/utils/toast";
 import { useDiscoverServicesSelection } from "@admin-shared/composables/useDiscoverServicesSelection";
 import { extractPortFromTarget } from "@admin-shared/utils/extractPortFromTarget";
+import { copyTextToClipboard } from "@admin-shared/utils/copyTextToClipboard";
 import { useConfigStore } from "../store/config";
 import {
   ConfigAPI,
@@ -2123,6 +2148,27 @@ async function saveMappingOrder() {
 
   if (saved !== true) {
     syncDraggableVisibleMappings();
+  }
+}
+
+async function copyMappingHost(mapping: HostMapping) {
+  const host = formatHostWithAccessEntryPort(mapping.host);
+  if (!host) return;
+
+  try {
+    const result = await copyTextToClipboard(host);
+    if (result.verified) {
+      toast.success("域名已复制", { description: host });
+      return;
+    }
+
+    toast.info("已尝试复制域名", {
+      description: host,
+    });
+  } catch {
+    toast.error("复制域名失败", {
+      description: "当前页面可能运行在受限环境中，请手动复制。",
+    });
   }
 }
 

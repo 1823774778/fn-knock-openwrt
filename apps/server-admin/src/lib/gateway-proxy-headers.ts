@@ -8,6 +8,7 @@ import {
   type GatewayProxyHeadersRuntimeState,
   type HostMapping,
 } from "./redis";
+import { isAnySubdomainRoutingMode } from "./reverse-proxy-submode";
 
 export interface GatewayProxyHeadersItem {
   host: string;
@@ -83,9 +84,9 @@ const sanitizeDisabledHosts = (
 };
 
 export const buildGatewayProxyHeadersAvailability = (
-  config: Pick<AppConfig, "run_type">,
+  config: Pick<AppConfig, "run_type" | "reverse_proxy_submode">,
 ): GatewayProxyHeadersAvailability => {
-  if (config.run_type === 3) {
+  if (isAnySubdomainRoutingMode(config)) {
     return {
       available: true,
       reason: "",
@@ -127,7 +128,10 @@ export const buildGatewayProxyHeadersSummary = (
 export const compileGatewayProxyHeadersState = (
   config: Pick<
     AppConfig,
-    "run_type" | "host_mappings" | "gateway_proxy_headers"
+    | "run_type"
+    | "reverse_proxy_submode"
+    | "host_mappings"
+    | "gateway_proxy_headers"
   >,
   proxyHeadersConfig?: Partial<GatewayProxyHeadersConfig> | null,
 ): {
@@ -158,8 +162,8 @@ export const compileGatewayProxyHeadersState = (
   return {
     config: nextConfig,
     runtime: {
-      enabled: config.run_type === 3,
-      omit_targets: config.run_type === 3 ? omitTargets : [],
+      enabled: isAnySubdomainRoutingMode(config),
+      omit_targets: isAnySubdomainRoutingMode(config) ? omitTargets : [],
       updated_at: new Date().toISOString(),
     },
     items,
@@ -203,7 +207,10 @@ export const syncGatewayProxyHeadersToGateway = async (
 export const syncGatewayProxyHeadersRuntimeForConfig = async (
   config: Pick<
     AppConfig,
-    "run_type" | "host_mappings" | "gateway_proxy_headers"
+    | "run_type"
+    | "reverse_proxy_submode"
+    | "host_mappings"
+    | "gateway_proxy_headers"
   >,
   options: {
     saveConfig?: boolean;

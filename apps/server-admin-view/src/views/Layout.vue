@@ -124,10 +124,7 @@
         </div>
       </aside>
 
-      <main
-        class="flex-1 w-full min-w-0 min-h-0 overflow-y-auto"
-        :aria-busy="isRouteNavigating"
-      >
+      <main class="flex-1 w-full min-w-0" :aria-busy="isRouteNavigating">
         <div
           v-if="systemClockStore.shouldShowBanner && systemClockStore.status"
           :class="[

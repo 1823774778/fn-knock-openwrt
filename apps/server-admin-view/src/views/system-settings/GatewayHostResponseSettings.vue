@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/table";
 import { toast } from "@admin-shared/utils/toast";
 import { ConfigAPI, SystemAPI } from "../../lib/api";
+import { isAnySubdomainRoutingMode } from "../../lib/reverse-proxy-submode";
 import { useConfigStore } from "../../store/config";
 import type {
   GatewayHostResponseDetails,
@@ -120,7 +121,7 @@ const displayAccessEntryPort = computed(
 );
 const isEdgeClientIPEnabled = computed(
   () =>
-    configStore.config?.run_type === 3 &&
+    isAnySubdomainRoutingMode(configStore.config) &&
     configStore.config?.subdomain_mode?.edge_client_ip_enabled === true &&
     (configStore.config?.subdomain_mode?.aliyun_esa_enabled === true ||
       configStore.config?.subdomain_mode?.tencent_edgeone_enabled === true),

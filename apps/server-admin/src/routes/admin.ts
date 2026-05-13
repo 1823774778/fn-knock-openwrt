@@ -581,6 +581,7 @@ const buildGatewaySettingsResponse = (
     compileGatewayProxyHeadersState(
       {
         run_type: 3,
+        reverse_proxy_submode: "subdomain",
         host_mappings: config.host_mappings,
         gateway_proxy_headers:
           config.gateway_proxy_headers ?? DEFAULT_GATEWAY_PROXY_HEADERS_CONFIG,
@@ -593,6 +594,7 @@ const buildGatewaySettingsResponse = (
     compileGatewayHostResponseState(
       {
         run_type: 3,
+        reverse_proxy_submode: "subdomain",
         host_mappings: config.host_mappings,
         gateway_host_response:
           config.gateway_host_response ?? DEFAULT_GATEWAY_HOST_RESPONSE_CONFIG,
@@ -1564,11 +1566,11 @@ export const adminRoutes = new Elysia({
         configManager.getGatewayProxyHeadersRuntimeState(),
       ]);
 
-      if (previousConfig.run_type !== 3) {
+      if (!isAnySubdomainRoutingMode(previousConfig)) {
         set.status = 400;
         return {
           success: false,
-          message: "协议头仅可在子域模式下编辑",
+          message: "协议头仅可在子域映射模式下编辑",
         };
       }
 
@@ -1627,11 +1629,11 @@ export const adminRoutes = new Elysia({
         configManager.getGatewayHostResponseRuntimeState(),
       ]);
 
-      if (previousConfig.run_type !== 3) {
+      if (!isAnySubdomainRoutingMode(previousConfig)) {
         set.status = 400;
         return {
           success: false,
-          message: "Host 响应仅可在子域模式下编辑",
+          message: "Host 响应仅可在子域映射模式下编辑",
         };
       }
 
@@ -1639,6 +1641,7 @@ export const adminRoutes = new Elysia({
         await syncGatewayHostResponseRuntimeForConfig(
           {
             run_type: previousConfig.run_type,
+            reverse_proxy_submode: previousConfig.reverse_proxy_submode,
             host_mappings: previousConfig.host_mappings,
             gateway_host_response: {
               disabled_hosts: body.disabled_hosts,

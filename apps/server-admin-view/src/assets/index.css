@@ -122,7 +122,52 @@
   }
   body {
     @apply bg-background text-foreground;
+    overflow-y: scroll;
   }
+}
+
+.mapping-table-scroll {
+  @apply overscroll-x-contain;
+}
+
+.mapping-table-scroll .mapping-sticky-cell {
+  @apply sticky z-10 bg-card;
+}
+
+.mapping-table-scroll .mapping-icon-cell {
+  @apply px-0 text-center;
+}
+
+.mapping-table-scroll .mapping-sticky-cell-1 {
+  @apply left-0;
+  box-sizing: border-box;
+  width: 36px;
+  min-width: 36px;
+  max-width: 36px;
+}
+
+.mapping-table-scroll .mapping-sticky-cell-2 {
+  left: 36px;
+  box-sizing: border-box;
+  width: 28px;
+  min-width: 28px;
+  max-width: 28px;
+}
+
+.mapping-table-scroll .mapping-sticky-cell-3 {
+  left: 64px;
+}
+
+.mapping-table-scroll .mapping-title-cell {
+  @apply w-[7rem] min-w-[7rem] max-w-[7rem] overflow-hidden sm:w-[12rem] sm:min-w-[12rem] sm:max-w-[12rem];
+}
+
+.mapping-table-scroll .mapping-title-cell .truncate {
+  text-overflow: clip;
+}
+
+.mapping-table-scroll thead .mapping-sticky-cell {
+  @apply z-20 bg-card;
 }
 
 #nprogress {
@@ -146,4 +191,3 @@
     0 0 10px color-mix(in oklab, var(--color-primary) 40%, transparent),
     0 0 6px color-mix(in oklab, var(--color-primary) 26%, transparent);
 }
-

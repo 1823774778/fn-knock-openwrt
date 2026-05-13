@@ -23,6 +23,7 @@ import {
 } from "@admin-shared/composables/useAsyncAction";
 import { useDelayedLoading } from "@admin-shared/composables/useDelayedLoading";
 import { useConfigStore } from "../../store/config";
+import { isAnySubdomainRoutingMode } from "../../lib/reverse-proxy-submode";
 
 const configStore = useConfigStore();
 const router = useRouter();
@@ -113,18 +114,18 @@ const currentRunTypeLabel = computed(() => {
 const visibilitySummary = computed(() => settings.value?.visibility ?? null);
 
 const isProxyHeadersAvailable = computed(
-  () => configStore.config?.run_type === 3,
+  () => isAnySubdomainRoutingMode(configStore.config),
 );
 const proxyHeadersDisabledReason = computed(() => {
   if (isProxyHeadersAvailable.value) return "";
-  return `仅子域模式可用，当前为${currentRunTypeLabel.value}。`;
+  return `仅子域映射模式可用，当前为${currentRunTypeLabel.value}。`;
 });
 const isHostResponseAvailable = computed(
-  () => configStore.config?.run_type === 3,
+  () => isAnySubdomainRoutingMode(configStore.config),
 );
 const hostResponseDisabledReason = computed(() => {
   if (isHostResponseAvailable.value) return "";
-  return `仅子域模式可用，当前为${currentRunTypeLabel.value}。`;
+  return `仅子域映射模式可用，当前为${currentRunTypeLabel.value}。`;
 });
 
 const openVisibilityEditor = () => {

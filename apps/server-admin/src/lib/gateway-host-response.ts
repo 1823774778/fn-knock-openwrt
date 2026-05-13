@@ -8,6 +8,7 @@ import {
   type GatewayHostResponseRuntimeState,
   type HostMapping,
 } from "./redis";
+import { isAnySubdomainRoutingMode } from "./reverse-proxy-submode";
 
 export interface GatewayHostResponseItem {
   host: string;
@@ -83,9 +84,9 @@ const sanitizeDisabledHosts = (
 };
 
 export const buildGatewayHostResponseAvailability = (
-  config: Pick<AppConfig, "run_type">,
+  config: Pick<AppConfig, "run_type" | "reverse_proxy_submode">,
 ): GatewayHostResponseAvailability => {
-  if (config.run_type === 3) {
+  if (isAnySubdomainRoutingMode(config)) {
     return {
       available: true,
       reason: "",
@@ -126,7 +127,10 @@ export const buildGatewayHostResponseSummary = (
 export const compileGatewayHostResponseState = (
   config: Pick<
     AppConfig,
-    "run_type" | "host_mappings" | "gateway_host_response"
+    | "run_type"
+    | "reverse_proxy_submode"
+    | "host_mappings"
+    | "gateway_host_response"
   >,
   hostResponseConfig?: Partial<GatewayHostResponseConfig> | null,
 ): {
@@ -157,8 +161,8 @@ export const compileGatewayHostResponseState = (
   return {
     config: nextConfig,
     runtime: {
-      enabled: config.run_type === 3,
-      omit_targets: config.run_type === 3 ? omitTargets : [],
+      enabled: isAnySubdomainRoutingMode(config),
+      omit_targets: isAnySubdomainRoutingMode(config) ? omitTargets : [],
       updated_at: new Date().toISOString(),
     },
     items,
@@ -202,7 +206,10 @@ export const syncGatewayHostResponseToGateway = async (
 export const syncGatewayHostResponseRuntimeForConfig = async (
   config: Pick<
     AppConfig,
-    "run_type" | "host_mappings" | "gateway_host_response"
+    | "run_type"
+    | "reverse_proxy_submode"
+    | "host_mappings"
+    | "gateway_host_response"
   >,
   options: {
     saveConfig?: boolean;
@@ -221,7 +228,7 @@ export const syncGatewayHostResponseRuntimeForConfig = async (
     compiled.runtime,
   );
   await syncGatewayHostResponseToGateway(runtime);
-  if (config.run_type === 3) {
+  if (isAnySubdomainRoutingMode(config)) {
     const response = await goBackend.setHostRules(config.host_mappings);
     if (!response.success) {
       throw new Error(response.message || "同步 Host 路由失败");
