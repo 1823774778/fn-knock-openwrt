@@ -1086,6 +1086,20 @@ export type HostTrafficStats = {
   total_in: number;
   total_out: number;
   error_5xx: number;
+  active_ip_count?: number;
+};
+
+export type HostActiveIp = {
+  ip: string;
+  last_seen_at: string;
+  active_conns: number;
+};
+
+export type HostActiveIpsPayload = {
+  host: string;
+  window_seconds: number;
+  items: HostActiveIp[];
+  timestamp?: number;
 };
 
 export type DashboardStats = {

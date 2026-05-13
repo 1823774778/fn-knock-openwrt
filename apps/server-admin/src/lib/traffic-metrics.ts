@@ -16,6 +16,7 @@ export type HostTrafficSnapshot = {
   total_in: number;
   total_out: number;
   error_5xx?: number;
+  active_ip_count?: number;
 };
 
 export type TrafficDeltaPoint = {

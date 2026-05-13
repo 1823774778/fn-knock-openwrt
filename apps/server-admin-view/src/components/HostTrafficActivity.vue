@@ -40,17 +40,30 @@
       @pointerleave="handleContentPointerLeave"
     >
       <div class="border-b px-4 py-3">
-        <div class="truncate text-sm font-semibold" :title="displayTitle">
-          {{ displayTitle }}
-        </div>
-        <div
-          class="mt-1 break-all text-xs font-medium text-muted-foreground"
-          :title="host"
-        >
-          {{ host }}
-        </div>
-        <div class="mt-1 text-xs text-muted-foreground">
-          {{ sampleStatusText }}
+        <div class="flex items-center justify-between gap-3">
+          <div class="min-w-0">
+            <div class="truncate text-sm font-semibold" :title="displayTitle">
+              {{ displayTitle }}
+            </div>
+            <div
+              class="mt-1 break-all text-xs font-medium text-muted-foreground"
+              :title="host"
+            >
+              {{ host }}
+            </div>
+            <div class="mt-1 text-xs text-muted-foreground">
+              {{ sampleStatusText }}
+            </div>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            class="h-7 shrink-0 px-2 text-xs"
+            @click.stop.prevent="openActiveIpDialog"
+          >
+            <Network class="h-3.5 w-3.5" />
+            {{ activeIpButtonText }}
+          </Button>
         </div>
       </div>
 
@@ -141,13 +154,26 @@
       class="max-h-[88vh] overflow-y-auto p-0 text-left sm:max-w-[28rem]"
     >
       <DialogHeader class="border-b px-4 py-3 pr-10 text-left">
-        <DialogTitle class="truncate text-base" :title="displayTitle">
-          {{ displayTitle }}
-        </DialogTitle>
-        <DialogDescription class="space-y-1 text-left">
-          <span class="block break-all font-medium">{{ host }}</span>
-          <span class="block text-xs">{{ sampleStatusText }}</span>
-        </DialogDescription>
+        <div class="flex items-center justify-between gap-3">
+          <div class="min-w-0">
+            <DialogTitle class="truncate text-base" :title="displayTitle">
+              {{ displayTitle }}
+            </DialogTitle>
+            <DialogDescription class="space-y-1 text-left">
+              <span class="block break-all font-medium">{{ host }}</span>
+              <span class="block text-xs">{{ sampleStatusText }}</span>
+            </DialogDescription>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            class="h-7 shrink-0 px-2 text-xs"
+            @click.stop.prevent="openActiveIpDialog"
+          >
+            <Network class="h-3.5 w-3.5" />
+            {{ activeIpButtonText }}
+          </Button>
+        </div>
       </DialogHeader>
 
       <div class="space-y-4 p-4">
@@ -231,11 +257,23 @@
       </div>
     </DialogContent>
   </Dialog>
+
+  <HostActiveIpDialog
+    v-model:open="activeIpDialogOpen"
+    :title="displayTitle"
+    :host="host"
+    :items="activeIpItems"
+    :loading="activeIpLoading"
+    :error="activeIpError"
+    :updated-at="activeIpUpdatedAt"
+    :window-seconds="activeIpWindowSeconds"
+    @refresh="refreshActiveIps"
+  />
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { ArrowDownLeft, ArrowUpRight } from "lucide-vue-next";
+import { ArrowDownLeft, ArrowUpRight, Network } from "lucide-vue-next";
 import VChart from "vue-echarts";
 import type { EChartsOption } from "echarts";
 import { use } from "echarts/core";
@@ -254,8 +292,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import HostActiveIpDialog from "@/components/host-traffic/HostActiveIpDialog.vue";
+import { useHostActiveIps } from "@/composables/useHostActiveIps";
 import { DashboardAPI } from "../lib/api";
 import type { DashboardStats, HostTrafficStats } from "../types";
 
@@ -287,6 +328,7 @@ const props = withDefaults(
 
 const open = ref(false);
 const dialogOpen = ref(false);
+const activeIpDialogOpen = ref(false);
 const isTouchInteraction = ref(false);
 const lastTriggerPointerType = ref<string | null>(null);
 const suppressNextFocusOpen = ref(false);
@@ -304,6 +346,15 @@ let lastRealtimeSample: {
   totalOut: number;
 } | null = null;
 let interactionMediaQuery: MediaQueryList | null = null;
+
+const {
+  displayItems: activeIpItems,
+  loading: activeIpLoading,
+  error: activeIpError,
+  updatedAt: activeIpUpdatedAt,
+  windowSeconds: activeIpWindowSeconds,
+  refresh: refreshActiveIps,
+} = useHostActiveIps(computed(() => props.host), activeIpDialogOpen);
 
 const activeRange = computed(
   () => ranges.find((range) => range.key === rangeKey.value) ?? ranges[1]!,
@@ -347,6 +398,12 @@ const compactInText = computed(() => formatBps(realtimeInBps.value));
 const compactOutText = computed(() => formatBps(realtimeOutBps.value));
 const realtimeInText = computed(() => formatBps(realtimeInBps.value));
 const realtimeOutText = computed(() => formatBps(realtimeOutBps.value));
+const activeIpButtonText = computed(() => {
+  const count = Number(
+    props.sample?.active_ip_count ?? activeIpItems.value.length,
+  );
+  return count > 0 ? `活跃 IP ${count}` : "活跃 IP";
+});
 
 const rangeText = computed(() => {
   const sec = stats.value?.rangeSec ?? activeRange.value.sec;
@@ -531,6 +588,13 @@ function handleDialogOpenChange(nextOpen: boolean) {
     clearCloseTimer();
     open.value = false;
   }
+}
+
+function openActiveIpDialog() {
+  clearCloseTimer();
+  open.value = false;
+  dialogOpen.value = false;
+  activeIpDialogOpen.value = true;
 }
 
 async function loadStats() {

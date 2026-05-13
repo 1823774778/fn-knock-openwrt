@@ -17,6 +17,43 @@ const toUnixSeconds = (ms = Date.now()) => Math.floor(ms / 1000);
 const clamp = (n: number, min: number, max: number) =>
   Math.max(min, Math.min(max, n));
 
+const toIsoStringSafe = (value: unknown) => {
+  const date = new Date(String(value ?? ""));
+  if (!Number.isFinite(date.getTime())) return "";
+  return date.toISOString();
+};
+
+const normalizeActiveIPItem = (item: {
+  ip?: unknown;
+  last_seen_at?: unknown;
+  active_conns?: unknown;
+}) => {
+  const ip = String(item?.ip ?? "").trim();
+  const lastSeenAt = toIsoStringSafe(item?.last_seen_at);
+  const activeConns = Number(item?.active_conns ?? 0);
+  if (!ip || !lastSeenAt) return null;
+  return {
+    ip,
+    last_seen_at: lastSeenAt,
+    active_conns:
+      Number.isFinite(activeConns) && activeConns > 0
+        ? Math.floor(activeConns)
+        : 0,
+  };
+};
+
+const normalizeActiveIPWindowSeconds = (value: unknown) => {
+  const seconds = Number(value ?? 120);
+  if (!Number.isFinite(seconds)) return 120;
+  return Math.max(1, Math.floor(seconds));
+};
+
+const normalizeActiveIPCount = (value: unknown) => {
+  const count = Number(value ?? 0);
+  if (!Number.isFinite(count) || count < 0) return 0;
+  return Math.floor(count);
+};
+
 const pointsToBpsData = (
   points: { ts: number; delta: number }[],
   rangeSec: number,
@@ -86,6 +123,7 @@ const buildRealtimePayload = async () => {
         total_in: Number(item.total_in ?? 0),
         total_out: Number(item.total_out ?? 0),
         error_5xx: Number(item.error_5xx ?? 0),
+        active_ip_count: normalizeActiveIPCount(item.active_ip_count),
       }))
       .filter((item) => item.host),
     timestamp: Date.now(),
@@ -244,4 +282,56 @@ export const dashboardRoutes = new Elysia({
       }
     },
     routeDoc("获取实时流量快照"),
+  )
+  .get(
+    "/active-ips",
+    async ({ query, set }) => {
+      const host = normalizeTrafficHost(query.host);
+      if (!host) {
+        set.status = 400;
+        return { success: false, message: "host is required" };
+      }
+
+      try {
+        const resp = await goBackend.getHostActiveIPs(host);
+        if (!resp.success || !resp.data) {
+          set.status = resp.code && resp.code >= 400 ? resp.code : 502;
+          return {
+            success: false,
+            message: resp.message || "upstream unavailable",
+          };
+        }
+
+        const items = (resp.data.items ?? [])
+          .map(normalizeActiveIPItem)
+          .filter((item): item is NonNullable<typeof item> => Boolean(item))
+          .sort((a, b) => {
+            const diff =
+              new Date(b.last_seen_at).getTime() -
+              new Date(a.last_seen_at).getTime();
+            if (diff !== 0) return diff;
+            return a.ip.localeCompare(b.ip);
+          });
+
+        return {
+          success: true,
+          data: {
+            host: normalizeTrafficHost(resp.data.host) || host,
+            window_seconds: normalizeActiveIPWindowSeconds(
+              resp.data.window_seconds,
+            ),
+            items,
+            timestamp: Date.now(),
+          },
+        };
+      } catch {
+        set.status = 502;
+        return { success: false, message: "upstream unavailable" };
+      }
+    },
+    withRouteDoc("获取子域名活跃 IP", {
+      query: t.Object({
+        host: t.String(),
+      }),
+    }),
   );

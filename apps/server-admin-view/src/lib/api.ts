@@ -2,6 +2,7 @@ import type {
   AppConfig,
   HostMapping,
   HostMappingRefreshSummary,
+  HostActiveIpsPayload,
   UrlMetadataPreview,
   PasskeyCredential,
   ProxyMapping,
@@ -2116,6 +2117,12 @@ export const DashboardAPI = {
   },
   async getRealtime(): Promise<TrafficStats> {
     const res = await apiClient.get("/dashboard/realtime");
+    return res.data.data;
+  },
+  async getHostActiveIps(host: string): Promise<HostActiveIpsPayload> {
+    const res = await apiClient.get("/dashboard/active-ips", {
+      params: { host },
+    });
     return res.data.data;
   },
 };

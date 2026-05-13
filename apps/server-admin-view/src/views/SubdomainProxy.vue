@@ -503,7 +503,7 @@
                 <TableCell class="break-all font-medium">
                   <button
                     type="button"
-                    class="cursor-copy break-all rounded-sm text-left transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    class="break-all rounded-sm text-left transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                     :title="`点击复制 ${formatHostWithAccessEntryPort(mapping.host)}`"
                     :aria-label="`复制域名 ${formatHostWithAccessEntryPort(mapping.host)}`"
                     @click="copyMappingHost(mapping)"

@@ -110,6 +110,19 @@ export interface HostTrafficStats {
   total_in: number;
   total_out: number;
   error_5xx: number;
+  active_ip_count?: number;
+}
+
+export interface HostActiveIPStats {
+  ip: string;
+  last_seen_at: string;
+  active_conns: number;
+}
+
+export interface HostActiveIPsStats {
+  host: string;
+  window_seconds: number;
+  items: HostActiveIPStats[];
 }
 
 export interface GatewayLoggingConfig {
@@ -368,6 +381,8 @@ export class GoBackendService {
   private sshFirewallTimeoutMs: number;
   private trafficApiUnavailable = false;
   private trafficApiUnavailableLogged = false;
+  private trafficActiveIPsApiUnavailable = false;
+  private trafficActiveIPsApiUnavailableLogged = false;
   private lastTrafficStats: TrafficStats = {
     total_in: 0,
     total_out: 0,
@@ -665,6 +680,53 @@ export class GoBackendService {
         code: 200,
         message: "Traffic API unavailable; fallback snapshot",
         data: { ...this.lastTrafficStats },
+      };
+    }
+
+    return resp;
+  }
+
+  async getHostActiveIPs(host: string): Promise<GoResponse<HostActiveIPsStats>> {
+    const fallback: HostActiveIPsStats = {
+      host,
+      window_seconds: 120,
+      items: [],
+    };
+
+    if (this.trafficApiUnavailable || this.trafficActiveIPsApiUnavailable) {
+      return {
+        success: true,
+        code: 200,
+        message: "Traffic active IPs API unavailable; fallback snapshot",
+        data: fallback,
+      };
+    }
+
+    const resp = await this.request<HostActiveIPsStats>(
+      `/api/traffic/active-ips?host=${encodeURIComponent(host)}`,
+      "GET",
+      undefined,
+      this.requestTimeoutMs,
+      { suppressStatusLog: [404] },
+    );
+
+    if (resp.success && resp.data) {
+      return resp;
+    }
+
+    if (resp.code === 404) {
+      this.trafficActiveIPsApiUnavailable = true;
+      if (!this.trafficActiveIPsApiUnavailableLogged) {
+        this.trafficActiveIPsApiUnavailableLogged = true;
+        console.warn(
+          `[GoBackend] ${this.baseUrl}/api/traffic/active-ips is not supported by current gateway; using empty active IP snapshot.`,
+        );
+      }
+      return {
+        success: true,
+        code: 200,
+        message: "Traffic active IPs API unavailable; fallback snapshot",
+        data: fallback,
       };
     }
 
