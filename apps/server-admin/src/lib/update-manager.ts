@@ -579,10 +579,32 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
+resolve_install_volume() {
+  volume=""
+  for dir in /vol[1-9]*; do
+    [ -d "$dir/@appcenter" ] || continue
+    candidate="$(basename "$dir" | sed 's/^vol//')"
+    case "$candidate" in
+      ''|*[!0-9]*)
+        continue
+        ;;
+    esac
+    volume="$candidate"
+    break
+  done
+  echo "$volume"
+}
+
+install_volume="$(resolve_install_volume)"
 appcenter-cli stop fn-knock || true
 appcenter-cli uninstall fn-knock || true
 mkdir -p /tmp/appcenter
-appcenter-cli install-fpk "${escapedPath}" --env "${escapedEnvPath}"
+if [ -n "$install_volume" ]; then
+  echo "Using appcenter volume: $install_volume"
+  appcenter-cli install-fpk "${escapedPath}" --env "${escapedEnvPath}" --volume "$install_volume"
+else
+  appcenter-cli install-fpk "${escapedPath}" --env "${escapedEnvPath}"
+fi
 appcenter-cli start fn-knock
 `;
     fs.writeFileSync(scriptPath, script, "utf-8");
