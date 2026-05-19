@@ -37,6 +37,83 @@ const parseIntSafe = (value: string | undefined, fallback: number) => {
   return v;
 };
 
+const SUBSONIC_REST_ENDPOINTS = new Set([
+  "addchatmessage",
+  "changeemail",
+  "changepassword",
+  "createbookmark",
+  "createinternetradiostation",
+  "createplaylist",
+  "createpodcastchannel",
+  "createshare",
+  "createuser",
+  "deletebookmark",
+  "deleteinternetradiostation",
+  "deleteplaylist",
+  "deletepodcastchannel",
+  "deletepodcastepisode",
+  "deleteshare",
+  "deleteuser",
+  "download",
+  "downloadpodcastepisode",
+  "getalbum",
+  "getalbuminfo",
+  "getalbuminfo2",
+  "getalbumlist",
+  "getalbumlist2",
+  "getartist",
+  "getartistinfo",
+  "getartistinfo2",
+  "getartists",
+  "getavatar",
+  "getbookmarks",
+  "getchatmessages",
+  "getcoverart",
+  "getgenres",
+  "getindexes",
+  "getinternetradiostations",
+  "getlicense",
+  "getlyrics",
+  "getlyricsbysongid",
+  "getmusicdirectory",
+  "getmusicfolders",
+  "getnewestpodcasts",
+  "getnowplaying",
+  "getplaylists",
+  "getplaylist",
+  "getplayqueue",
+  "getpodcasts",
+  "getrandomsongs",
+  "getshares",
+  "getsimilarsongs",
+  "getsimilarsongs2",
+  "getsong",
+  "getsongsbygenre",
+  "getstarred",
+  "getstarred2",
+  "gettopsongs",
+  "getuser",
+  "getusers",
+  "getvideoinfo",
+  "getvideos",
+  "hls",
+  "jukeboxcontrol",
+  "ping",
+  "refreshpodcasts",
+  "saveplayqueue",
+  "scrobble",
+  "search2",
+  "search3",
+  "setrating",
+  "star",
+  "stream",
+  "unstar",
+  "updateinternetradiostation",
+  "updateplaylist",
+  "updateshare",
+  "updateuser",
+]);
+
 class ScanDetector {
   private readonly suspiciousPrefix = "fn_knock:scanner:suspicious:";
   private readonly blacklistIndexKey = "fn_knock:scanner:blacklist:index";
@@ -168,6 +245,29 @@ class ScanDetector {
     return normalized;
   }
 
+  private parsePath(value: string) {
+    try {
+      return new URL(value, "http://127.0.0.1");
+    } catch {
+      return null;
+    }
+  }
+
+  private normalizeSubsonicRestEndpoint(path: string) {
+    const match = this.normalizePath(path).match(
+      /^\/rest\/([a-zA-Z][a-zA-Z0-9]*)(?:\.(?:view|json|xml))?$/,
+    );
+    return match?.[1]?.toLowerCase() || "";
+  }
+
+  private isKnownSubsonicRestPath(path: string) {
+    const parsed = this.parsePath(path);
+    if (!parsed) return false;
+
+    const endpoint = this.normalizeSubsonicRestEndpoint(parsed.pathname);
+    return Boolean(endpoint && SUBSONIC_REST_ENDPOINTS.has(endpoint));
+  }
+
   private isKnownProxyPath(requestPath: string, mappingPath: string) {
     const cleanRequestPath = this.normalizePath(requestPath);
     const cleanMappingPath = this.normalizePath(mappingPath);
@@ -280,6 +380,7 @@ class ScanDetector {
 
   async isCommonPath(path: string) {
     const cleanPath = this.normalizePath(path);
+    if (this.isKnownSubsonicRestPath(path)) return true;
     if (cleanPath === "/__auth__" || cleanPath.startsWith("/__auth__/"))
       return true;
     if (
@@ -329,8 +430,8 @@ class ScanDetector {
       "/sac/rpcproxy/v1/new-user-guide/status",
       "/locales/zh-CN/pages/login.json",
       "/static/bg/wallpaper-1.webp",
-      '/api/config',
-      '/identity/connect/token'
+      "/api/config",
+      "/identity/connect/token",
     ]);
     if (common.has(cleanPath)) return true;
 
