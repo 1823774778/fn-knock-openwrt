@@ -12,15 +12,29 @@ const MAGICPUSH_CONNECTION_SCHEMA: NotificationSchemaField[] = [
     key: "server_url",
     label: "基础 API 地址",
     description:
-      "填写 MagicPush 服务根地址，例如 http://192.168.31.98:3000；如果已填写到 /api/push 也会直接使用。",
+      "填写 MagicPush 服务根地址，例如 http://192.168.31.98:3000；如果已填写到 /api/push 或 /api/inbound 也会直接使用。",
     placeholder: "http://192.168.31.98:3000",
     type: "string",
     required: true,
   },
   {
+    key: "delivery_mode",
+    label: "投递模式",
+    description:
+      "标准推送会发送到 /api/push；入站配置会发送到 /api/inbound/:token，由 MagicPush 的入站规则负责字段映射。",
+    type: "select",
+    required: true,
+    default_value: "push",
+    options: [
+      { label: "标准推送", value: "push" },
+      { label: "入站配置", value: "inbound" },
+    ],
+  },
+  {
     key: "token",
     label: "Token",
-    description: "MagicPush 接口令牌，会通过 Authorization: Bearer 发送。",
+    description:
+      "MagicPush 接口令牌。标准推送会通过 Authorization: Bearer 发送；入站配置会拼接到 /api/inbound/:token。",
     placeholder: "your_token",
     type: "string",
     required: true,
@@ -42,7 +56,7 @@ export const magicpushProviderDefinition: NotificationProviderDefinition = {
   type: "magicpush",
   label: "MagicPush魔法推送",
   description:
-    "通过 MagicPush 自建服务向已配置的渠道推送文本通知，Token 通过 Authorization 头发送。",
+    "通过 MagicPush 自建服务向已配置的渠道推送通知，支持标准推送和 MagicPush 入站配置。",
   connection_schema: MAGICPUSH_CONNECTION_SCHEMA,
   target_schema: MAGICPUSH_TARGET_SCHEMA,
   sensitive_fields: [],
@@ -58,14 +72,28 @@ export const magicpushProviderDefinition: NotificationProviderDefinition = {
   },
 };
 
-const resolveMagicPushUrl = (provider: NotificationProvider) => {
+const resolveMagicPushUrl = (
+  provider: NotificationProvider,
+  token: string,
+  deliveryMode: "push" | "inbound",
+) => {
   const baseUrl = toTrimmedString(provider.connection_config.server_url);
   if (!baseUrl) {
     throw new Error("Missing MagicPush base API url");
   }
 
   const normalizedBaseUrl = baseUrl.replace(/\/+$/, "");
-  if (/\/api\/push$/i.test(normalizedBaseUrl)) {
+  if (deliveryMode === "inbound") {
+    if (/\/api\/inbound\/[^/]+$/i.test(normalizedBaseUrl)) {
+      return normalizedBaseUrl;
+    }
+    if (/\/api\/inbound$/i.test(normalizedBaseUrl)) {
+      return `${normalizedBaseUrl}/${encodeURIComponent(token)}`;
+    }
+    return `${normalizedBaseUrl}/api/inbound/${encodeURIComponent(token)}`;
+  }
+
+  if (/\/api\/push(?:\/[^/]+)?$/i.test(normalizedBaseUrl)) {
     return normalizedBaseUrl;
   }
 
@@ -85,9 +113,7 @@ const buildMagicPushContent = (message: NotificationMessage) => {
 
   if (message.facts.length > 0) {
     sections.push(
-      message.facts
-        .map((fact) => `${fact.label}: ${fact.value}`)
-        .join("\n"),
+      message.facts.map((fact) => `${fact.label}: ${fact.value}`).join("\n"),
     );
   }
 
@@ -116,23 +142,41 @@ const parseMagicPushApiCode = (response: Record<string, unknown> | null) => {
   return Number.isFinite(parsed) ? parsed : undefined;
 };
 
+const buildMagicPushInboundPayload = (message: NotificationMessage) => {
+  const content = buildMagicPushContent(message) || message.title;
+  const facts = message.facts.reduce<Record<string, string>>((acc, fact) => {
+    const label = toTrimmedString(fact.label);
+    if (!label) return acc;
+    acc[label] = fact.value;
+    return acc;
+  }, {});
+
+  return {
+    source: "fn-knock",
+    title: toTrimmedString(message.title || message.summary || "fn-knock 通知"),
+    summary: message.summary,
+    content,
+    body: content,
+    body_text: message.body_text,
+    body_markdown: message.body_markdown,
+    type: message.body_markdown ? "markdown" : "text",
+    severity: message.severity,
+    facts,
+    facts_list: message.facts,
+    actions: message.actions,
+    mentions: message.mentions,
+    dedupe_key: message.dedupe_key,
+    occurred_at: message.occurred_at,
+    event_id: message.event_id,
+    metadata: message.metadata,
+  };
+};
+
 export const sendMagicPushMessage = async (args: {
   provider: NotificationProvider;
   message: NotificationMessage;
   timeoutSeconds: number;
 }): Promise<NotificationSendResult> => {
-  let url: string;
-  try {
-    url = resolveMagicPushUrl(args.provider);
-  } catch (error) {
-    return {
-      success: false,
-      retryable: false,
-      reason:
-        error instanceof Error ? error.message : "Invalid MagicPush base url",
-    };
-  }
-
   const token = toTrimmedString(args.provider.connection_config.token);
   if (!token) {
     return {
@@ -142,15 +186,44 @@ export const sendMagicPushMessage = async (args: {
     };
   }
 
+  const deliveryMode =
+    toTrimmedString(args.provider.connection_config.delivery_mode) === "inbound"
+      ? "inbound"
+      : "push";
+  let url: string;
+  try {
+    url = resolveMagicPushUrl(args.provider, token, deliveryMode);
+  } catch (error) {
+    return {
+      success: false,
+      retryable: false,
+      reason:
+        error instanceof Error ? error.message : "Invalid MagicPush base url",
+    };
+  }
+
   const title = toTrimmedString(
     args.message.title || args.message.summary || "fn-knock 通知",
   );
   const content = buildMagicPushContent(args.message) || title;
-  const payload = {
-    title,
-    content,
-    type: "text",
-  };
+  const payload =
+    deliveryMode === "inbound"
+      ? buildMagicPushInboundPayload(args.message)
+      : {
+          title,
+          content,
+          type: "text",
+        };
+  const headers =
+    deliveryMode === "inbound"
+      ? {
+          "content-type": "application/json; charset=utf-8",
+          "x-fn-knock-provider": "magicpush",
+        }
+      : {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json; charset=utf-8",
+        };
 
   const controller = new AbortController();
   const timeout = setTimeout(
@@ -161,10 +234,7 @@ export const sendMagicPushMessage = async (args: {
   try {
     const response = await fetch(url, {
       method: "POST",
-      headers: {
-        authorization: `Bearer ${token}`,
-        "content-type": "application/json; charset=utf-8",
-      },
+      headers,
       body: JSON.stringify(payload),
       signal: controller.signal,
     });
@@ -199,6 +269,7 @@ export const sendMagicPushMessage = async (args: {
       request_summary: {
         method: "POST",
         url,
+        delivery_mode: deliveryMode,
         type: payload.type,
         title_preview: payload.title,
         content_preview: truncateText(payload.content),
@@ -224,6 +295,7 @@ export const sendMagicPushMessage = async (args: {
       request_summary: {
         method: "POST",
         url,
+        delivery_mode: deliveryMode,
         type: payload.type,
         title_preview: payload.title,
       },
