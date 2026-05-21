@@ -46,7 +46,7 @@ jobs:
 
           - target: ipq40xx/generic
             subtarget: generic
-            sdk_name: openwrt-sdk-23.05.4-ipq40xx-generic_gcc-12.3.0_musl.Linux-x86_64
+            sdk_name: openwrt-sdk-23.05.4-ipq40xx-generic_gcc-12.3.0_musl_eabi.Linux-x86_64
             arch: arm_cortex-a7
 
     env:
@@ -81,10 +81,9 @@ jobs:
 
       - name: Build Node.js project
         run: |
-          npm install
+          npm ci
           npm run build --workspace server-admin
-          npm run build --workspace server-admin-view
-          npm run build --workspace server-auth-view
+          npx turbo run build --filter=server-admin-view --filter=server-auth-view
 
       - name: Copy dist into OpenWrt SDK package source
         run: |

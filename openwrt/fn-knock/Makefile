@@ -25,7 +25,8 @@ define Package/fn-knock/description
 endef
 
 define Build/Prepare
-	$(call Build/Prepare/Default)
+	mkdir -p $(PKG_BUILD_DIR)
+	$(CP) $(CURDIR)/dist $(PKG_BUILD_DIR)/
 endef
 
 define Build/Compile
