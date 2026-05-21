@@ -40,53 +40,20 @@ endef
 
 define Package/fn-knock/install
 	$(INSTALL_DIR) $(1)/opt/fn-knock/server/server-admin
-	if [ -d "$(PKG_BUILD_DIR)/dist/server-admin" ]; then \
-		$(CP) $(PKG_BUILD_DIR)/dist/server-admin/* $(1)/opt/fn-knock/server/server-admin/; \
-	else \
-		echo "ERROR: dist/server-admin not found in $(PKG_BUILD_DIR)"; \
-		ls -la $(PKG_BUILD_DIR)/dist/ 2>/dev/null || echo "(dist/ missing)"; \
-		exit 1; \
-	fi
+	$(CP) $(PKG_BUILD_DIR)/dist/server-admin/* $(1)/opt/fn-knock/server/server-admin/
 
 	$(INSTALL_DIR) $(1)/opt/fn-knock/ui/www
-	if [ -d "$(PKG_BUILD_DIR)/dist/ui" ]; then \
-		$(CP) $(PKG_BUILD_DIR)/dist/ui/* $(1)/opt/fn-knock/ui/www/; \
-	else \
-		echo "ERROR: dist/ui not found in $(PKG_BUILD_DIR)"; \
-		exit 1; \
-	fi
+	$(CP) $(PKG_BUILD_DIR)/dist/ui/* $(1)/opt/fn-knock/ui/www/
 
 	$(INSTALL_DIR) $(1)/opt/fn-knock/server-auth-view/dist
-	if [ -d "$(PKG_BUILD_DIR)/dist/auth-view" ]; then \
-		$(CP) $(PKG_BUILD_DIR)/dist/auth-view/* $(1)/opt/fn-knock/server-auth-view/dist/; \
-	else \
-		echo "ERROR: dist/auth-view not found in $(PKG_BUILD_DIR)"; \
-		exit 1; \
-	fi
+	$(CP) $(PKG_BUILD_DIR)/dist/auth-view/* $(1)/opt/fn-knock/server-auth-view/dist/
 
 	$(INSTALL_DIR) $(1)/opt/fn-knock/resources
-	if [ -f "$(PKG_BUILD_DIR)/dist/resources/acmesh.zip" ]; then \
-		$(CP) $(PKG_BUILD_DIR)/dist/resources/acmesh.zip $(1)/opt/fn-knock/resources/; \
-	fi
+	-$(CP) $(PKG_BUILD_DIR)/dist/resources/acmesh.zip $(1)/opt/fn-knock/resources/
 
 	$(INSTALL_DIR) $(1)/usr/lib/fn-knock/bin
-	if [ -f "$(PKG_BUILD_DIR)/dist/go-reauth-proxy" ]; then \
-		$(CP) $(PKG_BUILD_DIR)/dist/go-reauth-proxy $(1)/usr/lib/fn-knock/bin/go-reauth-proxy; \
-	else \
-		$(if $(CONFIG_ARCH_64BIT), \
-			$(CP) $(PKG_BUILD_DIR)/apps/fn-knock/app/server/go-reauth-proxy-linux-amd64 $(1)/usr/lib/fn-knock/bin/go-reauth-proxy, \
-		) \
-		$(if $(CONFIG_arm)$(CONFIG_aarch64), \
-			$(CP) $(PKG_BUILD_DIR)/apps/fn-knock/app/server/go-reauth-proxy-linux-arm64 $(1)/usr/lib/fn-knock/bin/go-reauth-proxy, \
-		) \
-		$(if $(CONFIG_arm_v7), \
-			$(CP) $(PKG_BUILD_DIR)/apps/fn-knock/app/server/go-reauth-proxy-linux-arm $(1)/usr/lib/fn-knock/bin/go-reauth-proxy, \
-		) \
-		$(if $(CONFIG_mips)$(CONFIG_mipsel), \
-			$(CP) $(PKG_BUILD_DIR)/apps/fn-knock/app/server/go-reauth-proxy-linux-mips $(1)/usr/lib/fn-knock/bin/go-reauth-proxy, \
-		) \
-	fi
-	chmod +x $(1)/usr/lib/fn-knock/bin/go-reauth-proxy
+	-$(CP) $(PKG_BUILD_DIR)/dist/go-reauth-proxy $(1)/usr/lib/fn-knock/bin/go-reauth-proxy
+	-chmod +x $(1)/usr/lib/fn-knock/bin/go-reauth-proxy
 
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./files/etc/init.d/fn-knock $(1)/etc/init.d/fn-knock
