@@ -25,8 +25,8 @@ define Package/fn-knock/description
 endef
 
 define Build/Prepare
-	# dist is pre-copied to PKG_BUILD_DIR by CI workflow
-	@true
+	mkdir -p $(PKG_BUILD_DIR)
+	$(CP) $(CURDIR)/package/$(PKG_NAME)/dist $(PKG_BUILD_DIR)/
 endef
 
 define Build/Compile
@@ -43,28 +43,30 @@ define Package/fn-knock/install
 	if [ -d "$(PKG_BUILD_DIR)/dist/server-admin" ]; then \
 		$(CP) $(PKG_BUILD_DIR)/dist/server-admin/* $(1)/opt/fn-knock/server/server-admin/; \
 	else \
-		$(CP) $(PKG_BUILD_DIR)/apps/server-admin/dist/* $(1)/opt/fn-knock/server/server-admin/; \
+		echo "ERROR: dist/server-admin not found in $(PKG_BUILD_DIR)"; \
+		ls -la $(PKG_BUILD_DIR)/dist/ 2>/dev/null || echo "(dist/ missing)"; \
+		exit 1; \
 	fi
 
 	$(INSTALL_DIR) $(1)/opt/fn-knock/ui/www
 	if [ -d "$(PKG_BUILD_DIR)/dist/ui" ]; then \
 		$(CP) $(PKG_BUILD_DIR)/dist/ui/* $(1)/opt/fn-knock/ui/www/; \
 	else \
-		$(CP) $(PKG_BUILD_DIR)/apps/server-admin-view/dist/* $(1)/opt/fn-knock/ui/www/; \
+		echo "ERROR: dist/ui not found in $(PKG_BUILD_DIR)"; \
+		exit 1; \
 	fi
 
 	$(INSTALL_DIR) $(1)/opt/fn-knock/server-auth-view/dist
 	if [ -d "$(PKG_BUILD_DIR)/dist/auth-view" ]; then \
 		$(CP) $(PKG_BUILD_DIR)/dist/auth-view/* $(1)/opt/fn-knock/server-auth-view/dist/; \
 	else \
-		$(CP) $(PKG_BUILD_DIR)/apps/server-auth-view/dist/* $(1)/opt/fn-knock/server-auth-view/dist/; \
+		echo "ERROR: dist/auth-view not found in $(PKG_BUILD_DIR)"; \
+		exit 1; \
 	fi
 
 	$(INSTALL_DIR) $(1)/opt/fn-knock/resources
 	if [ -f "$(PKG_BUILD_DIR)/dist/resources/acmesh.zip" ]; then \
 		$(CP) $(PKG_BUILD_DIR)/dist/resources/acmesh.zip $(1)/opt/fn-knock/resources/; \
-	else \
-		$(CP) $(PKG_BUILD_DIR)/apps/server-admin/resources/acmesh.zip $(1)/opt/fn-knock/resources/ 2>/dev/null || true; \
 	fi
 
 	$(INSTALL_DIR) $(1)/usr/lib/fn-knock/bin
