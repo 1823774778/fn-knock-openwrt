@@ -4,12 +4,6 @@ PKG_NAME:=fn-knock
 PKG_VERSION:=1.0.0
 PKG_RELEASE:=1
 
-PKG_SOURCE_PROTO:=git
-PKG_SOURCE_URL:=https://github.com/1823774778/fn-knock-openwrt.git
-PKG_SOURCE_VERSION:=main
-PKG_SOURCE_SUBDIR:=$(PKG_NAME)-$(PKG_VERSION)
-PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
-
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=fn-knock team
 
@@ -35,14 +29,8 @@ define Build/Prepare
 endef
 
 define Build/Compile
-	$(info Building fn-knock server-admin...)
-	cd $(PKG_BUILD_DIR) && npm install && npm run build --workspace server-admin
-
-	$(info Building fn-knock server-admin-view...)
-	cd $(PKG_BUILD_DIR) && npm run build --workspace server-admin-view
-
-	$(info Building fn-knock server-auth-view...)
-	cd $(PKG_BUILD_DIR) && npm run build --workspace server-auth-view
+	$(info fn-knock: pre-built dist mode, skipping source compilation)
+	touch $(PKG_BUILD_DIR)/.built
 endef
 
 define Package/fn-knock/conffiles
@@ -50,34 +38,51 @@ define Package/fn-knock/conffiles
 endef
 
 define Package/fn-knock/install
-	$(INSTALL_DIR) $(1)/opt/fn-knock
-
 	$(INSTALL_DIR) $(1)/opt/fn-knock/server/server-admin
-	$(CP) $(PKG_BUILD_DIR)/apps/server-admin/dist/* $(1)/opt/fn-knock/server/server-admin/
+	if [ -d "$(PKG_BUILD_DIR)/dist/server-admin" ]; then \
+		$(CP) $(PKG_BUILD_DIR)/dist/server-admin/* $(1)/opt/fn-knock/server/server-admin/; \
+	else \
+		$(CP) $(PKG_BUILD_DIR)/apps/server-admin/dist/* $(1)/opt/fn-knock/server/server-admin/; \
+	fi
 
 	$(INSTALL_DIR) $(1)/opt/fn-knock/ui/www
-	$(CP) $(PKG_BUILD_DIR)/apps/server-admin-view/dist/* $(1)/opt/fn-knock/ui/www/
+	if [ -d "$(PKG_BUILD_DIR)/dist/ui" ]; then \
+		$(CP) $(PKG_BUILD_DIR)/dist/ui/* $(1)/opt/fn-knock/ui/www/; \
+	else \
+		$(CP) $(PKG_BUILD_DIR)/apps/server-admin-view/dist/* $(1)/opt/fn-knock/ui/www/; \
+	fi
 
 	$(INSTALL_DIR) $(1)/opt/fn-knock/server-auth-view/dist
-	$(CP) $(PKG_BUILD_DIR)/apps/server-auth-view/dist/* $(1)/opt/fn-knock/server-auth-view/dist/
+	if [ -d "$(PKG_BUILD_DIR)/dist/auth-view" ]; then \
+		$(CP) $(PKG_BUILD_DIR)/dist/auth-view/* $(1)/opt/fn-knock/server-auth-view/dist/; \
+	else \
+		$(CP) $(PKG_BUILD_DIR)/apps/server-auth-view/dist/* $(1)/opt/fn-knock/server-auth-view/dist/; \
+	fi
 
 	$(INSTALL_DIR) $(1)/opt/fn-knock/resources
-	$(CP) $(PKG_BUILD_DIR)/apps/server-admin/resources/acmesh.zip $(1)/opt/fn-knock/resources/
+	if [ -f "$(PKG_BUILD_DIR)/dist/resources/acmesh.zip" ]; then \
+		$(CP) $(PKG_BUILD_DIR)/dist/resources/acmesh.zip $(1)/opt/fn-knock/resources/; \
+	else \
+		$(CP) $(PKG_BUILD_DIR)/apps/server-admin/resources/acmesh.zip $(1)/opt/fn-knock/resources/ 2>/dev/null || true; \
+	fi
 
 	$(INSTALL_DIR) $(1)/usr/lib/fn-knock/bin
-	$(if $(CONFIG_ARCH_64BIT), \
-		$(CP) $(PKG_BUILD_DIR)/apps/fn-knock/app/server/go-reauth-proxy-linux-amd64 $(1)/usr/lib/fn-knock/bin/go-reauth-proxy, \
-	)
-	$(if $(CONFIG_arm), \
-		$(CP) $(PKG_BUILD_DIR)/apps/fn-knock/app/server/go-reauth-proxy-linux-arm64 $(1)/usr/lib/fn-knock/bin/go-reauth-proxy, \
-	)
-	$(if $(CONFIG_arm_v7), \
-		$(CP) $(PKG_BUILD_DIR)/apps/fn-knock/app/server/go-reauth-proxy-linux-arm $(1)/usr/lib/fn-knock/bin/go-reauth-proxy, \
-	)
-	$(if $(CONFIG_mips)$(CONFIG_mipsel), \
-		$(CP) $(PKG_BUILD_DIR)/apps/fn-knock/app/server/go-reauth-proxy-linux-mips $(1)/usr/lib/fn-knock/bin/go-reauth-proxy, \
-	)
-
+	if [ -f "$(PKG_BUILD_DIR)/dist/go-reauth-proxy" ]; then \
+		$(CP) $(PKG_BUILD_DIR)/dist/go-reauth-proxy $(1)/usr/lib/fn-knock/bin/go-reauth-proxy; \
+	else \
+		$(if $(CONFIG_ARCH_64BIT), \
+			$(CP) $(PKG_BUILD_DIR)/apps/fn-knock/app/server/go-reauth-proxy-linux-amd64 $(1)/usr/lib/fn-knock/bin/go-reauth-proxy, \
+		) \
+		$(if $(CONFIG_arm)$(CONFIG_aarch64), \
+			$(CP) $(PKG_BUILD_DIR)/apps/fn-knock/app/server/go-reauth-proxy-linux-arm64 $(1)/usr/lib/fn-knock/bin/go-reauth-proxy, \
+		) \
+		$(if $(CONFIG_arm_v7), \
+			$(CP) $(PKG_BUILD_DIR)/apps/fn-knock/app/server/go-reauth-proxy-linux-arm $(1)/usr/lib/fn-knock/bin/go-reauth-proxy, \
+		) \
+		$(if $(CONFIG_mips)$(CONFIG_mipsel), \
+			$(CP) $(PKG_BUILD_DIR)/apps/fn-knock/app/server/go-reauth-proxy-linux-mips $(1)/usr/lib/fn-knock/bin/go-reauth-proxy, \
+		) \
+	fi
 	chmod +x $(1)/usr/lib/fn-knock/bin/go-reauth-proxy
 
 	$(INSTALL_DIR) $(1)/etc/init.d

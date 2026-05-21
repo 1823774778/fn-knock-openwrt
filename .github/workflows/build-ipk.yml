@@ -1,0 +1,199 @@
+name: Build IPK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "openwrt/**"
+      - ".github/workflows/build-ipk.yml"
+      - "apps/**"
+      - "packages/**"
+      - "package.json"
+      - "bun.lock"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: build-ipk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build IPK
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86/64
+            subtarget: "64"
+            sdk_name: openwrt-sdk-23.05.4-x86-64_gcc-12.3.0_musl.Linux-x86_64
+            arch: x86_64
+
+          - target: armsr/armv8
+            subtarget: armv8
+            sdk_name: openwrt-sdk-23.05.4-armsr-armv8_gcc-12.3.0_musl.Linux-x86_64
+            arch: aarch64_cortex-a53
+
+          - target: ramips/mt7621
+            subtarget: mt7621
+            sdk_name: openwrt-sdk-23.05.4-ramips-mt7621_gcc-12.3.0_musl.Linux-x86_64
+            arch: mipsel_24kc
+
+          - target: ipq40xx/generic
+            subtarget: generic
+            sdk_name: openwrt-sdk-23.05.4-ipq40xx-generic_gcc-12.3.0_musl.Linux-x86_64
+            arch: arm_cortex-a7
+
+    env:
+      SDK_URL: https://downloads.openwrt.org/releases/23.05.4/targets/${{ matrix.target }}/${{ matrix.sdk_name }}.tar.xz
+      PACKAGE_NAME: fn-knock
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache OpenWrt SDK
+        uses: actions/cache@v4
+        id: cache-sdk
+        with:
+          path: openwrt-sdk
+          key: openwrt-sdk-${{ matrix.arch }}-23.05.4-v1
+
+      - name: Download OpenWrt SDK
+        if: steps.cache-sdk.outputs.cache-hit != 'true'
+        run: |
+          echo "Downloading SDK: $SDK_URL"
+          curl -fSL --retry 3 --retry-delay 15 "$SDK_URL" -o sdk.tar.xz
+          mkdir -p openwrt-sdk
+          tar -xf sdk.tar.xz -C openwrt-sdk --strip-components=1
+          rm sdk.tar.xz
+          echo "SDK downloaded and extracted"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build Node.js project
+        run: |
+          npm install
+          npm run build --workspace server-admin
+          npm run build --workspace server-admin-view
+          npm run build --workspace server-auth-view
+
+      - name: Copy dist into OpenWrt SDK package source
+        run: |
+          SDK_DIR="openwrt-sdk"
+          PKG_DIR="$SDK_DIR/package/${{ env.PACKAGE_NAME }}"
+
+          mkdir -p "$PKG_DIR"
+
+          cp openwrt/fn-knock/Makefile "$PKG_DIR/Makefile"
+          cp -r openwrt/fn-knock/files "$PKG_DIR/files"
+
+          mkdir -p "$PKG_DIR/dist/server-admin"
+          mkdir -p "$PKG_DIR/dist/ui"
+          mkdir -p "$PKG_DIR/dist/auth-view"
+          mkdir -p "$PKG_DIR/dist/resources"
+
+          cp -r apps/server-admin/dist/* "$PKG_DIR/dist/server-admin/"
+          cp -r apps/server-admin-view/dist/* "$PKG_DIR/dist/ui/"
+          cp -r apps/server-auth-view/dist/* "$PKG_DIR/dist/auth-view/"
+          cp apps/server-admin/resources/acmesh.zip "$PKG_DIR/dist/resources/acmesh.zip" || true
+
+      - name: Build IPK
+        run: |
+          cd openwrt-sdk
+
+          echo "Building package for ${{ matrix.arch }}..."
+
+          make package/${{ env.PACKAGE_NAME }}/compile V=s \
+            -j$(nproc) \
+            CONFIG_PACKAGE_${{ env.PACKAGE_NAME }}=m \
+            || {
+              echo "Build failed, checking logs..."
+              find bin logs -name "*.log" -exec tail -200 {} \; 2>/dev/null || true
+              exit 1
+            }
+
+          echo "Build succeeded for ${{ matrix.arch }}"
+
+      - name: Collect IPK artifacts
+        run: |
+          mkdir -p output
+          find openwrt-sdk/bin -name "*.ipk" -exec cp {} output/ \;
+          echo "Found IPKs:"
+          ls -lh output/
+
+      - name: Upload IPK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fn-knock-openwrt-${{ matrix.arch }}
+          path: output/*.ipk
+          retention-days: 90
+          if-no-files-found: error
+
+  release:
+    name: Create Release
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all IPK artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: List downloaded artifacts
+        run: |
+          echo "All IPK files:"
+          ls -lh release/
+
+      - name: Generate checksums
+        run: |
+          cd release
+          sha256sum *.ipk > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload to nightly release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ipk-nightly
+          name: "fn-knock OpenWrt IPK (Nightly)"
+          body: |
+            ## fn-knock OpenWrt IPK 包
+
+            自动构建于: ${{ github.event.head_commit.timestamp || github.event.repository.pushed_at || 'Manual Trigger' }}
+
+            | 架构 | 适用设备 |
+            |------|---------|
+            | `x86_64` | x86 PC / 虚拟机 |
+            | `aarch64_cortex-a53` | NanoPi R4S/R5S/R6S, RK3399 等 |
+            | `mipsel_24kc` | MT7621 (Redmi AX6S, 小米路由器等) |
+            | `arm_cortex-a7` | IPQ40xx (各种 WiFi 路由器) |
+
+            ### 安装方法
+
+            ```bash
+            opkg install fn-knock_*.ipk
+            /etc/init.d/fn-knock start
+            ```
+
+            ### 前置依赖
+
+            ```bash
+            opkg install node redis-server iptables
+            ```
+
+            > 注意: 此包仅包含 Node.js 后端和前端静态文件。Go 网关二进制 (`go-reauth-proxy`) 需单独编译或从 Release 页面下载对应架构版本。
+          draft: false
+          prerelease: true
+          files: |
+            release/*.ipk
+            release/SHA256SUMS
