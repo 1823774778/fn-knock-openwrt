@@ -26,7 +26,7 @@ endef
 
 define Build/Prepare
 	mkdir -p $(PKG_BUILD_DIR)
-	$(CP) $(CURDIR)/package/$(PKG_NAME)/dist $(PKG_BUILD_DIR)/
+	$(CP) ./dist $(PKG_BUILD_DIR)/
 endef
 
 define Build/Compile
