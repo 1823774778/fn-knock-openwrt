@@ -128,13 +128,23 @@ jobs:
         run: |
           mkdir -p output
           find openwrt-sdk/bin -name "*.ipk" -exec cp {} output/ \;
+          
+          if [ "${{ matrix.target }}" = "ipq807x/generic" ]; then
+            for f in output/fn-knock_*.ipk; do
+              if [ -f "$f" ]; then
+                base=$(basename "$f" .ipk)
+                mv "$f" "output/${base}_ipq807x.ipk"
+              fi
+            done
+          fi
+          
           echo "Found IPKs:"
           ls -lh output/
 
       - name: Upload IPK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: fn-knock-openwrt-${{ matrix.arch }}
+          name: fn-knock-openwrt-${{ matrix.arch }}${{ matrix.target == 'ipq807x/generic' && '-ipq807x' || '' }}
           path: output/*.ipk
           retention-days: 90
           if-no-files-found: error
