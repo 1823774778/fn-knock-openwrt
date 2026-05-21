@@ -49,6 +49,11 @@ jobs:
             sdk_name: openwrt-sdk-23.05.4-ipq40xx-generic_gcc-12.3.0_musl_eabi.Linux-x86_64
             arch: arm_cortex-a7
 
+          - target: ipq807x/generic
+            subtarget: generic
+            sdk_name: openwrt-sdk-23.05.4-ipq807x-generic_gcc-12.3.0_musl.Linux-x86_64
+            arch: aarch64_cortex-a53
+
     env:
       SDK_URL: https://downloads.openwrt.org/releases/23.05.4/targets/${{ matrix.target }}/${{ matrix.sdk_name }}.tar.xz
       PACKAGE_NAME: fn-knock
@@ -173,6 +178,7 @@ jobs:
             | `aarch64_cortex-a53` | NanoPi R4S/R5S/R6S, RK3399 等 |
             | `mipsel_24kc` | MT7621 (Redmi AX6S, 小米路由器等) |
             | `arm_cortex-a7` | IPQ40xx (各种 WiFi 路由器) |
+            | `aarch64_cortex-a53 (ipq807x)` | IPQ807x/IPQ60xx (高通 WiFi 6/6E 路由器) |
 
             ### 安装方法
 
