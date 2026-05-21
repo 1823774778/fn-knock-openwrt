@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { execFile as execFileCallback } from "node:child_process";
 import { parseSSHLogMessage } from "./log-parser";
 import type { SSHLogSourceKind, SSHLoginLogEntry } from "./types";
+import { getRuntimeProfile } from "../runtime-profile";
 
 const execFile = promisify(execFileCallback);
 
@@ -14,6 +15,11 @@ const AUTH_LOG_CANDIDATES = [
   "/var/log/auth.log.1",
   "/var/log/auth.log.1.gz",
 ];
+
+const OPENWRT_LOG_CANDIDATES = [
+  "/var/log/messages",
+  "/var/log/syslog",
+] as const;
 
 const SYSLOG_MONTHS: Record<string, number> = {
   Jan: 0,
@@ -128,7 +134,17 @@ export class SSHLogSource {
       return "journal";
     }
 
+    if (await commandAvailable("logread")) {
+      return "logread";
+    }
+
     if (AUTH_LOG_CANDIDATES.some((path) => existsSync(path))) {
+      return "auth.log";
+    }
+
+    if (
+      OPENWRT_LOG_CANDIDATES.some((path) => existsSync(path))
+    ) {
       return "auth.log";
     }
 
@@ -168,7 +184,43 @@ export class SSHLogSource {
       }
     }
 
+    if (await commandAvailable("logread")) {
+      try {
+        const entries = await this.queryLogread(limit);
+        if (entries.length > 0) return entries;
+      } catch (error) {
+        console.warn("[ssh-security] logread query failed:", error);
+      }
+    }
+
     return this.queryAuthLog(limit);
+  }
+
+  private async queryLogread(limit = 500): Promise<SSHLoginLogEntry[]> {
+    const { stdout } = await execFile(
+      "logread",
+      ["-e", "sshd", "-r", "-n", String(Math.max(limit, 100))],
+      {
+        timeout: 5000,
+        maxBuffer: 10 * 1024 * 1024,
+        windowsHide: true,
+      },
+    );
+    const entries: SSHLoginLogEntry[] = [];
+    const lines = stdout.split(/\r?\n/);
+    for (const line of lines) {
+      const parsed = parseSyslogLine(line);
+      if (!parsed) continue;
+      const entry = parseSSHLogMessage({
+        message: parsed.message,
+        happenedAt: parsed.happenedAt,
+        source: "logread",
+      });
+      if (!entry) continue;
+      entries.push(entry);
+      if (entries.length >= limit) break;
+    }
+    return entries;
   }
 
   queryAuthLog(limit = 500): SSHLoginLogEntry[] {
@@ -245,11 +297,48 @@ export class SSHLogSource {
       };
     }
 
-    if (!existsSync("/var/log/auth.log")) {
+    if (await commandAvailable("logread")) {
+      const child = spawn("logread", ["-f", "-e", "sshd"], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const reader = createInterface({ input: child.stdout });
+      reader.on("line", (line) => {
+        const parsed = parseSyslogLine(line);
+        if (!parsed) return;
+        const entry = parseSSHLogMessage({
+          message: parsed.message,
+          happenedAt: parsed.happenedAt,
+          source: "logread",
+        });
+        if (!entry) return;
+        void onEntry(entry);
+      });
+      child.stderr?.on("data", (chunk) => {
+        const text = String(chunk || "").trim();
+        if (text) console.warn("[ssh-security] logread:", text);
+      });
+      return {
+        source: "logread",
+        stop: () => {
+          reader.close();
+          child.kill("SIGTERM");
+        },
+      };
+    }
+
+    if (
+      !existsSync("/var/log/auth.log") &&
+      !OPENWRT_LOG_CANDIDATES.some((path) => existsSync(path))
+    ) {
       return null;
     }
 
-    const child = spawn("tail", ["-F", "/var/log/auth.log"], {
+    const logPath = existsSync("/var/log/auth.log")
+      ? "/var/log/auth.log"
+      : OPENWRT_LOG_CANDIDATES.find((path) => existsSync(path)) ??
+        "/var/log/auth.log";
+
+    const child = spawn("tail", ["-F", logPath], {
       stdio: ["ignore", "pipe", "pipe"],
     });
     const reader = createInterface({ input: child.stdout });

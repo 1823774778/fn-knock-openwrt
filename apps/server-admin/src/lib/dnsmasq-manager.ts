@@ -10,6 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { collectStreamOutput, fileExists, waitForProcessExit } from "./runtime";
+import { getRuntimeProfile } from "./runtime-profile";
 
 export const SMART_CONNECT_DNS_PORT = 53;
 export const SMART_CONNECT_LOCAL_TTL_SECONDS = 30;
@@ -53,12 +54,27 @@ const DNSMASQ_EXECUTABLE_CANDIDATES = [
   "/usr/bin/dnsmasq",
 ] as const;
 const DEBIAN_APT_GET_PATH = "/usr/bin/apt-get";
+const OPENWRT_OPKG_PATH = "/bin/opkg";
 const DNSMASQ_SYSTEMD_UNIT_CANDIDATES = [
   "/etc/systemd/system/dnsmasq.service",
   "/lib/systemd/system/dnsmasq.service",
   "/usr/lib/systemd/system/dnsmasq.service",
 ] as const;
 const DNSMASQ_INIT_SCRIPT_PATH = "/etc/init.d/dnsmasq";
+const DNSMASQ_OPENWRT_CONF_PATH = "/var/etc/dnsmasq.conf";
+const DNSMASQ_OPENWRT_CONF_DIR = "/etc/dnsmasq.d";
+
+const resolveOpenWrtManagedConfPath = (): string => {
+  try {
+    if (existsSync(DNSMASQ_OPENWRT_CONF_DIR)) {
+      return `${DNSMASQ_OPENWRT_CONF_DIR}/fn-knock-smart-connect.conf`;
+    }
+  } catch {}
+  return SMART_CONNECT_MANAGED_CONF_PATH;
+};
+
+const isOpenWrt = (): boolean =>
+  getRuntimeProfile().deployment_target === "openwrt";
 
 const createDefaultInstallState = (): DnsmasqInstallState => ({
   status: "uninstalled",
@@ -245,6 +261,28 @@ class DnsmasqManager {
       return;
     }
 
+    if (isOpenWrt()) {
+      if (!(await fileExists(OPENWRT_OPKG_PATH))) {
+        throw new Error(
+          "检测到 dnsmasq 可执行文件，但未安装系统服务，请先安装 dnsmasq 软件包",
+        );
+      }
+      this.installState = {
+        status: "installing",
+        progress: 58,
+        message: "正在补全 dnsmasq 系统服务...",
+      };
+      await this.ensureProcessSucceeded(
+        OPENWRT_OPKG_PATH,
+        ["install", "dnsmasq-full"],
+        "补全 dnsmasq 系统服务失败",
+      );
+      if (!(await this.hasServiceDefinition())) {
+        throw new Error("dnsmasq 服务安装完成后仍未检测到可用的系统服务定义");
+      }
+      return;
+    }
+
     if (!(await fileExists(DEBIAN_APT_GET_PATH))) {
       throw new Error(
         "检测到 dnsmasq 可执行文件，但未安装系统服务，请先安装 dnsmasq 软件包",
@@ -333,6 +371,21 @@ class DnsmasqManager {
 
   private async restartService(): Promise<void> {
     const errors: string[] = [];
+
+    if (isOpenWrt()) {
+      try {
+        await this.ensureProcessSucceeded(
+          "/etc/init.d/dnsmasq",
+          ["restart"],
+          "重启 dnsmasq 失败",
+        );
+        return;
+      } catch (error) {
+        if (error instanceof Error && error.message.trim()) {
+          errors.push(error.message.trim());
+        }
+      }
+    }
 
     if (await this.hasSystemdUnit()) {
       try {

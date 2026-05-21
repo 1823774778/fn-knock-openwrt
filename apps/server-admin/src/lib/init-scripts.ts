@@ -8,6 +8,16 @@ CHAINS=("FN-KNOCK-FW" "FN-KNOCK-SSH")
 PARENTS=("INPUT" "DOCKER-USER")
 TABLES=("iptables" "ip6tables")
 
+ACTIVE_PARENTS=()
+for parent in "\${PARENTS[@]}"; do
+    for cmd in "\${TABLES[@]}"; do
+        if command -v "\$cmd" &> /dev/null && sudo "\$cmd" -L "\$parent" -n >/dev/null 2>&1; then
+            ACTIVE_PARENTS+=("\$parent")
+            break
+        fi
+    done
+done
+
 remove_parent_jumps() {
     local cmd="$1"
     local parent="$2"
@@ -34,6 +44,7 @@ remove_parent_jumps() {
 }
 
 echo "Starting firewall cleanup for chains: \${CHAINS[*]}..."
+echo "Active parent chains: \${ACTIVE_PARENTS[*]}"
 
 for cmd in "\${TABLES[@]}"; do
     if ! command -v "\$cmd" &> /dev/null; then
@@ -44,7 +55,7 @@ for cmd in "\${TABLES[@]}"; do
     echo "--- Processing \$cmd ---"
 
     for chain in "\${CHAINS[@]}"; do
-        for parent in "\${PARENTS[@]}"; do
+        for parent in "\${ACTIVE_PARENTS[@]}"; do
             remove_parent_jumps "\$cmd" "\$parent" "\$chain"
         done
 

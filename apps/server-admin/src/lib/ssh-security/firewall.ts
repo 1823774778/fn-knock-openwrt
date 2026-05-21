@@ -4,11 +4,19 @@ import { normalizeIp } from "../ip-normalize";
 import {
   getCapabilityUnavailableMessage,
   getRuntimeCapabilities,
+  getRuntimeProfile,
 } from "../runtime-profile";
 import { DEFAULT_SSH_PORTS, sshPortResolver } from "./port-resolver";
 
 const SSH_FIREWALL_CHAIN = "FN-KNOCK-SSH";
-const SSH_FIREWALL_PARENT_CHAINS = ["INPUT", "DOCKER-USER"] as const;
+
+const resolveSSHParentChains = (): readonly string[] => {
+  const profile = getRuntimeProfile();
+  if (profile.is_openwrt) {
+    return ["INPUT"];
+  }
+  return ["INPUT", "DOCKER-USER"];
+};
 
 export interface SSHFirewallPolicyInput {
   allowedCidrs: string[];
@@ -81,7 +89,7 @@ export class SSHSecurityFirewall {
 
     const response = await goBackend.syncSSHFirewall({
       chain_name: SSH_FIREWALL_CHAIN,
-      parent_chain: [...SSH_FIREWALL_PARENT_CHAINS],
+      parent_chain: [...resolveSSHParentChains()],
       ports,
       allowed_cidrs: allowedCidrs,
       blocked_ips: blockedIps,
@@ -102,7 +110,7 @@ export class SSHSecurityFirewall {
     this.ensureAvailable();
     const response = await goBackend.clearSSHFirewall({
       chain_name: SSH_FIREWALL_CHAIN,
-      parent_chain: [...SSH_FIREWALL_PARENT_CHAINS],
+      parent_chain: [...resolveSSHParentChains()],
     });
     if (!goResponseOk(response)) {
       throw new Error(response.message || "清空 SSH 专用防火墙规则失败");

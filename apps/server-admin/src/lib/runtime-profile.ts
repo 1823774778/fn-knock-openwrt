@@ -1,10 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 
-export type DeploymentTarget = "fpk" | "docker" | "dev";
+export type DeploymentTarget = "fpk" | "docker" | "openwrt" | "dev";
 
 export interface RuntimeProfile {
   deployment_target: DeploymentTarget;
   is_docker: boolean;
+  is_openwrt: boolean;
   is_linux: boolean;
   is_root_process: boolean;
 }
@@ -29,6 +30,7 @@ const normalizeDeploymentTarget = (
   const normalized = value?.trim().toLowerCase();
   if (normalized === "docker") return "docker";
   if (normalized === "fpk") return "fpk";
+  if (normalized === "openwrt") return "openwrt";
   if (normalized === "dev" || normalized === "development") return "dev";
   return null;
 };
@@ -37,6 +39,16 @@ const detectDockerByCgroup = (): boolean => {
   try {
     const cgroup = readFileSync("/proc/1/cgroup", "utf-8");
     return /(docker|containerd|kubepods|podman)/i.test(cgroup);
+  } catch {
+    return false;
+  }
+};
+
+const detectOpenWrt = (): boolean => {
+  try {
+    if (existsSync("/etc/openwrt_release")) return true;
+    const osRelease = readFileSync("/etc/os-release", "utf-8");
+    return /openwrt/i.test(osRelease);
   } catch {
     return false;
   }
@@ -52,6 +64,10 @@ const detectDeploymentTarget = (): DeploymentTarget => {
 
   if (existsSync("/.dockerenv") || detectDockerByCgroup()) {
     return "docker";
+  }
+
+  if (detectOpenWrt()) {
+    return "openwrt";
   }
 
   if (
@@ -97,6 +113,7 @@ export const getRuntimeProfile = (): RuntimeProfile => {
   cachedRuntimeProfile = {
     deployment_target: deploymentTarget,
     is_docker: deploymentTarget === "docker",
+    is_openwrt: deploymentTarget === "openwrt",
     is_linux: process.platform === "linux",
     is_root_process: isRootProcess(),
   };
@@ -112,13 +129,15 @@ export const getRuntimeCapabilities = (
     profile.is_linux &&
     profile.is_root_process;
 
+  const isOpenWrt = profile.deployment_target === "openwrt";
+
   return {
     direct_mode_available: hostRuntimeAvailable,
     host_firewall_available: hostRuntimeAvailable,
-    smart_connect_available: hostRuntimeAvailable,
-    system_clock_sync_available: hostRuntimeAvailable,
+    smart_connect_available: !isOpenWrt && hostRuntimeAvailable,
+    system_clock_sync_available: !isOpenWrt && hostRuntimeAvailable,
     self_update_available: profile.deployment_target === "fpk",
-    terminal_available: profile.deployment_target !== "docker",
+    terminal_available: !isOpenWrt && profile.deployment_target !== "docker",
     shared_root_available: hasSharedRoot(),
   };
 };
@@ -132,6 +151,9 @@ export const getCapabilityUnavailableMessage = (
       if (profile.is_docker) {
         return "Docker 部署不支持宿主机直连防火墙模式";
       }
+      if (profile.is_openwrt) {
+        return "OpenWrt 部署不支持直连防火墙模式，请使用 OpenWrt 自带防火墙管理";
+      }
       if (!profile.is_linux) {
         return "当前运行环境不支持宿主机直连防火墙模式";
       }
@@ -139,6 +161,9 @@ export const getCapabilityUnavailableMessage = (
     case "host_firewall_available":
       if (profile.is_docker) {
         return "Docker 部署不支持宿主机防火墙管理";
+      }
+      if (profile.is_openwrt) {
+        return "OpenWrt 部署不支持接管防火墙，请使用 OpenWrt 自带防火墙管理";
       }
       if (!profile.is_linux) {
         return "当前运行环境不支持宿主机防火墙管理";
@@ -148,6 +173,9 @@ export const getCapabilityUnavailableMessage = (
       if (profile.is_docker) {
         return "Docker 部署暂不支持 Smart Connect，它依赖宿主机 dnsmasq 与 53 端口";
       }
+      if (profile.is_openwrt) {
+        return "OpenWrt 部署不支持 Smart Connect，请使用 OpenWrt 自带 DNS 管理";
+      }
       if (!profile.is_linux) {
         return "当前运行环境暂不支持 Smart Connect";
       }
@@ -155,6 +183,9 @@ export const getCapabilityUnavailableMessage = (
     case "system_clock_sync_available":
       if (profile.is_docker) {
         return "Docker 部署不支持宿主机系统时间同步";
+      }
+      if (profile.is_openwrt) {
+        return "OpenWrt 部署不支持系统时间同步，请使用 OpenWrt 自带 NTP 客户端";
       }
       if (!profile.is_linux) {
         return "当前运行环境不支持系统时间同步";
@@ -164,10 +195,16 @@ export const getCapabilityUnavailableMessage = (
       if (profile.is_docker) {
         return "Docker 部署不支持应用内 FPK 更新，请通过拉取新镜像升级";
       }
+      if (profile.is_openwrt) {
+        return "OpenWrt 部署不支持应用内更新，请通过 opkg upgrade 升级";
+      }
       return "当前部署形态不支持应用内更新";
     case "terminal_available":
       if (profile.is_docker) {
         return "Docker 部署不支持 Web 终端";
+      }
+      if (profile.is_openwrt) {
+        return "OpenWrt 部署不支持 Web 终端";
       }
       return "当前运行环境不支持 Web 终端";
     case "shared_root_available":

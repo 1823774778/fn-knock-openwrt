@@ -16,7 +16,16 @@ import { SMART_CONNECT_DNS_PORT } from "./dnsmasq-manager";
 import {
   getCapabilityUnavailableMessage,
   getRuntimeCapabilities,
+  getRuntimeProfile,
 } from "./runtime-profile";
+
+const resolveFwParentChains = (): string[] => {
+  const profile = getRuntimeProfile();
+  if (profile.is_openwrt) {
+    return ["INPUT"];
+  }
+  return ["INPUT", "DOCKER-USER"];
+};
 
 const DISABLED_DEFAULT_ROUTE = "/__select__";
 
@@ -153,7 +162,7 @@ export class FirewallService {
   ) {
     const request = goBackend.initIptables({
       chain_name: "FN-KNOCK-FW",
-      parent_chain: ["INPUT", "DOCKER-USER"],
+      parent_chain: resolveFwParentChains(),
       exempt_ports: this.resolveExemptPorts(
         config,
         protocolMappingEnabled,

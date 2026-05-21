@@ -71,7 +71,7 @@ export interface SSHLoginLogEntry {
   raw: string;
 }
 
-export type SSHLogSourceKind = "journal" | "auth.log" | "unavailable";
+export type SSHLogSourceKind = "journal" | "logread" | "auth.log" | "unavailable";
 
 export interface SSHSecurityAvailability {
   available: boolean;
