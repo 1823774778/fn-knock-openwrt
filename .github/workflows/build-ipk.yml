@@ -91,7 +91,6 @@ jobs:
           PKG_DIR="$SDK_DIR/package/${{ env.PACKAGE_NAME }}"
 
           mkdir -p "$PKG_DIR"
-
           cp openwrt/fn-knock/Makefile "$PKG_DIR/Makefile"
           cp -r openwrt/fn-knock/files "$PKG_DIR/files"
 
@@ -111,9 +110,16 @@ jobs:
 
           echo "Building package for ${{ matrix.arch }}..."
 
+          BUILD_DIR=$(ls -d build_dir/target-* 2>/dev/null | head -1)
+          if [ -n "${BUILD_DIR}" ]; then
+            PKG_BUILD_DIR="${BUILD_DIR}/${{ env.PACKAGE_NAME }}-1.0.0"
+            mkdir -p "${PKG_BUILD_DIR}/dist"
+            cp -r package/${{ env.PACKAGE_NAME }}/dist/* "${PKG_BUILD_DIR}/dist/"
+          fi
+
           make package/${{ env.PACKAGE_NAME }}/compile V=s \
             -j$(nproc) \
-            CONFIG_PACKAGE_${{ env.PACKAGE_NAME }}=m \
+            CONFIG_PACKAGE_fn_knock=m \
             || {
               echo "Build failed, checking logs..."
               find bin logs -name "*.log" -exec tail -200 {} \; 2>/dev/null || true

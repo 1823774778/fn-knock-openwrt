@@ -25,8 +25,8 @@ define Package/fn-knock/description
 endef
 
 define Build/Prepare
-	mkdir -p $(PKG_BUILD_DIR)
-	$(CP) $(CURDIR)/dist $(PKG_BUILD_DIR)/
+	# dist is pre-copied to PKG_BUILD_DIR by CI workflow
+	@true
 endef
 
 define Build/Compile
